@@ -1,0 +1,79 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+credentials/
+.npmrc
+.pypirc
+.netrc
+.git-credentials
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node and frontend build output
+node_modules/
+frontend/dist/
+
+# Runtime data, keys, logs and backups
+data/*
+!data/.gitkeep
+uploads/
+imports/
+exports/
+backups/
+screenshots/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.vxbackup
+.master-key
+*.log
+
+# User-provided analytics files
+*.csv
+!frontend/e2e/fixtures/*.csv
+*.xls
+*.xlsx
+截图*.png
+截图*.jpg
+昨日数据*.png
+昨日数据*.jpg
+视频号*.csv
+
+# Test and browser output
+playwright-report/
+test-results/
+coverage/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.fleet/
+.history/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local archives
+*.tar
+*.tar.gz
+*.zip

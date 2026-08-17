@@ -1,0 +1,60 @@
+name: vx-data-watch
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${VX_NODE_IMAGE:-node:24-alpine}
+        PYTHON_IMAGE: ${VX_PYTHON_IMAGE:-python:3.12-slim}
+    image: ${VX_IMAGE:-vx-data:local}
+    ports:
+      - "${VX_BIND_ADDRESS:-0.0.0.0}:${VX_PORT:-8000}:8000"
+    environment:
+      VX_DATA_DIR: /app/data
+      VX_DATABASE_URL: sqlite:////app/data/vx_data.db
+      VX_COOKIE_SECURE: ${VX_COOKIE_SECURE:-false}
+      VX_SESSION_DAYS: ${VX_SESSION_DAYS:-14}
+      VX_MAX_UPLOAD_MB: ${VX_MAX_UPLOAD_MB:-20}
+      VX_MASTER_KEY: ${VX_MASTER_KEY:-}
+      VX_UPDATER_ENABLED: "true"
+      VX_UPDATE_REPOSITORY: ${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}
+    volumes:
+      - vx-data:/app/data
+    restart: unless-stopped
+
+  updater:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${VX_NODE_IMAGE:-node:24-alpine}
+        PYTHON_IMAGE: ${VX_PYTHON_IMAGE:-python:3.12-slim}
+    image: ${VX_IMAGE:-vx-data:local}
+    command: ["python", "-m", "app.updater"]
+    user: root
+    environment:
+      VX_DATA_DIR: /app/data
+      VX_UPDATE_REPOSITORY: ${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}
+      VX_UPDATE_ENV_FILE: /project/.env
+      VX_UPDATE_PROJECT: vx-data-watch
+      VX_UPDATE_SERVICE: app
+    volumes:
+      - vx-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ./.env
+        target: /project/.env
+        bind:
+          create_host_path: false
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  vx-data:
+    name: vx-data
