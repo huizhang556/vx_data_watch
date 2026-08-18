@@ -44,7 +44,7 @@ def test_admin_can_check_and_queue_system_update(
     async def versions(_repository: str) -> list[dict[str, str]]:
         return [
             {"version": "0.4.0", "published_at": "2026-08-20T00:00:00Z"},
-            {"version": "0.3.1", "published_at": "2026-08-19T00:00:00Z"},
+            {"version": "0.3.2", "published_at": "2026-08-19T00:00:00Z"},
         ]
 
     monkeypatch.setattr(main, "fetch_registry_versions", versions)
@@ -54,16 +54,16 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.3.0"
-    assert [row["version"] for row in checked.json()["versions"]] == ["0.4.0", "0.3.1"]
+    assert checked.json()["current_version"] == "0.3.1"
+    assert [row["version"] for row in checked.json()["versions"]] == ["0.4.0", "0.3.2"]
 
     queued = client.post(
-        "/api/system/update", headers=auth, json={"version": "0.3.1"}
+        "/api/system/update", headers=auth, json={"version": "0.3.2"}
     )
     assert queued.status_code == 202, queued.text
     assert queued.json()["state"] == "queued"
     assert queued.json()["backup_filename"].endswith(".vxbackup")
-    assert client.get("/api/system/update-status").json()["target_version"] == "0.3.1"
+    assert client.get("/api/system/update-status").json()["target_version"] == "0.3.2"
     for path in update_paths():
         path.unlink(missing_ok=True)
 
@@ -175,6 +175,24 @@ def test_logout_is_idempotent_and_clears_session() -> None:
         assert "vx_session" not in session_client.cookies
         assert session_client.get("/api/auth/me").status_code == 401
         assert session_client.post("/api/auth/logout").status_code == 204
+
+
+def test_secure_cookie_does_not_break_plain_http_session() -> None:
+    from app import main
+
+    previous = main.settings.cookie_secure
+    main.settings.cookie_secure = True
+    try:
+        with TestClient(main.app, base_url="http://testserver") as session_client:
+            login = session_client.post(
+                "/api/auth/login", json={"username": "admin", "password": "secure-pass-123"}
+            )
+            assert login.status_code == 200
+            assert "Secure" not in login.headers["set-cookie"]
+            assert session_client.get("/api/auth/me").status_code == 200
+            assert session_client.post("/api/auth/logout").status_code == 204
+    finally:
+        main.settings.cookie_secure = previous
 
 
 def test_ai_analysis_returns_report_but_history_does_not_store_body(

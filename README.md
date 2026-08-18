@@ -74,6 +74,8 @@ VX_PORT=3000
 VX_COOKIE_SECURE=true
 ```
 
+如果暂时通过 `http://` 访问，即使服务器位于公网，也必须保持 `VX_COOKIE_SECURE=false`；否则浏览器不会保存登录 Cookie。修改配置后请重启 Compose 服务。
+
 建议生成并妥善保存固定主密钥：
 
 ```bash
@@ -112,7 +114,7 @@ cp .env.example .env
 
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
-| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:0.3.0` |
+| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:0.3.1` |
 | `VX_UPDATE_REPOSITORY` | 在线更新允许使用的固定仓库 | `litehub/vx-data-watch` |
 | `VX_NODE_IMAGE` | 仅自行构建时使用的 Node 基础镜像 | `node:24-alpine` |
 | `VX_PYTHON_IMAGE` | 仅自行构建时使用的 Python 基础镜像 | `python:3.12-slim` |

@@ -52,8 +52,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
       const next = await api<User>(initialized ? '/api/auth/login' : '/api/setup', {
         method: 'POST', body: JSON.stringify(values),
       })
-      setCsrfToken(next.csrf_token)
-      setUser(next)
+      // Confirm the browser accepted the session cookie before entering the app.
+      const verified = await api<User>('/api/auth/me')
+      setCsrfToken(verified.csrf_token || next.csrf_token)
+      setUser(verified)
       setInitialized(true)
       message.success(initialized ? '已登录' : '管理员已创建')
     } catch (cause) {

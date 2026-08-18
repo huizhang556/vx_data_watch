@@ -132,13 +132,26 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
     return response
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _secure_cookie(request: Request) -> bool:
+    """Only mark cookies Secure when the browser connection is HTTPS.
+
+    The app is commonly behind a TLS-terminating reverse proxy. Respect its
+    forwarded protocol, while avoiding an unusable Secure cookie when an
+    administrator accidentally enables VX_COOKIE_SECURE on plain HTTP.
+    """
+    if not settings.cookie_secure:
+        return False
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    return forwarded == "https" or request.url.scheme == "https"
+
+
+def _set_session_cookie(request: Request, response: Response, token: str) -> None:
     response.set_cookie(
         "vx_session",
         token,
         max_age=settings.session_days * 86400,
         httponly=True,
-        secure=settings.cookie_secure,
+        secure=_secure_cookie(request),
         samesite="lax",
         path="/",
     )
@@ -209,7 +222,7 @@ def setup(
     raw_token, login_session = _create_session(db, user, request)
     write_audit(db, "system.setup", user, "user", user.id)
     db.commit()
-    _set_session_cookie(response, raw_token)
+    _set_session_cookie(request, response, raw_token)
     return _user_payload(user, login_session.csrf_token)
 
 
@@ -236,7 +249,7 @@ def login(
     raw_token, login_session = _create_session(db, user, request)
     write_audit(db, "auth.login", user, "session")
     db.commit()
-    _set_session_cookie(response, raw_token)
+    _set_session_cookie(request, response, raw_token)
     return _user_payload(user, login_session.csrf_token)
 
 
@@ -269,7 +282,7 @@ def logout(
     response.delete_cookie(
         "vx_session",
         path="/",
-        secure=settings.cookie_secure,
+        secure=_secure_cookie(request),
         httponly=True,
         samesite="lax",
     )
@@ -292,7 +305,7 @@ def change_password(
     raw_token, login_session = _create_session(db, user, request)
     write_audit(db, "auth.password.change", user)
     db.commit()
-    _set_session_cookie(response, raw_token)
+    _set_session_cookie(request, response, raw_token)
     return {"csrf_token": login_session.csrf_token}
 
 
