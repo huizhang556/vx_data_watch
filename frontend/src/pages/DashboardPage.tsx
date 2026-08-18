@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, DatePicker, Empty, Segmented, Skeleton, Statistic, Typography } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
+import { useNavigate } from 'react-router-dom'
 import { api, query } from '../api'
 import { useAccount } from '../account'
 import type { RangeAnalytics } from '../types'
@@ -37,11 +38,14 @@ function compareMarkup(current: number | null, previous: number | null | undefin
 
 export default function DashboardPage() {
   const { account } = useAccount()
+  const navigate = useNavigate()
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
   const [days, setDays] = useState(1)
   const [data, setData] = useState<RangeAnalytics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [rangeWarning, setRangeWarning] = useState('')
+  const [aiHistory, setAiHistory] = useState<{ id: number; start_date: string; end_date: string; created_at: string } | null>(null)
 
   useEffect(() => {
     if (!account) { setData(null); return }
@@ -49,9 +53,23 @@ export default function DashboardPage() {
     const start = endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
     setLoading(true); setError('')
     api<RangeAnalytics>(`/api/analytics/range?${query({ account_id: account.id, start_date: start, end_date: end })}`)
-      .then(setData)
+      .then((snapshot) => {
+        setData(snapshot)
+        setRangeWarning(snapshot.days_with_data < days
+          ? `当前数据库仅有 ${snapshot.days_with_data}/${days} 天数据，当前时间段的数据不足，部分统计结果可能不完整。请先导入缺少日期的数据。`
+          : '')
+      })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '加载失败'))
       .finally(() => setLoading(false))
+  }, [account, endDate, days])
+
+  useEffect(() => {
+    if (!account) { setAiHistory(null); return }
+    const end = endDate.format('YYYY-MM-DD')
+    const start = endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
+    api<Array<{ id: number; start_date: string; end_date: string; created_at: string }>>(`/api/ai/reports?${query({ account_id: account.id })}`)
+      .then((rows) => setAiHistory(rows.find((row) => row.start_date === start && row.end_date === end) || null))
+      .catch(() => setAiHistory(null))
   }, [account, endDate, days])
 
   const previousByDate = useMemo(() => new Map(
@@ -130,6 +148,7 @@ export default function DashboardPage() {
         </div>
       </div>
       {error && <Alert type="error" showIcon message={error} />}
+      {rangeWarning && <Alert type="warning" showIcon message="当前数据量不足" description={rangeWarning} />}
       {loading ? <Skeleton active /> : !hasData ? <Empty description="所选时间暂无数据" /> : <>
         <section className="metric-grid" aria-label="指标汇总">
           {metrics.map((metric) => <div className="metric-card" key={metric.key}>
@@ -145,6 +164,10 @@ export default function DashboardPage() {
           <div className="chart-panel"><Typography.Title level={3}>互动构成</Typography.Title><ReactECharts option={pieOption} style={{ height: 320 }} notMerge /></div>
           <div className="chart-panel"><Typography.Title level={3}>本期与上期</Typography.Title><ReactECharts option={barOption} style={{ height: 320 }} notMerge /></div>
         </section>
+        {aiHistory && <section className="section-band ai-history-match">
+          <div className="section-heading"><div><Typography.Title level={3}>AI 分析报告记录</Typography.Title><Typography.Text type="secondary">已找到当前查询时间段对应的分析报告</Typography.Text></div></div>
+          <div className="history-list"><article><div><strong>查询范围：{aiHistory.start_date} 至 {aiHistory.end_date}</strong><time>查询时间：{dayjs(aiHistory.created_at).format('YYYY-MM-DD HH:mm')}</time></div><button className="link-button" type="button" onClick={() => navigate('/ai', { state: { historyId: aiHistory.id } })}>查看 AI 分析</button></article></div>
+        </section>}
       </>}
     </div>
   )

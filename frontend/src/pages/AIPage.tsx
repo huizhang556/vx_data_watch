@@ -5,6 +5,7 @@ import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api, query } from '../api'
 import { useAccount } from '../account'
 import { useAuth } from '../auth'
@@ -31,6 +32,8 @@ const periodOptions = [
 export default function AIPage() {
   const { account } = useAccount()
   const { user } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [provider, setProvider] = useState<Provider | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [histories, setHistories] = useState<QueryHistory[]>([])
@@ -150,6 +153,18 @@ export default function AIPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '查看分析失败') }
     finally { setViewingId(null) }
   }
+
+  useEffect(() => {
+    const historyId = (location.state as { historyId?: unknown } | null)?.historyId
+    if (typeof historyId !== 'number') return
+    const item = histories.find((row) => row.id === historyId)
+    if (!item || viewingId !== null) return
+    setStartDate(dayjs(item.start_date))
+    setEndDate(dayjs(item.end_date))
+    setDays(dayjs(item.end_date).diff(dayjs(item.start_date), 'day') + 1)
+    void viewHistory(item)
+    navigate('/ai', { replace: true, state: null })
+  }, [histories, location.state, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteHistory = async (item: QueryHistory) => {
     setDeletingId(item.id); setError('')
