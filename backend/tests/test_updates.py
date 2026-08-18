@@ -16,14 +16,15 @@ def test_version_payload_offers_all_other_semver_versions(monkeypatch) -> None: 
     payload = updates.version_payload(
         [
             {"version": "0.4.0"},
+            {"version": "0.3.4"},
             {"version": "0.3.3"},
             {"version": "0.3.2"},
             {"version": "0.3.0"},
             {"version": "0.2.1"},
         ]
     )
-    assert payload["current_version"] == "0.3.3"
-    assert [row["version"] for row in payload["versions"]] == ["0.4.0", "0.3.2", "0.3.0", "0.2.1"]
+    assert payload["current_version"] == "0.3.4"
+    assert [row["version"] for row in payload["versions"]] == ["0.4.0", "0.3.3", "0.3.2", "0.3.0", "0.2.1"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
         updates.version_key("latest")

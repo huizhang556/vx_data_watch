@@ -44,7 +44,7 @@ def test_admin_can_check_and_queue_system_update(
     async def versions(_repository: str) -> list[dict[str, str]]:
         return [
             {"version": "0.4.0", "published_at": "2026-08-20T00:00:00Z"},
-            {"version": "0.3.3", "published_at": "2026-08-19T00:00:00Z"},
+            {"version": "0.3.4", "published_at": "2026-08-19T00:00:00Z"},
         ]
 
     monkeypatch.setattr(main, "fetch_registry_versions", versions)
@@ -54,7 +54,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.3.3"
+    assert checked.json()["current_version"] == "0.3.4"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.4.0"]
 
     queued = client.post(
