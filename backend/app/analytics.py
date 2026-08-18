@@ -132,6 +132,14 @@ def range_summary(db: Session, account_id: int, start_date: date, end_date: date
     }
 
 
+def range_has_complete_data(snapshot: dict[str, Any]) -> bool:
+    """Return whether every requested calendar day has an account metric row."""
+    requested_days = (
+        date.fromisoformat(snapshot["end_date"]) - date.fromisoformat(snapshot["start_date"])
+    ).days + 1
+    return snapshot["days_with_data"] >= requested_days
+
+
 def range_video_summary(
     db: Session, account_id: int, start_date: date, end_date: date
 ) -> dict[str, Any]:

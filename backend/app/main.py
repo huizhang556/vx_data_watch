@@ -34,7 +34,7 @@ from .ai_service import (
     test_provider,
     test_provider_values,
 )
-from .analytics import date_summary, range_summary, range_video_summary
+from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
 from .backups import create_backup
 from .config import get_settings
@@ -1098,6 +1098,15 @@ async def _generate_ai_report(
     snapshot = range_summary(db, account_id, start_date, end_date)
     if not snapshot["trend"]:
         raise HTTPException(status_code=422, detail="所选日期没有数据")
+    if not range_has_complete_data(snapshot):
+        requested_days = (end_date - start_date).days + 1
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"所选日期范围需要 {requested_days} 天完整数据，当前数据库仅有 "
+                f"{snapshot['days_with_data']} 天，请先导入缺少日期的数据后再分析"
+            ),
+        )
     try:
         report_text = await call_provider(config, snapshot)
     except Exception as exc:

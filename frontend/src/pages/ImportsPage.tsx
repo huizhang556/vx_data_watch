@@ -100,8 +100,8 @@ export default function ImportsPage() {
   return (
     <div className="page">
       <div className="page-heading"><div><Typography.Title level={2}>数据导入</Typography.Title><Typography.Text type="secondary">导入前预览，确认后持久化</Typography.Text></div></div>
-      <Segmented block className="import-tabs" value={mode} onChange={(value) => { setMode(value as typeof mode); setFile(null); setPreview(null); setCandidates([]); setError('') }} options={[{ label: '每日 CSV', value: 'csv' }, { label: '视频截图', value: 'screenshot' }, { label: '视频表格', value: 'sheet' }]} />
-      <Alert type="info" showIcon message="先区分两种表格" description={mode === 'csv' ? '每日 CSV 是账号级汇总：每天一行，包含播放、推荐、喜欢、评论、分享、关注，用于数据概览和趋势分析。' : mode === 'sheet' ? '视频表格是视频级明细：每个视频一行，包含视频标题、当日播放量等，用于视频贡献分析；请使用“下载模板”生成的格式。' : '视频截图用于从单篇视频后台截图识别视频级播放、喜欢、评论和分享数据。'} />
+      <Segmented block className="import-tabs" value={mode} onChange={(value) => { setMode(value as typeof mode); setFile(null); setPreview(null); setCandidates([]); setError('') }} options={[{ label: '每日 CSV', value: 'csv' }, { label: '数据截图', value: 'screenshot' }, { label: '视频表格', value: 'sheet' }]} />
+      <Alert type="info" showIcon message="先区分两种表格" description={mode === 'csv' ? '每日 CSV 是账号级汇总：每天一行，包含播放、推荐、喜欢、评论、分享、关注，用于数据概览和趋势分析。' : mode === 'sheet' ? '视频表格是视频级明细：每个视频一行，包含视频标题、当日播放量等，用于视频贡献分析；请使用“下载模板”生成的格式。' : '数据截图用于从单篇视频后台截图识别视频级播放、喜欢、评论和分享数据。'} />
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
 
       {mode === 'csv' && <section className="tool-section">
@@ -124,7 +124,7 @@ export default function ImportsPage() {
       </section>}
 
       {mode === 'screenshot' && <section className="tool-section">
-        <Typography.Title level={3}>视频数据截图</Typography.Title>
+        <Typography.Title level={3}>数据截图</Typography.Title>
         <div className="upload-row">
           <DatePicker aria-label="截图数据日期" placeholder="先选数据日期" allowClear value={metricDate} onChange={(value) => { setMetricDate(value); setScreenshotFiles([]) }} />
           <Upload disabled={!metricDate} accept="image/png,image/jpeg,image/webp" multiple showUploadList={false} beforeUpload={(value) => { setScreenshotFiles((items) => [...items, value]); return false }}><Button icon={<ImagePlus size={18} />}>选择多张截图</Button></Upload>

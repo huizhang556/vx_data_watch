@@ -43,6 +43,8 @@ export default function AIPage() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [connectionLoading, setConnectionLoading] = useState(false)
   const [analyzeLoading, setAnalyzeLoading] = useState(false)
+  const [rangeChecking, setRangeChecking] = useState(false)
+  const [rangeWarning, setRangeWarning] = useState('')
   const [viewingId, setViewingId] = useState<number | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [error, setError] = useState('')
@@ -64,6 +66,22 @@ export default function AIPage() {
   const loadHistories = () => account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   useEffect(() => { if (account) void loadProviders(account.id) }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadHistories() }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!account) return
+    const start = startDate.format('YYYY-MM-DD')
+    const end = endDate.format('YYYY-MM-DD')
+    const requestedDays = endDate.diff(startDate, 'day') + 1
+    setRangeChecking(true)
+    setRangeWarning('')
+    api<RangeAnalytics>(`/api/analytics/range?${query({ account_id: account.id, start_date: start, end_date: end })}`)
+      .then((snapshot) => {
+        if (snapshot.days_with_data < requestedDays) {
+          setRangeWarning(`当前数据库仅有 ${snapshot.days_with_data}/${requestedDays} 天数据，暂时无法分析完整时间段，请先导入缺少日期的数据。`)
+        }
+      })
+      .catch(() => setRangeWarning('暂时无法检查该时间段的数据量，请稍后重试。'))
+      .finally(() => setRangeChecking(false))
+  }, [account, startDate, endDate])
 
   const draftValues = async (requireModel = false) => {
     const fields: Array<keyof ProviderForm> = ['base_url', 'protocol', 'timeout_seconds', 'api_key']
@@ -198,9 +216,10 @@ export default function AIPage() {
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))
           }} />}
           {user.role === 'admin' && <Button icon={<PlugZap size={18} />} disabled={!provider} loading={connectionLoading} onClick={() => void testSavedConnection()}>测试连接</Button>}
-          <Button type="primary" icon={<Sparkles size={18} />} disabled={!provider} loading={analyzeLoading} onClick={() => void analyze()}>生成分析</Button>
+          <Button type="primary" icon={<Sparkles size={18} />} disabled={!provider || rangeChecking || Boolean(rangeWarning)} loading={analyzeLoading || rangeChecking} onClick={() => void analyze()}>生成分析</Button>
         </Space>
       </section>
+      {rangeWarning && <Alert type="warning" showIcon message="当前数据量不足" description={rangeWarning} />}
 
       {analyzeLoading ? <section className="report-browser report-loading"><Bot size={28} /><Typography.Text>正在生成分析报告...</Typography.Text></section> : result && <section className="report-browser">
         <header><div><Bot size={20} /><strong>查询范围：{result.start_date} 至 {result.end_date}</strong></div><time>查询时间：{dayjs(result.created_at).format('YYYY-MM-DD HH:mm')}</time></header>

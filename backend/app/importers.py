@@ -102,14 +102,14 @@ def parse_account_csv(content: bytes) -> list[AccountMetricRow]:
 
 VIDEO_HEADER_ALIASES = {
     "metric_date": ["数据日期", "日期", "metric_date"],
-    "title": ["视频标题", "标题", "title"],
+    "title": ["视频标题", "视频描述", "标题", "title"],
     "published_at": ["发布时间", "published_at"],
-    "plays": ["当日播放量", "昨日新增播放", "播放", "plays"],
+    "plays": ["当日播放量", "昨日新增播放", "播放量", "播放", "plays"],
     "identity_key": ["视频标识", "视频ID", "identity_key"],
     "cumulative_plays": ["累计播放量", "cumulative_plays"],
-    "likes": ["喜欢", "likes"],
-    "comments": ["评论", "comments"],
-    "shares": ["分享", "shares"],
+    "likes": ["喜欢", "喜欢量", "likes"],
+    "comments": ["评论", "评论量", "comments"],
+    "shares": ["分享", "分享量", "shares"],
 }
 
 

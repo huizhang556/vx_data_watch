@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import re
+import unicodedata
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Any
@@ -33,10 +34,10 @@ def _center_x(box: Any) -> float:
 
 
 def _parse_compact_number(text: str) -> tuple[int | None, bool]:
-    cleaned = text.strip().replace(" ", "")
-    match = re.search(r"(\d+(?:\.\d+)?)万", cleaned)
+    cleaned = unicodedata.normalize("NFKC", text).strip().replace(" ", "")
+    match = re.search(r"(\d+(?:[.,]\d+)?)万", cleaned)
     if match:
-        return int(float(match.group(1)) * 10000), True
+        return int(float(match.group(1).replace(",", "")) * 10000), True
     match = re.search(r"\d+", cleaned.replace(",", ""))
     return (int(match.group()), False) if match else (None, False)
 
@@ -80,6 +81,17 @@ def _assign_metric_values(
             values[metric_index] = (value, approximate, line["score"])
 
 
+def _run_ocr(image: Image.Image) -> Any:
+    """Support RapidOCR versions accepting either PIL images or NumPy arrays."""
+    engine = _engine()
+    try:
+        return engine(image)
+    except (AttributeError, TypeError, ValueError):
+        import numpy as np
+
+        return engine(np.asarray(image))
+
+
 def extract_screenshot_candidates(
     content: bytes, metric_date: date, image_name: str
 ) -> list[dict[str, Any]]:
@@ -92,7 +104,7 @@ def extract_screenshot_candidates(
     if image.width * image.height > 30_000_000:
         raise ValueError("截图像素过大")
 
-    result, _elapsed = _engine()(image)
+    result, _elapsed = _run_ocr(image)
     lines: list[dict[str, Any]] = []
     for entry in result or []:
         box, text, score = entry
@@ -106,7 +118,7 @@ def extract_screenshot_candidates(
         ((crop_right - crop_left) * 2, (crop_bottom - crop_top) * 2),
         Image.Resampling.LANCZOS,
     )
-    detailed_result, _elapsed = _engine()(content)
+    detailed_result, _elapsed = _run_ocr(content)
     for box, text, score in detailed_result or []:
         mapped_box = [
             [crop_left + float(point[0]) / 2, crop_top + float(point[1]) / 2] for point in box
@@ -115,7 +127,7 @@ def extract_screenshot_candidates(
     lines.sort(key=lambda item: item["y"])
 
     candidates: list[dict[str, Any]] = []
-    increment_pattern = re.compile(r"昨日新增\s*(\d+)\s*次?播放")
+    increment_pattern = re.compile(r"昨日新增\s*([\d.,]+)\s*次?播放")
     published_pattern = re.compile(
         r"(20\d{2})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[：:](\d{2})"
     )
@@ -166,7 +178,7 @@ def extract_screenshot_candidates(
                 ((band_right - band_left) * 2, (band_bottom - band_top) * 2),
                 Image.Resampling.LANCZOS,
             )
-            band_result, _elapsed = _engine()(band)
+            band_result, _elapsed = _run_ocr(band)
             band_lines = [
                 _line(box, text, score)
                 for box, text, score in band_result or []
@@ -180,13 +192,16 @@ def extract_screenshot_candidates(
         cumulative_entry = metric_values.get(0)
         cumulative = cumulative_entry[0] if cumulative_entry else None
         approximate = cumulative_entry[1] if cumulative_entry else False
+        increment_value = _parse_compact_number(match.group(1))[0]
+        if increment_value is None:
+            continue
         candidates.append(
             {
                 "source_image": image_name,
                 "title": title,
                 "published_at": published_at.isoformat() if published_at else None,
                 "metric_date": metric_date.isoformat(),
-                "plays": int(match.group(1)),
+                "plays": increment_value,
                 "cumulative_plays": cumulative,
                 "cumulative_plays_approximate": approximate,
                 "likes": metric_values.get(1, (None, False, 0.0))[0],
@@ -199,6 +214,8 @@ def extract_screenshot_candidates(
                 else round(increment_line["score"], 3),
             }
         )
+    if not candidates:
+        raise ValueError("未识别到单篇视频数据，请上传包含“昨日新增 N 次播放”的数据截图；账号汇总截图请使用每日 CSV")
     return deduplicate_candidates(candidates)
 
 
