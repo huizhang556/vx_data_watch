@@ -173,8 +173,9 @@ export default function AIPage() {
 
       <section className="section-band">
         <div className="section-heading"><Typography.Title level={3}>查询记录</Typography.Title><History size={20} /></div>
+        {viewingId !== null && <Alert type="info" showIcon message="正在查看分析" description="正在读取已缓存的分析报告；如果是旧记录，系统可能需要重新生成，请稍候。" />}
         {!histories.length ? <Empty description="暂无查询记录" /> : <div className="history-list">{histories.map((item) => <article key={item.id}><div><strong>{item.start_date === item.end_date ? item.start_date : `${item.start_date} 至 ${item.end_date}`}</strong><time>{dayjs(item.created_at).format('YYYY-MM-DD HH:mm')}</time></div><Space className="history-actions" size={6} wrap>
-          <Button size="small" icon={<Eye size={16} />} loading={viewingId === item.id} disabled={viewingId !== null && viewingId !== item.id} onClick={() => void viewHistory(item)}>查看分析</Button>
+          <Button size="small" icon={<Eye size={16} />} loading={viewingId === item.id} disabled={viewingId !== null && viewingId !== item.id} onClick={() => void viewHistory(item)}>{viewingId === item.id ? '查看分析中...' : '查看分析'}</Button>
           <Popconfirm title="删除查询记录" description="会同时删除这条分析报告缓存，不会删除视频号数据。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteHistory(item)}>
             <Button size="small" danger icon={<Trash2 size={16} />} loading={deletingId === item.id}>删除</Button>
           </Popconfirm>
