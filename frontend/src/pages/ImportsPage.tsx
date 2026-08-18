@@ -62,7 +62,10 @@ export default function ImportsPage() {
       if (!metricDate) { setError('请先选择这批表格对应的数据日期，确认没有选错日期'); return }
       const result = await api<{ rows: Candidate[]; filename: string }>('/api/imports/video-sheet/preview', { method: 'POST', body: formData(file, 'metric_date', metricDate) })
       setCandidates(result.rows); message.success(`识别到 ${result.rows.length} 条视频数据`)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '解析失败') }
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : '解析失败'
+      setError(detail.includes('缺少字段') ? `${detail}。当前文件可能是“每日 CSV”汇总文件，请切换到每日 CSV；视频表格请使用本页下载的模板。` : detail)
+    }
     finally { setBusy(false) }
   }
   const recognize = async () => {
@@ -98,6 +101,7 @@ export default function ImportsPage() {
     <div className="page">
       <div className="page-heading"><div><Typography.Title level={2}>数据导入</Typography.Title><Typography.Text type="secondary">导入前预览，确认后持久化</Typography.Text></div></div>
       <Segmented block className="import-tabs" value={mode} onChange={(value) => { setMode(value as typeof mode); setFile(null); setPreview(null); setCandidates([]); setError('') }} options={[{ label: '每日 CSV', value: 'csv' }, { label: '视频截图', value: 'screenshot' }, { label: '视频表格', value: 'sheet' }]} />
+      <Alert type="info" showIcon message="先区分两种表格" description={mode === 'csv' ? '每日 CSV 是账号级汇总：每天一行，包含播放、推荐、喜欢、评论、分享、关注，用于数据概览和趋势分析。' : mode === 'sheet' ? '视频表格是视频级明细：每个视频一行，包含视频标题、当日播放量等，用于视频贡献分析；请使用“下载模板”生成的格式。' : '视频截图用于从单篇视频后台截图识别视频级播放、喜欢、评论和分享数据。'} />
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
 
       {mode === 'csv' && <section className="tool-section">
