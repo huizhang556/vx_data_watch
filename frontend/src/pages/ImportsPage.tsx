@@ -82,7 +82,12 @@ export default function ImportsPage() {
       setCandidates(result.candidates)
       if (result.errors.length) setError(result.errors.map((item) => `${item.filename}: ${item.error}`).join('；'))
       if (result.candidates.length) message.success(`识别到 ${result.candidates.length} 条候选记录`)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'OCR 失败') }
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : 'OCR 失败'
+      setError(detail.includes('(502)') || detail.includes('502')
+        ? 'OCR 请求未能到达应用服务器（网关 502）。请检查服务器容器是否正常运行、Nginx 反向代理和 OCR 请求超时配置后重试。'
+        : detail)
+    }
     finally { setBusy(false) }
   }
   const commitCandidates = async () => {

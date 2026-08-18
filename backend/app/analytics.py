@@ -165,6 +165,12 @@ def range_video_summary(
             DailyAccountMetric.metric_date.between(start_date, end_date),
         )
     ) or 0
+    days_with_data = db.scalar(
+        select(func.count(DailyAccountMetric.id)).where(
+            DailyAccountMetric.account_id == account_id,
+            DailyAccountMetric.metric_date.between(start_date, end_date),
+        )
+    ) or 0
     video_total = sum(int(row.plays or 0) for row in rows)
     cumulative_share = 0.0
     videos = []
@@ -190,6 +196,7 @@ def range_video_summary(
         "account_id": account_id,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "days_with_data": int(days_with_data),
         "videos": videos,
         "reconciliation": {
             "account_total": account_total,

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -934,6 +935,33 @@ def select_ai_provider(
     write_audit(db, "ai.provider.select", user, "ai_provider", config.id)
     db.commit()
     return _provider_payload(config)
+
+
+@app.delete("/api/ai/provider/{provider_id}", status_code=204)
+def delete_ai_provider(
+    provider_id: int,
+    account_id: int,
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    _get_account(db, account_id)
+    config = db.scalar(
+        select(AIProviderConfig).where(
+            AIProviderConfig.id == provider_id,
+            AIProviderConfig.account_id == account_id,
+        )
+    )
+    if not config:
+        raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
+    try:
+        db.delete(config)
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该配置已被历史分析记录使用，不能删除；可以重新编辑并停用它") from exc
+    write_audit(db, "ai.provider.delete", user, "ai_provider", provider_id)
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.post("/api/ai/provider/test-and-save")

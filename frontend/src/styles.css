@@ -95,6 +95,7 @@ button, input, textarea, select { letter-spacing: 0; }
 .history-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; background: #fff; border: 1px solid #dfe6e2; border-radius: 6px; }
 .link-button { border: 0; padding: 6px 10px; color: #137a63; background: transparent; cursor: pointer; font: inherit; white-space: nowrap; }
 .link-button:hover { color: #0b5e4c; text-decoration: underline; }
+.provider-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .history-actions { justify-content: flex-end; }
 .history-range-picker { width: 100%; }
 .model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }

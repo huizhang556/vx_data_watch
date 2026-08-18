@@ -40,6 +40,7 @@ export default function DashboardPage() {
   const { account } = useAccount()
   const navigate = useNavigate()
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
+  const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(1, 'day'))
   const [days, setDays] = useState(1)
   const [data, setData] = useState<RangeAnalytics | null>(null)
   const [loading, setLoading] = useState(false)
@@ -49,8 +50,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!account) { setData(null); return }
+    const start = startDate.format('YYYY-MM-DD')
     const end = endDate.format('YYYY-MM-DD')
-    const start = endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
     setLoading(true); setError('')
     api<RangeAnalytics>(`/api/analytics/range?${query({ account_id: account.id, start_date: start, end_date: end })}`)
       .then((snapshot) => {
@@ -61,16 +62,16 @@ export default function DashboardPage() {
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : '加载失败'))
       .finally(() => setLoading(false))
-  }, [account, endDate, days])
+  }, [account, startDate, endDate, days])
 
   useEffect(() => {
     if (!account) { setAiHistory(null); return }
+    const start = startDate.format('YYYY-MM-DD')
     const end = endDate.format('YYYY-MM-DD')
-    const start = endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
     api<Array<{ id: number; start_date: string; end_date: string; created_at: string }>>(`/api/ai/reports?${query({ account_id: account.id })}`)
       .then((rows) => setAiHistory(rows.find((row) => row.start_date === start && row.end_date === end) || null))
       .catch(() => setAiHistory(null))
-  }, [account, endDate, days])
+  }, [account, startDate, endDate, days])
 
   const previousByDate = useMemo(() => new Map(
     data?.previous_trend.map((row) => [row.date, row]) || [],
@@ -141,10 +142,11 @@ export default function DashboardPage() {
   return (
     <div className="page">
       <div className="page-heading dashboard-heading">
-        <div><Typography.Title level={2}>数据概览</Typography.Title><Typography.Text type="secondary">{account.name}</Typography.Text></div>
+        <div><Typography.Title level={2}>数据概览</Typography.Title><Typography.Text type="secondary">{account.name} · 数据范围：{startDate.format('YYYY-MM-DD')} 至 {endDate.format('YYYY-MM-DD')}</Typography.Text></div>
         <div className="date-controls">
-          <Segmented value={days} onChange={(value) => setDays(Number(value))} options={periodOptions} />
-          <DatePicker allowClear={false} value={endDate} onChange={(value) => value && setEndDate(value)} />
+          <Segmented value={periodOptions.some((item) => item.value === days) ? days : undefined} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} />
+          <DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} />
+          <DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} />
         </div>
       </div>
       {error && <Alert type="error" showIcon message={error} />}

@@ -68,6 +68,7 @@ export interface VideoRangeAnalytics {
   account_id: number
   start_date: string
   end_date: string
+  days_with_data: number
   videos: VideoRow[]
   reconciliation: DayAnalytics['reconciliation']
 }

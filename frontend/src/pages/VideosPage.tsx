@@ -14,18 +14,19 @@ const periodOptions = [
 export default function VideosPage() {
   const { account } = useAccount()
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
+  const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(1, 'day'))
   const [days, setDays] = useState(1)
   const [data, setData] = useState<VideoRangeAnalytics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     if (!account) { setData(null); return }
+    const start = startDate.format('YYYY-MM-DD')
     const end = endDate.format('YYYY-MM-DD')
-    const start = endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
     setLoading(true); setError('')
     api<VideoRangeAnalytics>(`/api/analytics/videos?${query({ account_id: account.id, start_date: start, end_date: end })}`)
       .then(setData).catch((cause) => setError(cause instanceof Error ? cause.message : '加载失败')).finally(() => setLoading(false))
-  }, [account, endDate, days])
+  }, [account, startDate, endDate, days])
 
   const pieOption = useMemo(() => {
     const top = data?.videos.slice(0, 10) || []
@@ -45,10 +46,11 @@ export default function VideosPage() {
   return (
     <div className="page">
       <div className="page-heading dashboard-heading">
-        <div><Typography.Title level={2}>视频贡献</Typography.Title><Typography.Text type="secondary">按所选时间新增播放量汇总</Typography.Text></div>
-        <div className="date-controls"><Segmented value={days} onChange={(value) => setDays(Number(value))} options={periodOptions} /><DatePicker allowClear={false} value={endDate} onChange={(value) => value && setEndDate(value)} /></div>
+        <div><Typography.Title level={2}>视频贡献</Typography.Title><Typography.Text type="secondary">按所选时间新增播放量汇总 · 数据范围：{startDate.format('YYYY-MM-DD')} 至 {endDate.format('YYYY-MM-DD')}</Typography.Text></div>
+        <div className="date-controls"><Segmented value={periodOptions.some((item) => item.value === days) ? days : undefined} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} /><DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} /><DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} /></div>
       </div>
       {error && <Alert type="error" showIcon message={error} />}
+      {!loading && data && data.days_with_data < days && <Alert type="warning" showIcon message="当前数据量不足" description={`当前数据库仅有 ${data.days_with_data}/${days} 天数据，所选时间段的逐视频统计可能不完整，请先导入缺少日期的数据。`} />}
       {loading ? <Skeleton active /> : !data?.videos.length ? <Empty description="所选时间暂无逐视频数据" /> : <>
         <section className="reconcile-strip">
           <div><span>账号总量</span><strong>{data.reconciliation?.account_total.toLocaleString()}</strong></div>

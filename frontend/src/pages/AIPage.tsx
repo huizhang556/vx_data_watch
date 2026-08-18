@@ -176,6 +176,21 @@ export default function AIPage() {
     finally { setDeletingId(null) }
   }
 
+  const deleteProvider = async (item: Provider) => {
+    if (!account) return
+    try {
+      await api(`/api/ai/provider/${item.id}?${query({ account_id: account.id })}`, { method: 'DELETE' })
+      setProviders((rows) => rows.filter((row) => row.id !== item.id))
+      if (provider?.id === item.id) await loadProviders(account.id)
+      message.success('接口配置已删除')
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '删除配置失败') }
+  }
+
+  const providerOptions = providers.map((item) => ({
+    value: item.id,
+    label: <div className="provider-option"><span>{item.name}</span><Popconfirm title="删除接口配置" description="删除后不能恢复，历史分析记录使用过的配置无法删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={(event) => { event?.stopPropagation(); void deleteProvider(item) }}><Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label={`删除配置 ${item.name}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} /></Popconfirm></div>,
+  }))
+
   const reportTrendChart = useMemo(() => ({
     animation: false,
     color: reportMetrics.map((item) => item.color),
@@ -226,7 +241,7 @@ export default function AIPage() {
           <Segmented value={days} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} />
           <DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
           <DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(value.subtract(days - 1, 'day')) }} />
-          {user.role === 'admin' && <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 160 }} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(id) => {
+          {user.role === 'admin' && <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onChange={(id) => {
             const next = providers.find((item) => item.id === id)
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))
           }} />}
@@ -259,7 +274,7 @@ export default function AIPage() {
       <Modal title="OpenAI 兼容接口" open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
         {error && <Alert type="error" showIcon message={error} />}
-        <Space style={{ marginBottom: 12 }} wrap><Select aria-label="切换配置" value={form.getFieldValue('provider_id')} placeholder="选择已有配置" style={{ minWidth: 220 }} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(id) => { const next = providers.find((item) => item.id === id); if (next) { form.setFieldsValue({ ...next, account_id: account.id, provider_id: next.id, api_key: undefined }); setTested(false); setModels([next.model]) } }} /><Button icon={<Plus size={16} />} onClick={() => { form.resetFields(); form.setFieldsValue({ account_id: account.id, protocol: 'chat_completions', timeout_seconds: 60 }); setTested(false); setModels([]) }}>新建配置</Button></Space>
+        <Space style={{ marginBottom: 12 }} wrap><Select aria-label="切换配置" value={form.getFieldValue('provider_id')} placeholder="选择已有配置" style={{ minWidth: 220 }} options={providerOptions} onChange={(id) => { const next = providers.find((item) => item.id === id); if (next) { form.setFieldsValue({ ...next, account_id: account.id, provider_id: next.id, api_key: undefined }); setTested(false); setModels([next.model]) } }} /><Button icon={<Plus size={16} />} onClick={() => { form.resetFields(); form.setFieldsValue({ account_id: account.id, protocol: 'chat_completions', timeout_seconds: 60 }); setTested(false); setModels([]) }}>新建配置</Button></Space>
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
