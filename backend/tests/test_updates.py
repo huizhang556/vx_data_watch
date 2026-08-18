@@ -40,6 +40,20 @@ def test_queue_rejects_parallel_update(tmp_path: Path, monkeypatch) -> None:  # 
         updates.queue_update("0.4.0", "backup-2.vxbackup")
 
 
+def test_prepare_update_dir_repairs_root_owned_directory(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls: list[tuple[int, int]] = []
+    monkeypatch.setattr(updates.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(
+        updates.os,
+        "chown",
+        lambda path, uid, gid: calls.append((uid, gid)),
+        raising=False,
+    )
+    directory = updates.prepare_update_dir_for_app(tmp_path / "updates")
+    assert directory.is_dir()
+    assert calls == [(10001, 10001)]
+
+
 def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     env_file = tmp_path / ".env"
     env_file.write_text("VX_PORT=8000\n# VX_IMAGE=old/image:tag\n", encoding="utf-8")

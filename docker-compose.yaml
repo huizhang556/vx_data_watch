@@ -40,6 +40,8 @@ services:
       VX_UPDATE_ENV_FILE: /project/.env
       VX_UPDATE_PROJECT: vx-data-watch
       VX_UPDATE_SERVICE: app
+      VX_APP_UID: "10001"
+      VX_APP_GID: "10001"
     volumes:
       - vx-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock

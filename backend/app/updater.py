@@ -8,7 +8,12 @@ from typing import Any
 
 from .config import get_settings
 from .docker_engine import DockerEngine
-from .updates import SEMVER_PATTERN, update_paths, write_json_atomic
+from .updates import (
+    SEMVER_PATTERN,
+    prepare_update_dir_for_app,
+    update_paths,
+    write_json_atomic,
+)
 
 
 def _status(request: dict[str, Any], state: str, message: str, **extra: Any) -> None:
@@ -71,6 +76,7 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
 
 
 def run() -> None:
+    prepare_update_dir_for_app()
     request_path, processing_path, _ = update_paths()
     while True:
         if request_path.exists() and not processing_path.exists():

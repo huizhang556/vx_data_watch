@@ -97,6 +97,30 @@ def _update_dir() -> Path:
     return path
 
 
+def prepare_update_dir_for_app(path: Path | None = None) -> Path:
+    """Create the shared update directory and make it writable by the app user.
+
+    The updater runs as root so it can access Docker, while the API runs as
+    UID 10001. Named volumes otherwise may be initialized as root-owned when
+    the updater starts first, preventing the API from queueing an update.
+    """
+    directory = path or _update_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    geteuid = getattr(os, "geteuid", None)
+    chown = getattr(os, "chown", None)
+    if not callable(geteuid) or not callable(chown) or geteuid() != 0:
+        return directory
+    try:
+        uid = int(os.environ.get("VX_APP_UID", "10001"))
+        gid = int(os.environ.get("VX_APP_GID", str(uid)))
+        chown(directory, uid, gid)
+        directory.chmod(0o770)
+    except (OSError, ValueError):
+        # A non-Linux development environment may not support ownership changes.
+        pass
+    return directory
+
+
 def update_paths() -> tuple[Path, Path, Path]:
     directory = _update_dir()
     return directory / "request.json", directory / "processing.json", directory / "status.json"
