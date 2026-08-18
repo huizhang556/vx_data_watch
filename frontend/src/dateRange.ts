@@ -17,3 +17,9 @@ export function disableUnavailableDate(value: Dayjs, availableDates: string[] | 
   if (value.isAfter(dayjs(), 'day')) return true
   return availableDates !== null && !availableDates.includes(value.format('YYYY-MM-DD'))
 }
+
+export function rangeHasAllDates(endDate: Dayjs, days: number, availableDates: string[] | null): boolean {
+  if (availableDates === null) return true
+  return Array.from({ length: days }, (_, index) => endDate.subtract(index, 'day').format('YYYY-MM-DD'))
+    .every((date) => availableDates.includes(date))
+}

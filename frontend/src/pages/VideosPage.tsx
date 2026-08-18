@@ -4,7 +4,7 @@ import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
 import { api, query } from '../api'
 import { useAccount } from '../account'
-import { disableUnavailableDate, useAvailableDates } from '../dateRange'
+import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../dateRange'
 import type { VideoRangeAnalytics, VideoRow } from '../types'
 
 const periodOptions = [
@@ -49,7 +49,7 @@ export default function VideosPage() {
     <div className="page">
       <div className="page-heading dashboard-heading">
         <div><Typography.Title level={2}>视频贡献</Typography.Title><Typography.Text type="secondary">按所选时间新增播放量汇总 · 数据范围：{startDate.format('YYYY-MM-DD')} 至 {endDate.format('YYYY-MM-DD')}</Typography.Text></div>
-        <div className="date-controls"><Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions, { label: '自定义', value: 0 }]} /><DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} /><DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} /></div>
+        <div className="date-controls"><Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions.map((item) => ({ ...item, disabled: !rangeHasAllDates(endDate, item.value, availableDates) })), { label: '自定义', value: 0 }]} /><DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} /><DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} /></div>
       </div>
       {error && <Alert type="error" showIcon message={error} />}
       {!loading && data && data.days_with_data < days && <Alert type="warning" showIcon message="当前数据量不足" description={`当前数据库仅有 ${data.days_with_data}/${days} 天数据，所选时间段的逐视频统计可能不完整，请先导入缺少日期的数据。`} />}
