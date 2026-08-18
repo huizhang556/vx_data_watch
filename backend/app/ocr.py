@@ -16,7 +16,9 @@ class OCRUnavailableError(RuntimeError):
     pass
 
 
-_MAX_OCR_DIMENSION = 3000
+# OCR's native runtime can briefly allocate several times the image size.
+# Keep the working set bounded for small VPS deployments.
+_MAX_OCR_DIMENSION = 2000
 
 
 def _resize_for_ocr(image: Image.Image) -> Image.Image:

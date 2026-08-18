@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import time
 from contextlib import asynccontextmanager
@@ -633,6 +634,7 @@ def recognize_screenshots(
             )
         except (ValueError, OCRUnavailableError, OSError, RuntimeError) as exc:
             errors.append({"filename": file.filename or "截图", "error": str(exc)})
+    gc.collect()
     return {
         "metric_date": metric_date,
         "input_files": len(files),
