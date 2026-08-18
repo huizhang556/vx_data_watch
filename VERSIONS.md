@@ -2,6 +2,12 @@
 
 本文件记录 VX Data Watch 各正式版本的主要功能。安装包和源码归档可在 [GitHub 标签页](https://github.com/huizhang556/vx_data_watch/tags) 查看。
 
+## 0.3.5 - 2026-08-18
+
+- 修复在线更新共享目录权限，更新器启动时自动为应用用户准备 `updates` 目录。
+- 优化高分辨率截图 OCR，限制识别工作尺寸并主动回收图片处理内存，降低小型服务器 OOM 风险。
+- 发布 Docker 镜像 `litehub/vx-data-watch:0.3.5`。
+
 ## 0.3.4 - 2026-08-18
 
 - 修复在线更新版本检测重复请求和 Docker Hub 网络抖动导致的错误提示。
