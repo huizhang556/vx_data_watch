@@ -114,7 +114,7 @@ cp .env.example .env
 
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
-| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:0.3.1` |
+| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:0.3.2` |
 | `VX_UPDATE_REPOSITORY` | 在线更新允许使用的固定仓库 | `litehub/vx-data-watch` |
 | `VX_NODE_IMAGE` | 仅自行构建时使用的 Node 基础镜像 | `node:24-alpine` |
 | `VX_PYTHON_IMAGE` | 仅自行构建时使用的 Python 基础镜像 | `python:3.12-slim` |

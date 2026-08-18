@@ -21,8 +21,8 @@ def test_version_payload_only_offers_newer_semver(monkeypatch) -> None:  # type:
             {"version": "0.2.1"},
         ]
     )
-    assert payload["current_version"] == "0.3.1"
-    assert [row["version"] for row in payload["versions"]] == ["0.4.0", "0.3.2"]
+    assert payload["current_version"] == "0.3.2"
+    assert [row["version"] for row in payload["versions"]] == ["0.4.0"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
         updates.version_key("latest")

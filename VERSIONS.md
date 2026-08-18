@@ -2,6 +2,11 @@
 
 本文件记录 VX Data Watch 各正式版本的主要功能。安装包和源码归档可在 [GitHub 标签页](https://github.com/huizhang556/vx_data_watch/tags) 查看。
 
+## 0.3.2 - 2026-08-18
+
+- 完善 AI 配置缓存、历史报告查看和任意历史日期导入。
+- 发布 Docker 镜像 `litehub/vx-data-watch:0.3.2`。
+
 ## 0.3.1 - 2026-08-18
 
 - 修复 HTTPS 配置与 HTTP 访问组合下登录 Cookie 未被浏览器保存，导致后续操作提示“请先登录”的问题。
