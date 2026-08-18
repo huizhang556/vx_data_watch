@@ -7,7 +7,7 @@ import pytest
 from app import updater, updates
 
 
-def test_version_payload_only_offers_newer_semver(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_version_payload_offers_all_other_semver_versions(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         updates,
         "get_settings",
@@ -22,7 +22,7 @@ def test_version_payload_only_offers_newer_semver(monkeypatch) -> None:  # type:
         ]
     )
     assert payload["current_version"] == "0.3.2"
-    assert [row["version"] for row in payload["versions"]] == ["0.4.0"]
+    assert [row["version"] for row in payload["versions"]] == ["0.4.0", "0.3.0", "0.2.1"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
         updates.version_key("latest")

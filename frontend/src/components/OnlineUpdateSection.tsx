@@ -4,6 +4,12 @@ import { CloudDownload, RefreshCw } from 'lucide-react'
 import { api } from '../api'
 import type { SystemUpdateStatus, SystemVersionInfo } from '../types'
 
+const compareVersions = (left: string, right: string) => {
+  const a = left.split('.').map(Number); const b = right.split('.').map(Number)
+  for (let index = 0; index < 3; index += 1) if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) - (b[index] || 0)
+  return 0
+}
+
 export default function OnlineUpdateSection() {
   const [versionInfo, setVersionInfo] = useState<SystemVersionInfo | null>(null)
   const [versionError, setVersionError] = useState('')
@@ -40,8 +46,8 @@ export default function OnlineUpdateSection() {
   const startUpdate = () => {
     if (!targetVersion) return
     Modal.confirm({
-      title: `更新到 ${targetVersion}？`,
-      content: '系统会先创建加密备份，再拉取镜像并重启应用。重启期间页面可能短暂断开，请不要关闭 Docker。',
+      title: `切换到 ${targetVersion}？`,
+      content: '系统会先创建加密备份，再拉取镜像并重启应用。目标版本可以是升级版本，也可以是历史版本。重启期间页面可能短暂断开，请不要关闭 Docker。',
       okText: '备份并更新', cancelText: '取消',
       onOk: async () => {
         setUpdateStarting(true)
@@ -61,7 +67,7 @@ export default function OnlineUpdateSection() {
     {versionError && <Alert type="error" showIcon message="版本检测失败" description={versionError} />}
     {versionInfo && <div className="update-panel">
       <div className="version-summary"><div><span>当前版本</span><strong>v{versionInfo.current_version}</strong></div><div><span>最新版本</span><strong>{versionInfo.latest_version ? `v${versionInfo.latest_version}` : '暂未发布'}</strong></div><div><span>镜像仓库</span><strong>{versionInfo.repository}</strong></div></div>
-      {!versionInfo.update_supported ? <Alert type="warning" showIcon message="当前为源码部署" description="可以在线检测版本，但自动拉取和重启只在 Docker Compose 部署中启用。源码部署请在终端执行 git pull 后重新启动。" /> : versionInfo.versions.length ? <div className="update-actions"><Select aria-label="目标版本" value={targetVersion} onChange={setTargetVersion} options={versionInfo.versions.map((row) => ({ value: row.version, label: `v${row.version}${row.version === versionInfo.latest_version ? '（最新）' : ''}` }))} /><Button type="primary" icon={<CloudDownload size={18} />} loading={updateStarting || updateActive} disabled={!targetVersion} onClick={startUpdate}>更新并重启</Button></div> : <Alert type="success" showIcon message={versionInfo.latest_version ? '当前已经是最新版本' : '镜像仓库暂时没有正式版本标签'} />}
+      {!versionInfo.update_supported ? <Alert type="warning" showIcon message="当前为源码部署" description="可以在线检测版本，但自动拉取和重启只在 Docker Compose 部署中启用。源码部署请在终端执行 git pull 后重新启动。" /> : versionInfo.versions.length ? <div className="update-actions"><Select aria-label="目标版本" value={targetVersion} onChange={setTargetVersion} options={versionInfo.versions.map((row) => ({ value: row.version, label: `v${row.version}${row.version === versionInfo.latest_version ? '（最新）' : ''}${compareVersions(row.version, versionInfo.current_version) < 0 ? '（回退）' : '（升级）'}` }))} /><Button type="primary" icon={<CloudDownload size={18} />} loading={updateStarting || updateActive} disabled={!targetVersion} onClick={startUpdate}>切换并重启</Button></div> : <Alert type="success" showIcon message={versionInfo.latest_version ? '镜像库中没有其他可切换版本' : '镜像仓库暂时没有正式版本标签'} />}
       {updateStatus && updateStatus.state !== 'idle' && <Alert className="update-status" type={statusType} showIcon message={updateStatus.message || '正在处理更新'} description={<Space wrap><span>{updateStatus.target_version ? `目标版本：v${updateStatus.target_version}` : ''}</span>{updateStatus.state === 'success' && <span>页面即将刷新</span>}</Space>} />}
     </div>}
   </section>

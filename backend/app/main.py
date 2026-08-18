@@ -1289,8 +1289,8 @@ async def system_update(
 ) -> dict[str, Any]:
     if not settings.updater_enabled:
         raise HTTPException(status_code=409, detail="当前部署未启用在线更新服务")
-    if version_key(payload.version) <= version_key(__version__):
-        raise HTTPException(status_code=400, detail="只能选择高于当前版本的版本")
+    if version_key(payload.version) == version_key(__version__):
+        raise HTTPException(status_code=400, detail="不能更新到当前正在运行的版本")
     try:
         versions = await fetch_registry_versions(settings.update_repository)
     except UpdateRegistryError as exc:

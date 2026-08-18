@@ -60,8 +60,7 @@ async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
 
 def version_payload(versions: list[dict[str, Any]]) -> dict[str, Any]:
     settings = get_settings()
-    current_key = version_key(__version__)
-    selectable = [row for row in versions if version_key(row["version"]) > current_key]
+    selectable = [row for row in versions if row["version"] != __version__]
     return {
         "current_version": __version__,
         "latest_version": versions[0]["version"] if versions else None,
