@@ -61,11 +61,14 @@ class VideoMetricInput(BaseModel):
 
 class VideoMetricCommit(BaseModel):
     account_id: int
+    metric_date: date | None = None
     filename: str | None = None
     rows: list[VideoMetricInput] = Field(min_length=1, max_length=1000)
 
 
 class AIProviderInput(BaseModel):
+    account_id: int
+    provider_id: int | None = None
     name: str = Field(default="默认 AI", max_length=100)
     base_url: str = Field(min_length=8, max_length=500)
     model: str = Field(min_length=1, max_length=200)
@@ -83,6 +86,8 @@ class AIProviderInput(BaseModel):
 
 
 class AIProviderDraft(BaseModel):
+    account_id: int
+    provider_id: int | None = None
     base_url: str = Field(min_length=8, max_length=500)
     model: str | None = Field(default=None, max_length=200)
     protocol: Literal["chat_completions", "responses"] = "chat_completions"
@@ -96,6 +101,11 @@ class AIProviderDraft(BaseModel):
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("Base URL must use http or https")
         return value.rstrip("/")
+
+
+class AIProviderSelect(BaseModel):
+    account_id: int
+    provider_id: int
 
 
 class AIAnalyzeRequest(BaseModel):

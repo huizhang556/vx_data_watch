@@ -139,15 +139,17 @@ def parse_video_sheet(content: bytes, filename: str) -> list[dict[str, Any]]:
         raise ImportValidationError("文件中没有数据行")
     headers = [str(key).strip() for key in raw_rows[0]]
     mapping = {key: _find_alias(headers, key) for key in VIDEO_HEADER_ALIASES}
-    for required in ("metric_date", "title", "plays"):
+    for required in ("title", "plays"):
         if not mapping[required]:
             raise ImportValidationError(f"缺少字段：{VIDEO_HEADER_ALIASES[required][0]}")
 
     parsed: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_rows, start=2):
         try:
-            raw_date = str(raw[mapping["metric_date"]]).strip()  # type: ignore[index]
-            metric_date = datetime.fromisoformat(raw_date.replace("/", "-")).date()
+            metric_date = None
+            if mapping["metric_date"] and raw.get(mapping["metric_date"]):
+                raw_date = str(raw[mapping["metric_date"]]).strip()  # type: ignore[index]
+                metric_date = datetime.fromisoformat(raw_date.replace("/", "-")).date()
             title = str(raw[mapping["title"]]).strip()  # type: ignore[index]
             if not title:
                 raise ImportValidationError("视频标题不能为空")

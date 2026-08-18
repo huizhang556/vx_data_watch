@@ -27,12 +27,12 @@ const periodOptions = [
 
 function compareMarkup(current: number | null, previous: number | null | undefined) {
   if (current === null || previous === null || previous === undefined) return '<span class="trend-na">暂无数据</span>'
-  if (current === previous) return '<span class="trend-flat">→ 持平</span>'
+  if (current === previous) return '<span class="trend-flat">→</span>'
   const delta = previous === 0 ? null : Math.abs((current - previous) / previous * 100)
   const suffix = delta === null ? '' : ` ${delta.toFixed(1)}%`
   return current > previous
-    ? `<span class="trend-up">↑ 上升${suffix}</span>`
-    : `<span class="trend-down">↓ 下降${suffix}</span>`
+    ? `<span class="trend-up">↑${suffix}</span>`
+    : `<span class="trend-down">↓${suffix}</span>`
 }
 
 export default function DashboardPage() {

@@ -179,6 +179,9 @@ class AIProviderConfig(Base):
     __tablename__ = "ai_provider_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("channels_accounts.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(String(100), default="默认 AI")
     base_url: Mapped[str] = mapped_column(String(500))
     model: Mapped[str] = mapped_column(String(200))
@@ -195,6 +198,9 @@ class AIAnalysisReport(Base):
     __tablename__ = "ai_analysis_reports"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    history_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_query_history.id", ondelete="CASCADE"), index=True
+    )
     account_id: Mapped[int] = mapped_column(
         ForeignKey("channels_accounts.id", ondelete="CASCADE"), index=True
     )
@@ -203,6 +209,8 @@ class AIAnalysisReport(Base):
     end_date: Mapped[date] = mapped_column(Date)
     input_snapshot_json: Mapped[str] = mapped_column(Text)
     report_text: Mapped[str] = mapped_column(Text)
+    prompt_text: Mapped[str | None] = mapped_column(Text)
+    provider_snapshot_json: Mapped[str | None] = mapped_column(Text)
     prompt_version: Mapped[str] = mapped_column(String(30), default="v1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

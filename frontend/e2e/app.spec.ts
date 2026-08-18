@@ -21,6 +21,8 @@ test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ 
   await expect(page.getByText('样例视频号').last()).toBeVisible()
 
   await page.getByText('数据导入', { exact: true }).first().click()
+  await page.getByRole('textbox', { name: '数据截止日期' }).fill('2026-08-16')
+  await page.getByRole('textbox', { name: '数据截止日期' }).press('Enter')
   const csvPath = path.resolve(import.meta.dirname, 'fixtures/account.csv')
   await page.locator('input[type="file"][accept*=".csv"]').first().setInputFiles(csvPath)
   await page.getByRole('button', { name: '解析预览' }).click()
@@ -41,7 +43,7 @@ test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ 
   const tooltipText = await tooltip.innerText()
   const metricOrder = ['播放', '点赞', '评论', '分享', '关注', '转发', '收藏']
   metricOrder.slice(1).forEach((label, index) => expect(tooltipText.indexOf(label)).toBeGreaterThan(tooltipText.indexOf(metricOrder[index])))
-  expect(tooltipText).toMatch(/上升|下降|持平/)
+  expect(tooltipText).toMatch(/[↑↓→]/)
 
   const sider = page.locator('.desktop-sider')
   const toggle = page.getByTitle('收起侧边栏')
@@ -66,9 +68,7 @@ test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ 
   await page.route('**/api/ai/reports/41', (route) => route.request().method() === 'DELETE' ? route.fulfill({ status: 204 }) : route.fulfill({ json: historyRows[0] }))
   await page.getByText('AI 建议', { exact: true }).first().click()
   await expect(page.getByRole('button', { name: '查看分析' })).toBeVisible()
-  await page.getByRole('button', { name: '编辑' }).click()
-  await expect(page.getByRole('dialog', { name: '编辑查询条件' })).toBeVisible()
-  await page.locator('.ant-modal-footer button').first().click()
+  await expect(page.getByRole('button', { name: '编辑' })).toHaveCount(0)
   await page.getByRole('button', { name: '查看分析' }).click()
   await expect(page.getByRole('heading', { name: '查看结果' })).toBeVisible()
   await page.getByRole('button', { name: '删除' }).click()

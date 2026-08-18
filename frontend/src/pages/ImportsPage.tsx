@@ -22,7 +22,8 @@ export default function ImportsPage() {
   const [preview, setPreview] = useState<CsvPreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [metricDate, setMetricDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
+  const [csvEndDate, setCsvEndDate] = useState<Dayjs | null>(null)
+  const [metricDate, setMetricDate] = useState<Dayjs | null>(null)
   const [screenshotFiles, setScreenshotFiles] = useState<File[]>([])
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [history, setHistory] = useState<ImportHistory[]>([])
@@ -30,21 +31,25 @@ export default function ImportsPage() {
   const loadHistory = () => account && api<ImportHistory[]>(`/api/imports?${query({ account_id: account.id })}`).then(setHistory)
   useEffect(() => { void loadHistory() }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const formData = (selected: File) => {
-    const body = new FormData(); body.append('account_id', String(account!.id)); body.append('file', selected); return body
+  const formData = (selected: File, field?: string, value?: Dayjs | null) => {
+    const body = new FormData(); body.append('account_id', String(account!.id)); body.append('file', selected)
+    if (field && value) body.append(field, value.format('YYYY-MM-DD'))
+    return body
   }
   const previewCsv = async () => {
     if (!file || !account) return
     setBusy(true); setError('')
-    try { setPreview(await api<CsvPreview>('/api/imports/account-csv/preview', { method: 'POST', body: formData(file) })) }
+    if (!csvEndDate) { setError('请先选择文件数据截止日期，确认没有选错日期'); return }
+    try { setPreview(await api<CsvPreview>('/api/imports/account-csv/preview', { method: 'POST', body: formData(file, 'data_end_date', csvEndDate) })) }
     catch (cause) { setError(cause instanceof Error ? cause.message : '解析失败') }
     finally { setBusy(false) }
   }
   const commitCsv = async () => {
     if (!file || !account) return
     setBusy(true); setError('')
+    if (!csvEndDate) { setError('请先选择文件数据截止日期，确认没有选错日期'); return }
     try {
-      const result = await api<{ summary: Record<string, number> }>('/api/imports/account-csv/commit', { method: 'POST', body: formData(file) })
+      const result = await api<{ summary: Record<string, number> }>('/api/imports/account-csv/commit', { method: 'POST', body: formData(file, 'data_end_date', csvEndDate) })
       message.success(`导入完成：新增 ${result.summary.new}，修订 ${result.summary.update}，重复 ${result.summary.duplicate}`)
       setFile(null); setPreview(null); await loadHistory()
     } catch (cause) { setError(cause instanceof Error ? cause.message : '导入失败') }
@@ -54,13 +59,14 @@ export default function ImportsPage() {
     if (!file || !account) return
     setBusy(true); setError('')
     try {
-      const result = await api<{ rows: Candidate[]; filename: string }>('/api/imports/video-sheet/preview', { method: 'POST', body: formData(file) })
+      if (!metricDate) { setError('请先选择这批表格对应的数据日期，确认没有选错日期'); return }
+      const result = await api<{ rows: Candidate[]; filename: string }>('/api/imports/video-sheet/preview', { method: 'POST', body: formData(file, 'metric_date', metricDate) })
       setCandidates(result.rows); message.success(`识别到 ${result.rows.length} 条视频数据`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '解析失败') }
     finally { setBusy(false) }
   }
   const recognize = async () => {
-    if (!screenshotFiles.length) return
+    if (!screenshotFiles.length || !metricDate) { setError('请先选择截图对应的数据日期，确认没有选错日期'); return }
     setBusy(true); setError('')
     const body = new FormData(); body.append('metric_date', metricDate.format('YYYY-MM-DD')); screenshotFiles.forEach((item) => body.append('files', item))
     try {
@@ -75,7 +81,7 @@ export default function ImportsPage() {
     if (!account || !candidates.length) return
     setBusy(true); setError('')
     try {
-      await api('/api/imports/video-metrics/commit', { method: 'POST', body: JSON.stringify({ account_id: account.id, filename: mode === 'sheet' ? file?.name : '截图 OCR 确认', rows: candidates }) })
+      await api('/api/imports/video-metrics/commit', { method: 'POST', body: JSON.stringify({ account_id: account.id, metric_date: metricDate?.format('YYYY-MM-DD'), filename: mode === 'sheet' ? file?.name : '截图 OCR 确认', rows: candidates }) })
       message.success('逐视频数据已入库'); setCandidates([]); setScreenshotFiles([]); setFile(null); await loadHistory()
     } catch (cause) { setError(cause instanceof Error ? cause.message : '提交失败') }
     finally { setBusy(false) }
@@ -92,10 +98,12 @@ export default function ImportsPage() {
       {mode === 'csv' && <section className="tool-section">
         <Typography.Title level={3}>7 日汇总文件</Typography.Title>
         <div className="upload-row">
-          <Upload accept=".csv,text/csv" maxCount={1} showUploadList={false} beforeUpload={(value) => { setFile(value); setPreview(null); return false }}><Button icon={<FileSpreadsheet size={18} />}>选择 CSV</Button></Upload>
+          <DatePicker aria-label="数据截止日期" placeholder="先选数据截止日期" allowClear value={csvEndDate} onChange={(value) => { setCsvEndDate(value); setFile(null); setPreview(null) }} />
+          <Upload disabled={!csvEndDate} accept=".csv,text/csv" maxCount={1} showUploadList={false} beforeUpload={(value) => { setFile(value); setPreview(null); return false }}><Button icon={<FileSpreadsheet size={18} />}>选择 CSV</Button></Upload>
           <span className="selected-file">{file?.name || '尚未选择文件'}</span>
           <Button type="primary" icon={<ScanText size={18} />} disabled={!file} loading={busy} onClick={() => void previewCsv()}>解析预览</Button>
         </div>
+        <Alert type="info" showIcon message="请先选择这份文件的数据截止日期" description="例如文件覆盖 8 月 11 日至 8 月 17 日，就选择 8 月 17 日；系统会校验文件内最新日期，重复日期会自动去重或修订。" />
         {preview && <>
           <div className="preview-summary"><span>{preview.date_range[0]} 至 {preview.date_range[1]}</span><Tag color="green">新增 {preview.summary.new}</Tag><Tag color="orange">修订 {preview.summary.update}</Tag><Tag>重复 {preview.summary.duplicate}</Tag></div>
           <Table size="small" rowKey="date" pagination={false} scroll={{ x: 720 }} dataSource={preview.rows} columns={[
@@ -107,23 +115,25 @@ export default function ImportsPage() {
       </section>}
 
       {mode === 'screenshot' && <section className="tool-section">
-        <Typography.Title level={3}>昨日新增播放截图</Typography.Title>
+        <Typography.Title level={3}>视频数据截图</Typography.Title>
         <div className="upload-row">
-          <DatePicker allowClear={false} value={metricDate} onChange={(value) => value && setMetricDate(value)} />
-          <Upload accept="image/png,image/jpeg,image/webp" multiple showUploadList={false} beforeUpload={(value) => { setScreenshotFiles((items) => [...items, value]); return false }}><Button icon={<ImagePlus size={18} />}>选择多张截图</Button></Upload>
+          <DatePicker aria-label="截图数据日期" placeholder="先选数据日期" allowClear value={metricDate} onChange={(value) => { setMetricDate(value); setScreenshotFiles([]) }} />
+          <Upload disabled={!metricDate} accept="image/png,image/jpeg,image/webp" multiple showUploadList={false} beforeUpload={(value) => { setScreenshotFiles((items) => [...items, value]); return false }}><Button icon={<ImagePlus size={18} />}>选择多张截图</Button></Upload>
           <span className="selected-file">已选择 {screenshotFiles.length} 张</span>
           <Button type="primary" icon={<ScanText size={18} />} disabled={!screenshotFiles.length} loading={busy} onClick={() => void recognize()}>开始识别</Button>
         </div>
-        <Alert type="info" showIcon message={`指标日期：${metricDate.format('YYYY-MM-DD')}`} description="页面中的“昨日”必须对应这个日期；识别结果不会自动入库。" />
+        <Alert type="info" showIcon message={metricDate ? `指标日期：${metricDate.format('YYYY-MM-DD')}` : '请先选择截图数据日期'} description="这里填写截图实际对应的统计日期，不一定是昨天；识别结果不会自动入库，确认前请检查日期。" />
       </section>}
 
       {mode === 'sheet' && <section className="tool-section">
         <div className="section-heading"><Typography.Title level={3}>逐视频 CSV / Excel</Typography.Title><Button type="link" href="/api/templates/video-metrics.csv">下载模板</Button></div>
         <div className="upload-row">
-          <Upload accept=".csv,.xlsx" maxCount={1} showUploadList={false} beforeUpload={(value) => { setFile(value); setCandidates([]); return false }}><Button icon={<FileSpreadsheet size={18} />}>选择文件</Button></Upload>
+          <DatePicker aria-label="表格数据日期" placeholder="先选数据日期" allowClear value={metricDate} onChange={(value) => { setMetricDate(value); setFile(null); setCandidates([]) }} />
+          <Upload disabled={!metricDate} accept=".csv,.xlsx" maxCount={1} showUploadList={false} beforeUpload={(value) => { setFile(value); setCandidates([]); return false }}><Button icon={<FileSpreadsheet size={18} />}>选择文件</Button></Upload>
           <span className="selected-file">{file?.name || '尚未选择文件'}</span>
           <Button type="primary" icon={<ScanText size={18} />} disabled={!file} loading={busy} onClick={() => void previewSheet()}>解析预览</Button>
         </div>
+        <Alert type="info" showIcon message="请先选择这批表格对应的数据日期" description="系统会将本次确认的日期用于所有视频行，请确认没有选错日期。" />
       </section>}
 
       {candidates.length > 0 && <section className="candidate-section">

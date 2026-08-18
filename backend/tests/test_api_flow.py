@@ -11,7 +11,7 @@ def upload_csv(
     return client.post(
         f"/api/imports/account-csv/{action}",
         headers=headers,
-        data={"account_id": str(account_id)},
+        data={"account_id": str(account_id), "data_end_date": "2026-08-16"},
         files={"file": ("视频号视频详情数据.csv", content, "text/csv")},
     )
 
@@ -203,9 +203,31 @@ def test_ai_analysis_returns_report_but_history_does_not_store_body(
 ) -> None:  # type: ignore[no-untyped-def]
     from app import main
 
+    calls = 0
+
     async def report(_config, _snapshot) -> str:  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
         return "# 分析结果\n\n- 建议一"
 
+    async def provider_test(**_kwargs) -> str:  # type: ignore[no-untyped-def]
+        return "连接成功"
+
+    monkeypatch.setattr(main, "test_provider_values", provider_test)
+    configured = client.post(
+        "/api/ai/provider/test-and-save",
+        headers=auth,
+        json={
+            "account_id": account_id,
+            "name": "测试 AI",
+            "base_url": "https://ai.example.test/v1",
+            "model": "test-model",
+            "protocol": "chat_completions",
+            "api_key": "secret-test-key",
+            "timeout_seconds": 30,
+        },
+    )
+    assert configured.status_code == 200, configured.text
     monkeypatch.setattr(main, "call_provider", report)
     response = client.post(
         "/api/ai/analyze",
@@ -227,15 +249,8 @@ def test_ai_analysis_returns_report_but_history_does_not_store_body(
     assert viewed.status_code == 200, viewed.text
     assert viewed.json()["id"] == history_id
     assert viewed.json()["report_text"].startswith("# 分析结果")
+    assert calls == 1
     assert len(client.get(f"/api/ai/reports?account_id={account_id}").json()) == history_count
-
-    updated = client.put(
-        f"/api/ai/reports/{history_id}",
-        headers=auth,
-        json={"start_date": "2026-08-16", "end_date": "2026-08-16"},
-    )
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["start_date"] == "2026-08-16"
 
     deleted = client.delete(f"/api/ai/reports/{history_id}", headers=auth)
     assert deleted.status_code == 204

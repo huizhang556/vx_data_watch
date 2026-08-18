@@ -13,9 +13,21 @@ SYSTEM_PROMPT = """你是视频号数据分析顾问。只依据用户提供的�
 把推测明确标为推测，建议要具体且可验证。使用简体中文 Markdown；可使用标题、列表、表格和强调，不要输出 HTML 或脚本。"""
 
 
+def _base_candidates(base_url: str) -> list[str]:
+    """Try the common OpenAI-compatible root and /v1 forms without UI suffixes."""
+    base = base_url.strip().rstrip("/")
+    path = base.split("?", 1)[0].rstrip("/").lower()
+    if path.endswith(("/v1", "/v2")):
+        return [base]
+    return [f"{base}/v1", base]
+
+
 def _endpoint(base_url: str, suffix: str) -> str:
-    base = base_url.rstrip("/")
-    return base + suffix
+    return base_url.rstrip("/") + suffix
+
+
+def build_prompt(snapshot: dict[str, Any]) -> str:
+    return "请分析以下视频号数据：\n" + json.dumps(snapshot, ensure_ascii=False)
 
 
 def _extract_responses_text(payload: dict[str, Any]) -> str:
@@ -41,16 +53,14 @@ async def _call_provider(
     snapshot: dict[str, Any],
 ) -> str:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    user_content = "请分析以下视频号数据：\n" + json.dumps(snapshot, ensure_ascii=False)
+    user_content = build_prompt(snapshot)
     if protocol == "responses":
-        url = _endpoint(base_url, "/responses")
         body = {
             "model": model,
             "instructions": SYSTEM_PROMPT,
             "input": user_content,
         }
     else:
-        url = _endpoint(base_url, "/chat/completions")
         body = {
             "model": model,
             "messages": [
@@ -59,7 +69,12 @@ async def _call_provider(
             ],
         }
     async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
-        response = await client.post(url, headers=headers, json=body)
+        response = None
+        for candidate in _base_candidates(base_url):
+            response = await client.post(_endpoint(candidate, f"/{'responses' if protocol == 'responses' else 'chat/completions'}"), headers=headers, json=body)
+            if response.status_code != 404:
+                break
+        assert response is not None
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -119,7 +134,12 @@ async def list_provider_models(
 ) -> list[str]:
     headers = {"Authorization": f"Bearer {api_key}"}
     async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
-        response = await client.get(_endpoint(base_url, "/models"), headers=headers)
+        response = None
+        for candidate in _base_candidates(base_url):
+            response = await client.get(_endpoint(candidate, "/models"), headers=headers)
+            if response.status_code != 404:
+                break
+        assert response is not None
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:

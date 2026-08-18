@@ -26,7 +26,14 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
-from .ai_service import call_provider, list_provider_models, test_provider, test_provider_values
+from .ai_service import (
+    SYSTEM_PROMPT,
+    build_prompt,
+    call_provider,
+    list_provider_models,
+    test_provider,
+    test_provider_values,
+)
 from .analytics import date_summary, range_summary, range_video_summary
 from .audit import write_audit
 from .backups import create_backup
@@ -47,6 +54,7 @@ from .importers import (
     video_identity,
 )
 from .models import (
+    AIAnalysisReport,
     AIProviderConfig,
     AIQueryHistory,
     AuditLog,
@@ -69,7 +77,7 @@ from .schemas import (
     AIAnalyzeRequest,
     AIProviderDraft,
     AIProviderInput,
-    AIQueryHistoryUpdate,
+    AIProviderSelect,
     LoginRequest,
     PasswordChange,
     SetupRequest,
@@ -470,6 +478,7 @@ def _preview_account_rows(db: Session, account_id: int, rows: list[Any]) -> list
 @app.post("/api/imports/account-csv/preview")
 def preview_account_csv(
     account_id: Annotated[int, Form()],
+    data_end_date: Annotated[date, Form()],
     file: Annotated[UploadFile, File()],
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
@@ -480,6 +489,11 @@ def preview_account_csv(
         rows = parse_account_csv(content)
     except ImportValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if max(row.metric_date for row in rows) != data_end_date:
+        raise HTTPException(
+            status_code=422,
+            detail=f"所选截止日期为 {data_end_date}，但文件最新日期为 {max(row.metric_date for row in rows)}，请确认没有选错日期",
+        )
     preview = _preview_account_rows(db, account_id, rows)
     return {
         "filename": file.filename,
@@ -497,6 +511,7 @@ def preview_account_csv(
 @app.post("/api/imports/account-csv/commit", status_code=201)
 def commit_account_csv(
     account_id: Annotated[int, Form()],
+    data_end_date: Annotated[date, Form()],
     file: Annotated[UploadFile, File()],
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
@@ -507,6 +522,11 @@ def commit_account_csv(
         rows = parse_account_csv(content)
     except ImportValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if max(row.metric_date for row in rows) != data_end_date:
+        raise HTTPException(
+            status_code=422,
+            detail=f"所选截止日期为 {data_end_date}，但文件最新日期为 {max(row.metric_date for row in rows)}，请确认没有选错日期",
+        )
     batch = ImportBatch(
         account_id=account_id,
         user_id=user.id,
@@ -569,6 +589,7 @@ def commit_account_csv(
 @app.post("/api/imports/video-sheet/preview")
 def preview_video_sheet(
     account_id: Annotated[int, Form()],
+    metric_date: Annotated[date, Form()],
     file: Annotated[UploadFile, File()],
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
@@ -579,6 +600,8 @@ def preview_video_sheet(
         rows = parse_video_sheet(content, file.filename or "")
     except (ImportValidationError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for row in rows:
+        row["metric_date"] = metric_date
     return {
         "filename": file.filename,
         "file_hash": file_sha256(content),
@@ -621,18 +644,21 @@ def commit_video_metrics(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     _get_account(db, payload.account_id)
+    rows = payload.rows
+    if payload.metric_date:
+        rows = [row.model_copy(update={"metric_date": payload.metric_date}) for row in rows]
     batch = ImportBatch(
         account_id=payload.account_id,
         user_id=user.id,
         import_type=ImportType.screenshot,
         status=ImportStatus.completed,
         filename=(payload.filename or "人工确认")[:255],
-        record_count=len(payload.rows),
+        record_count=len(rows),
     )
     db.add(batch)
     db.flush()
     created = updated = 0
-    for index, row in enumerate(payload.rows, start=1):
+    for index, row in enumerate(rows, start=1):
         identity_key = video_identity(row.title, row.published_at, row.identity_key)
         video = db.scalar(
             select(Video).where(
@@ -771,22 +797,54 @@ def video_range_analytics(
     return range_video_summary(db, account_id, start_date, end_date)
 
 
-@app.get("/api/ai/provider")
-def get_ai_provider(
-    user: CurrentUser, db: Annotated[Session, Depends(get_db)]
-) -> dict[str, Any] | None:
-    config = db.scalar(select(AIProviderConfig).order_by(AIProviderConfig.id))
-    if not config:
-        return None
+def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
     return {
         "id": config.id,
+        "account_id": config.account_id,
         "name": config.name,
         "base_url": config.base_url,
         "model": config.model,
         "protocol": config.protocol,
         "timeout_seconds": config.timeout_seconds,
         "api_key_configured": bool(config.encrypted_api_key),
+        "is_active": config.is_active,
     }
+
+
+def _provider_candidates(db: Session, account_id: int) -> list[AIProviderConfig]:
+    _get_account(db, account_id)
+    return list(
+        db.scalars(
+            select(AIProviderConfig)
+            .where(
+                (AIProviderConfig.account_id == account_id)
+                | (AIProviderConfig.account_id.is_(None))
+            )
+            .order_by(AIProviderConfig.account_id.is_(None), AIProviderConfig.id)
+        ).all()
+    )
+
+
+def _active_provider(db: Session, account_id: int) -> AIProviderConfig | None:
+    rows = _provider_candidates(db, account_id)
+    return next((row for row in rows if row.account_id == account_id and row.is_active), None) or next(
+        (row for row in rows if row.account_id is None and row.is_active), None
+    )
+
+
+@app.get("/api/ai/providers")
+def list_ai_providers(
+    account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> list[dict[str, Any]]:
+    return [_provider_payload(row) for row in _provider_candidates(db, account_id)]
+
+
+@app.get("/api/ai/provider")
+def get_ai_provider(
+    account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> dict[str, Any] | None:
+    config = _active_provider(db, account_id)
+    return _provider_payload(config) if config else None
 
 
 @app.put("/api/ai/provider")
@@ -795,7 +853,18 @@ def save_ai_provider(
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    config = db.scalar(select(AIProviderConfig).order_by(AIProviderConfig.id))
+    _get_account(db, payload.account_id)
+    config = None
+    if payload.provider_id:
+        config = db.scalar(
+            select(AIProviderConfig).where(
+                AIProviderConfig.id == payload.provider_id,
+                (AIProviderConfig.account_id == payload.account_id)
+                | (AIProviderConfig.account_id.is_(None)),
+            )
+        )
+        if not config:
+            raise HTTPException(status_code=404, detail="接口配置不存在")
     if not config:
         if not payload.api_key:
             raise HTTPException(status_code=422, detail="首次配置必须填写 API Key")
@@ -803,13 +872,22 @@ def save_ai_provider(
             encrypted_api_key=encrypt_secret(payload.api_key),
             base_url=payload.base_url,
             model=payload.model,
+            account_id=payload.account_id,
         )
         db.add(config)
+    elif config.account_id is None:
+        config.account_id = payload.account_id
     config.name = payload.name
     config.base_url = payload.base_url
     config.model = payload.model
     config.protocol = payload.protocol
     config.timeout_seconds = payload.timeout_seconds
+    db.execute(
+        AIProviderConfig.__table__.update()
+        .where(AIProviderConfig.account_id == payload.account_id)
+        .values(is_active=False)
+    )
+    config.is_active = True
     if payload.api_key:
         config.encrypted_api_key = encrypt_secret(payload.api_key)
     db.flush()
@@ -825,13 +903,52 @@ def save_ai_provider(
     return {"id": config.id, "saved": True}
 
 
+@app.post("/api/ai/provider/select")
+def select_ai_provider(
+    payload: AIProviderSelect,
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    _get_account(db, payload.account_id)
+    config = db.scalar(
+        select(AIProviderConfig).where(
+            AIProviderConfig.id == payload.provider_id,
+            (AIProviderConfig.account_id == payload.account_id)
+            | (AIProviderConfig.account_id.is_(None)),
+        )
+    )
+    if not config:
+        raise HTTPException(status_code=404, detail="接口配置不存在")
+    if config.account_id is None:
+        config.account_id = payload.account_id
+    db.execute(
+        AIProviderConfig.__table__.update()
+        .where(AIProviderConfig.account_id == payload.account_id)
+        .values(is_active=False)
+    )
+    config.is_active = True
+    write_audit(db, "ai.provider.select", user, "ai_provider", config.id)
+    db.commit()
+    return _provider_payload(config)
+
+
 @app.post("/api/ai/provider/test-and-save")
 async def test_and_save_ai_provider(
     payload: AIProviderInput,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    existing = db.scalar(select(AIProviderConfig).order_by(AIProviderConfig.id))
+    existing = None
+    if payload.provider_id:
+        existing = db.scalar(
+            select(AIProviderConfig).where(
+                AIProviderConfig.id == payload.provider_id,
+                (AIProviderConfig.account_id == payload.account_id)
+                | (AIProviderConfig.account_id.is_(None)),
+            )
+        )
+    if not existing:
+        existing = _active_provider(db, payload.account_id)
     api_key = payload.api_key
     if not api_key and existing:
         api_key = decrypt_secret(existing.encrypted_api_key)
@@ -853,10 +970,11 @@ async def test_and_save_ai_provider(
 
 @app.post("/api/ai/provider/test")
 async def test_ai_provider(
+    account_id: int,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
-    config = db.scalar(select(AIProviderConfig).order_by(AIProviderConfig.id))
+    config = _active_provider(db, account_id)
     if not config:
         raise HTTPException(status_code=404, detail="尚未配置 AI")
     try:
@@ -871,7 +989,17 @@ async def test_ai_provider(
 def _draft_api_key(payload: AIProviderDraft, db: Session) -> str:
     if payload.api_key:
         return payload.api_key
-    existing = db.scalar(select(AIProviderConfig).order_by(AIProviderConfig.id))
+    existing = None
+    if payload.provider_id:
+        existing = db.scalar(
+            select(AIProviderConfig).where(
+                AIProviderConfig.id == payload.provider_id,
+                (AIProviderConfig.account_id == payload.account_id)
+                | (AIProviderConfig.account_id.is_(None)),
+            )
+        )
+    if not existing:
+        existing = _active_provider(db, payload.account_id)
     if existing:
         return decrypt_secret(existing.encrypted_api_key)
     raise HTTPException(status_code=422, detail="请填写 API Key")
@@ -926,7 +1054,7 @@ async def analyze_with_ai(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     _get_account(db, payload.account_id)
-    report_text, snapshot, config = await _generate_ai_report(
+    report_text, snapshot, config, prompt_text = await _generate_ai_report(
         db, payload.account_id, payload.start_date, payload.end_date
     )
     history = AIQueryHistory(
@@ -937,6 +1065,21 @@ async def analyze_with_ai(
     )
     db.add(history)
     db.flush()
+    db.add(
+        AIAnalysisReport(
+            history_id=history.id,
+            account_id=payload.account_id,
+            provider_id=config.id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            input_snapshot_json=json.dumps(snapshot, ensure_ascii=False, default=str),
+            report_text=report_text,
+            prompt_text=prompt_text,
+            provider_snapshot_json=json.dumps(
+                _provider_payload(config), ensure_ascii=False, default=str
+            ),
+        )
+    )
     write_audit(db, "ai.query.create", user, "ai_query", history.id)
     db.commit()
     return _analysis_response(history, report_text, snapshot)
@@ -944,12 +1087,8 @@ async def analyze_with_ai(
 
 async def _generate_ai_report(
     db: Session, account_id: int, start_date: date, end_date: date
-) -> tuple[str, dict[str, Any], AIProviderConfig]:
-    config = db.scalar(
-        select(AIProviderConfig)
-        .where(AIProviderConfig.is_active.is_(True))
-        .order_by(AIProviderConfig.id)
-    )
+) -> tuple[str, dict[str, Any], AIProviderConfig, str]:
+    config = _active_provider(db, account_id)
     if not config:
         raise HTTPException(status_code=404, detail="尚未配置 AI")
     snapshot = range_summary(db, account_id, start_date, end_date)
@@ -959,7 +1098,7 @@ async def _generate_ai_report(
         report_text = await call_provider(config, snapshot)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return report_text, snapshot, config
+    return report_text, snapshot, config, SYSTEM_PROMPT + "\n\n" + build_prompt(snapshot)
 
 
 def _analysis_response(
@@ -1013,42 +1152,33 @@ async def analyze_ai_history(
 ) -> dict[str, Any]:
     history = _get_ai_history(db, history_id)
     _get_account(db, history.account_id)
-    report_text, snapshot, _config = await _generate_ai_report(
-        db, history.account_id, history.start_date, history.end_date
+    report = db.scalar(
+        select(AIAnalysisReport).where(AIAnalysisReport.history_id == history.id)
     )
+    if report:
+        report_text = report.report_text
+        snapshot = json.loads(report.input_snapshot_json)
+    else:
+        report_text, snapshot, config, prompt_text = await _generate_ai_report(
+            db, history.account_id, history.start_date, history.end_date
+        )
+        report = AIAnalysisReport(
+            history_id=history.id,
+            account_id=history.account_id,
+            provider_id=config.id,
+            start_date=history.start_date,
+            end_date=history.end_date,
+            input_snapshot_json=json.dumps(snapshot, ensure_ascii=False, default=str),
+            report_text=report_text,
+            prompt_text=prompt_text,
+            provider_snapshot_json=json.dumps(
+                _provider_payload(config), ensure_ascii=False, default=str
+            ),
+        )
+        db.add(report)
     write_audit(db, "ai.query.view", user, "ai_query", history.id)
     db.commit()
     return _analysis_response(history, report_text, snapshot)
-
-
-@app.put("/api/ai/reports/{history_id}")
-def update_ai_history(
-    history_id: int,
-    payload: AIQueryHistoryUpdate,
-    user: Annotated[User, Depends(require_csrf_editor)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict[str, Any]:
-    history = _get_ai_history(db, history_id)
-    history.start_date = payload.start_date
-    history.end_date = payload.end_date
-    write_audit(
-        db,
-        "ai.query.update",
-        user,
-        "ai_query",
-        history.id,
-        {
-            "start_date": payload.start_date.isoformat(),
-            "end_date": payload.end_date.isoformat(),
-        },
-    )
-    db.commit()
-    return {
-        "id": history.id,
-        "start_date": history.start_date,
-        "end_date": history.end_date,
-        "created_at": history.created_at,
-    }
 
 
 @app.delete("/api/ai/reports/{history_id}", status_code=204)
@@ -1059,6 +1189,9 @@ def delete_ai_history(
 ) -> Response:
     history = _get_ai_history(db, history_id)
     write_audit(db, "ai.query.delete", user, "ai_query", history.id)
+    db.execute(
+        AIAnalysisReport.__table__.delete().where(AIAnalysisReport.history_id == history.id)
+    )
     db.delete(history)
     db.commit()
     return Response(status_code=204)
