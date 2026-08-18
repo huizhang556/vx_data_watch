@@ -14,6 +14,14 @@ interface Provider { id: number; account_id: number | null; name: string; base_u
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
 interface ProviderForm { account_id: number; provider_id?: number; name: string; base_url: string; model: string; protocol: string; timeout_seconds: number; api_key?: string }
+const reportMetrics = [
+  { key: 'plays' as const, label: '播放', color: '#1677ff' },
+  { key: 'likes' as const, label: '点赞', color: '#d4380d' },
+  { key: 'comments' as const, label: '评论', color: '#722ed1' },
+  { key: 'shares' as const, label: '分享', color: '#d48806' },
+  { key: 'follows' as const, label: '关注', color: '#08979c' },
+  { key: 'recommendations' as const, label: '收藏', color: '#389e0d' },
+]
 
 const periodOptions = [
   { label: '单日', value: 1 }, { label: '近 3 天', value: 3 }, { label: '近 7 天', value: 7 },
@@ -135,16 +143,43 @@ export default function AIPage() {
     finally { setDeletingId(null) }
   }
 
-  const reportChart = useMemo(() => ({
+  const reportTrendChart = useMemo(() => ({
     animation: false,
-    tooltip: { trigger: 'axis' }, legend: { top: 0 }, grid: { left: 52, right: 18, top: 42, bottom: 32 },
+    color: reportMetrics.map((item) => item.color),
+    tooltip: { trigger: 'axis', confine: true },
+    legend: { top: 0, type: 'scroll', data: reportMetrics.map((item) => item.label) },
+    grid: { left: 56, right: 48, top: 50, bottom: 38 },
     xAxis: { type: 'category', data: result?.snapshot.trend.map((row) => dayjs(row.date).format('MM-DD')) || [] },
-    yAxis: [{ type: 'value', name: '播放' }, { type: 'value', name: '互动' }],
-    series: [
-      { name: '播放', type: 'bar', data: result?.snapshot.trend.map((row) => row.plays) || [] },
-      { name: '点赞', type: 'line', yAxisIndex: 1, data: result?.snapshot.trend.map((row) => row.likes) || [] },
-      { name: '分享', type: 'line', yAxisIndex: 1, data: result?.snapshot.trend.map((row) => row.shares) || [] },
+    yAxis: [
+      { type: 'value', name: '播放', splitLine: { lineStyle: { color: '#edf0ee' } } },
+      { type: 'value', name: '互动', splitLine: { show: false } },
     ],
+    series: reportMetrics.map((metric) => ({
+      name: metric.label,
+      type: 'line',
+      smooth: true,
+      symbolSize: 6,
+      yAxisIndex: metric.key === 'plays' ? 0 : 1,
+      data: result?.snapshot.trend.map((row) => row[metric.key]) || [],
+      connectNulls: false,
+    })),
+  }), [result])
+
+  const reportPieChart = useMemo(() => ({
+    animation: false,
+    color: reportMetrics.slice(1).map((item) => item.color),
+    tooltip: { trigger: 'item', formatter: '{b}<br/>{c} ({d}%)' },
+    legend: { type: 'scroll', bottom: 0 },
+    series: [{
+      type: 'pie',
+      radius: ['42%', '68%'],
+      center: ['50%', '44%'],
+      data: reportMetrics.slice(1).map((metric) => ({
+        name: metric.label,
+        value: result?.snapshot.totals[metric.key] ?? 0,
+      })),
+      label: { formatter: '{b}\n{d}%' },
+    }],
   }), [result])
 
   if (!account) return <Empty description="请先创建视频号账号" />
@@ -168,15 +203,18 @@ export default function AIPage() {
       </section>
 
       {analyzeLoading ? <section className="report-browser report-loading"><Bot size={28} /><Typography.Text>正在生成分析报告...</Typography.Text></section> : result && <section className="report-browser">
-        <header><div><Bot size={20} /><strong>{result.start_date} 至 {result.end_date}</strong></div><time>{dayjs(result.created_at).format('YYYY-MM-DD HH:mm')}</time></header>
-        <ReactECharts option={reportChart} style={{ height: 300 }} notMerge />
+        <header><div><Bot size={20} /><strong>查询范围：{result.start_date} 至 {result.end_date}</strong></div><time>查询时间：{dayjs(result.created_at).format('YYYY-MM-DD HH:mm')}</time></header>
+        <section className="chart-grid report-charts">
+          <div className="chart-panel"><Typography.Title level={3}>指标趋势</Typography.Title><ReactECharts option={reportTrendChart} style={{ height: 320 }} notMerge /></div>
+          <div className="chart-panel"><Typography.Title level={3}>互动构成</Typography.Title><ReactECharts option={reportPieChart} style={{ height: 320 }} notMerge /></div>
+        </section>
         <article className="markdown-report"><ReactMarkdown remarkPlugins={[remarkGfm]}>{result.report_text}</ReactMarkdown></article>
       </section>}
 
       <section className="section-band">
         <div className="section-heading"><Typography.Title level={3}>查询记录</Typography.Title><History size={20} /></div>
         {viewingId !== null && <Alert type="info" showIcon message="正在查看分析" description="正在读取已缓存的分析报告；如果是旧记录，系统可能需要重新生成，请稍候。" />}
-        {!histories.length ? <Empty description="暂无查询记录" /> : <div className="history-list">{histories.map((item) => <article key={item.id}><div><strong>{item.start_date === item.end_date ? item.start_date : `${item.start_date} 至 ${item.end_date}`}</strong><time>{dayjs(item.created_at).format('YYYY-MM-DD HH:mm')}</time></div><Space className="history-actions" size={6} wrap>
+        {!histories.length ? <Empty description="暂无查询记录" /> : <div className="history-list">{histories.map((item) => <article key={item.id}><div><strong>查询范围：{item.start_date} 至 {item.end_date}</strong><time>查询时间：{dayjs(item.created_at).format('YYYY-MM-DD HH:mm')}</time></div><Space className="history-actions" size={6} wrap>
           <Button size="small" icon={<Eye size={16} />} loading={viewingId === item.id} disabled={viewingId !== null && viewingId !== item.id} onClick={() => void viewHistory(item)}>{viewingId === item.id ? '查看分析中...' : '查看分析'}</Button>
           <Popconfirm title="删除查询记录" description="会同时删除这条分析报告缓存，不会删除视频号数据。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteHistory(item)}>
             <Button size="small" danger icon={<Trash2 size={16} />} loading={deletingId === item.id}>删除</Button>
