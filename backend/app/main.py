@@ -621,12 +621,16 @@ def recognize_screenshots(
     candidates: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for file in files:
-        content = _read_upload(file)
+        try:
+            content = _read_upload(file)
+        except HTTPException as exc:
+            errors.append({"filename": file.filename or "截图", "error": str(exc.detail)})
+            continue
         try:
             candidates.extend(
                 extract_screenshot_candidates(content, metric_date, file.filename or "截图")
             )
-        except (ValueError, OCRUnavailableError) as exc:
+        except (ValueError, OCRUnavailableError, OSError, RuntimeError) as exc:
             errors.append({"filename": file.filename or "截图", "error": str(exc)})
     return {
         "metric_date": metric_date,

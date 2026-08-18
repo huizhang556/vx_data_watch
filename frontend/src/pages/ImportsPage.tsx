@@ -67,6 +67,11 @@ export default function ImportsPage() {
   }
   const recognize = async () => {
     if (!screenshotFiles.length || !metricDate) { setError('请先选择截图对应的数据日期，确认没有选错日期'); return }
+    const maxBytes = 20 * 1024 * 1024
+    const oversized = screenshotFiles.find((item) => item.size > maxBytes)
+    if (oversized) { setError(`图片 ${oversized.name} 大小为 ${(oversized.size / 1024 / 1024).toFixed(1)} MB，超过单文件 20 MB 限制，请压缩后重试`); return }
+    const totalBytes = screenshotFiles.reduce((sum, item) => sum + item.size, 0)
+    if (totalBytes > maxBytes) { setError(`本次选择的 ${screenshotFiles.length} 张图片合计 ${(totalBytes / 1024 / 1024).toFixed(1)} MB，超过默认 20 MB 上传限制，请分批识别`); return }
     setBusy(true); setError('')
     const body = new FormData(); body.append('metric_date', metricDate.format('YYYY-MM-DD')); screenshotFiles.forEach((item) => body.append('files', item))
     try {
