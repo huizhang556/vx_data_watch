@@ -55,7 +55,7 @@ nano .env
 
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
-| `VX_BIND_ADDRESS` | 服务监听地址 | `0.0.0.0` |
+| `VX_BIND_ADDRESS` | 服务监听地址（反向代理场景建议保持本机监听） | `127.0.0.1` |
 | `VX_PORT` | 浏览器访问端口 | `8000` |
 | `VX_COOKIE_SECURE` | 仅通过 HTTPS 发送登录 Cookie | `false` |
 | `VX_SESSION_DAYS` | 登录会话有效天数 | `14` |
@@ -163,7 +163,7 @@ docker compose -f docker-compose.yaml exec app python -m app.cli backup
 
 ### 5. 在线更新
 
-管理员可在“系统设置 > 在线更新”中检查 Docker Hub 正式版本，选择高于当前版本且不高于最新版的版本进行更新。系统会先创建加密备份，再拉取镜像、替换应用容器并等待健康检查；失败时自动恢复旧容器，成功后页面自动重新连接。
+管理员可在左侧“在线更新”中检查 Docker Hub 正式版本，选择高于当前版本且不高于最新版的版本进行更新。系统会先创建加密备份，再拉取镜像、替换应用容器并等待健康检查；失败时自动恢复旧容器，成功后页面自动重新连接。
 
 主 Web 容器不访问 Docker Socket。只有不开放网络端口的 `updater` Companion 可以访问 Docker Engine，并且它只接受固定仓库 `litehub/vx-data-watch` 和三段式正式版本号。
 

@@ -10,7 +10,7 @@ services:
         PYTHON_IMAGE: ${VX_PYTHON_IMAGE:-python:3.12-slim}
     image: ${VX_IMAGE:-vx-data:local}
     ports:
-      - "${VX_BIND_ADDRESS:-0.0.0.0}:${VX_PORT:-8000}:8000"
+      - "${VX_BIND_ADDRESS:-127.0.0.1}:${VX_PORT:-8000}:8000"
     environment:
       VX_DATA_DIR: /app/data
       VX_DATABASE_URL: sqlite:////app/data/vx_data.db

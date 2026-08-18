@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Layout, Menu, Select, Spin, Typography } from 'antd'
-import { BarChart3, Bot, FileUp, LogOut, PanelLeftClose, PanelLeftOpen, Settings, Video } from 'lucide-react'
+import { BarChart3, Bot, FileUp, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { AccountContext } from './account'
@@ -11,6 +11,7 @@ const AIPage = lazy(() => import('./pages/AIPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ImportsPage = lazy(() => import('./pages/ImportsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const UpdatesPage = lazy(() => import('./pages/UpdatesPage'))
 const VideosPage = lazy(() => import('./pages/VideosPage'))
 
 const items = [
@@ -19,6 +20,7 @@ const items = [
   { key: '/imports', icon: <FileUp size={19} />, label: '数据导入' },
   { key: '/ai', icon: <Bot size={19} />, label: 'AI 建议' },
   { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
+  { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
 ]
 
 export default function App() {
@@ -80,6 +82,7 @@ export default function App() {
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Suspense>

@@ -11,9 +11,10 @@ test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ 
   await page.getByRole('button', { name: '初始化系统' }).click()
   await expect(page.getByText('数据概览', { exact: true }).first()).toBeVisible()
 
-  await page.getByText('系统设置', { exact: true }).first().click()
-  await expect(page.getByText('v0.3.2')).toBeVisible()
+  await page.getByText('在线更新', { exact: true }).first().click()
+  await expect(page.getByText('v0.3.2').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '更新并重启' })).toBeVisible()
+  await page.getByText('系统设置', { exact: true }).first().click()
   await page.getByRole('button', { name: '新增账号' }).click()
   await page.getByLabel('账号名称').fill('样例视频号')
   await page.getByLabel('备注').fill('端到端测试')
