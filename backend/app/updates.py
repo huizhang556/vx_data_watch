@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +17,8 @@ from .config import get_settings
 
 SEMVER_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 ACTIVE_STATES = {"queued", "pulling", "restarting", "verifying", "rolling_back"}
+_VERSION_CACHE_TTL = 600.0
+_version_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 class UpdateRegistryError(RuntimeError):
@@ -34,13 +38,28 @@ def version_key(value: str) -> tuple[int, int, int]:
 
 async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
     url = f"https://hub.docker.com/v2/repositories/{repository}/tags"
+    last_error: Exception | None = None
     try:
         async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            response = await client.get(url, params={"page_size": 100, "ordering": "last_updated"})
-            response.raise_for_status()
-            payload = response.json()
-    except (httpx.HTTPError, ValueError, TypeError) as exc:
-        raise UpdateRegistryError("无法连接 Docker Hub 获取版本信息") from exc
+            for attempt in range(3):
+                try:
+                    response = await client.get(
+                        url, params={"page_size": 100, "ordering": "last_updated"}
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    break
+                except (httpx.HTTPError, ValueError, TypeError) as exc:
+                    last_error = exc
+                    if attempt < 2:
+                        await asyncio.sleep(0.25 * (attempt + 1))
+            else:
+                raise UpdateRegistryError("无法连接 Docker Hub 获取版本信息") from last_error
+    except UpdateRegistryError:
+        cached = _version_cache.get(repository)
+        if cached and time.monotonic() - cached[0] <= _VERSION_CACHE_TTL:
+            return cached[1]
+        raise
 
     versions: list[dict[str, Any]] = []
     for row in payload.get("results", []):
@@ -55,6 +74,7 @@ async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
             }
         )
     versions.sort(key=lambda row: version_key(row["version"]), reverse=True)
+    _version_cache[repository] = (time.monotonic(), versions)
     return versions
 
 
