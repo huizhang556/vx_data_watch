@@ -40,6 +40,7 @@ export default function AIPage() {
   const [error, setError] = useState('')
   const [days, setDays] = useState(7)
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
+  const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(7, 'day'))
   const [form] = Form.useForm<ProviderForm>()
 
   const loadProviders = async (accountId: number) => {
@@ -105,7 +106,7 @@ export default function AIPage() {
   const analyze = async (start?: string, end?: string) => {
     if (!account) return
     const endValue = end || endDate.format('YYYY-MM-DD')
-    const startValue = start || endDate.subtract(days - 1, 'day').format('YYYY-MM-DD')
+    const startValue = start || startDate.format('YYYY-MM-DD')
     setAnalyzeLoading(true); setError(''); setResult(null)
     try {
       const response = await api<AnalysisResult>('/api/ai/analyze', { method: 'POST', body: JSON.stringify({ account_id: account.id, start_date: startValue, end_date: endValue }) })
@@ -154,8 +155,9 @@ export default function AIPage() {
       <section className="ai-control">
         <div><span className={`status-dot ${provider ? 'online' : ''}`} /><Typography.Text>{provider ? '接口已配置' : '等待配置'}</Typography.Text></div>
         <Space wrap>
-          <Segmented value={days} onChange={(value) => setDays(Number(value))} options={periodOptions} />
-          <DatePicker allowClear={false} value={endDate} onChange={(value) => value && setEndDate(value)} />
+          <Segmented value={days} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} />
+          <DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
+          <DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(value.subtract(days - 1, 'day')) }} />
           {user.role === 'admin' && <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 160 }} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(id) => {
             const next = providers.find((item) => item.id === id)
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))
