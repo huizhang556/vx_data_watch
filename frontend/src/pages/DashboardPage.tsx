@@ -5,6 +5,7 @@ import ReactECharts from 'echarts-for-react'
 import { useNavigate } from 'react-router-dom'
 import { api, query } from '../api'
 import { useAccount } from '../account'
+import { disableUnavailableDate, useAvailableDates } from '../dateRange'
 import type { RangeAnalytics } from '../types'
 
 type MetricKey = 'plays' | 'likes' | 'comments' | 'shares' | 'follows' | 'recommendations'
@@ -38,6 +39,7 @@ function compareMarkup(current: number | null, previous: number | null | undefin
 
 export default function DashboardPage() {
   const { account } = useAccount()
+  const availableDates = useAvailableDates(account?.id)
   const navigate = useNavigate()
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
   const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(1, 'day'))
@@ -144,9 +146,9 @@ export default function DashboardPage() {
       <div className="page-heading dashboard-heading">
         <div><Typography.Title level={2}>数据概览</Typography.Title><Typography.Text type="secondary">{account.name} · 数据范围：{startDate.format('YYYY-MM-DD')} 至 {endDate.format('YYYY-MM-DD')}</Typography.Text></div>
         <div className="date-controls">
-          <Segmented value={periodOptions.some((item) => item.value === days) ? days : undefined} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} />
-          <DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} />
-          <DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} />
+          <Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions, { label: '自定义', value: 0 }]} />
+          <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => { if (!value) return; const next = value.isAfter(endDate, 'day') ? endDate : value; setStartDate(next); setDays(endDate.diff(next, 'day') + 1) }} />
+          <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; const next = value.isBefore(startDate, 'day') ? startDate : value; setEndDate(next); setDays(next.diff(startDate, 'day') + 1) }} />
         </div>
       </div>
       {error && <Alert type="error" showIcon message={error} />}

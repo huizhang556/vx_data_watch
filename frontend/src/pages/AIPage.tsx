@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, query } from '../api'
 import { useAccount } from '../account'
+import { disableUnavailableDate, useAvailableDates } from '../dateRange'
 import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
@@ -31,6 +32,7 @@ const periodOptions = [
 
 export default function AIPage() {
   const { account } = useAccount()
+  const availableDates = useAvailableDates(account?.id)
   const { user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
@@ -238,9 +240,9 @@ export default function AIPage() {
       <section className="ai-control">
         <div><span className={`status-dot ${provider ? 'online' : ''}`} /><Typography.Text>{provider ? '接口已配置' : '等待配置'}</Typography.Text></div>
         <Space wrap>
-          <Segmented value={days} onChange={(value) => { const nextDays = Number(value); setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={periodOptions} />
-          <DatePicker aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
-          <DatePicker aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(value.subtract(days - 1, 'day')) }} />
+          <Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions, { label: '自定义', value: 0 }]} />
+          <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
+          <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(days ? value.subtract(days - 1, 'day') : (startDate.isAfter(value, 'day') ? value : startDate)) }} />
           {user.role === 'admin' && <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onChange={(id) => {
             const next = providers.find((item) => item.id === id)
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))

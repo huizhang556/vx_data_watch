@@ -776,6 +776,23 @@ def day_analytics(
     return date_summary(db, account_id, metric_date)
 
 
+@app.get("/api/analytics/available-dates")
+def available_analytics_dates(
+    account_id: int,
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    _get_account(db, account_id)
+    today = date.today()
+    rows = db.scalars(
+        select(DailyAccountMetric.metric_date)
+        .where(DailyAccountMetric.account_id == account_id, DailyAccountMetric.metric_date <= today)
+        .order_by(DailyAccountMetric.metric_date)
+    ).all()
+    dates = [value.isoformat() for value in rows]
+    return {"dates": dates, "earliest_date": dates[0] if dates else None, "latest_date": dates[-1] if dates else None}
+
+
 @app.get("/api/analytics/range")
 def range_analytics(
     account_id: int,
