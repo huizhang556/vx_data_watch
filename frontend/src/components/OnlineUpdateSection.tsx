@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Modal, Select, Space, Typography } from 'antd'
 import { CloudDownload, RefreshCw } from 'lucide-react'
 import { api } from '../api'
@@ -17,6 +17,7 @@ export default function OnlineUpdateSection() {
   const [targetVersion, setTargetVersion] = useState<string>()
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null)
   const [updateStarting, setUpdateStarting] = useState(false)
+  const initialLoadRef = useRef(false)
 
   const loadVersions = async () => {
     setVersionLoading(true); setVersionError('')
@@ -30,7 +31,12 @@ export default function OnlineUpdateSection() {
   const loadUpdateStatus = async () => {
     try { setUpdateStatus(await api<SystemUpdateStatus>('/api/system/update-status')) } catch { /* App may restart during an update. */ }
   }
-  useEffect(() => { void loadVersions(); void loadUpdateStatus() }, [])
+  useEffect(() => {
+    if (initialLoadRef.current) return
+    initialLoadRef.current = true
+    void loadVersions()
+    void loadUpdateStatus()
+  }, [])
   useEffect(() => {
     if (!updateStatus || !['queued', 'pulling', 'restarting', 'verifying', 'rolling_back'].includes(updateStatus.state)) return
     const timer = window.setInterval(() => void loadUpdateStatus(), 2000)
