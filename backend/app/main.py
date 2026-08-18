@@ -1297,11 +1297,16 @@ async def system_update(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.version not in {row["version"] for row in versions}:
         raise HTTPException(status_code=404, detail="Docker Hub 中不存在该版本")
-    backup = create_backup()
+    try:
+        backup = create_backup()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"更新前创建备份失败：{exc}") from exc
     try:
         request = queue_update(payload.version, backup.name)
     except UpdateBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"更新任务入队失败：{exc}") from exc
     write_audit(
         db,
         "system.update.request",
