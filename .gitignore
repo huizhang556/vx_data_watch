@@ -77,3 +77,6 @@ Desktop.ini
 *.tar
 *.tar.gz
 *.zip
+
+# Maintainer-only local release notes
+LOCAL_RELEASE_RUNBOOK.md
