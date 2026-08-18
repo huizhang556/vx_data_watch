@@ -16,6 +16,18 @@ class OCRUnavailableError(RuntimeError):
     pass
 
 
+_MAX_OCR_DIMENSION = 3000
+
+
+def _resize_for_ocr(image: Image.Image) -> Image.Image:
+    """Bound OCR work for high-resolution screenshots while preserving layout."""
+    if max(image.size) <= _MAX_OCR_DIMENSION:
+        return image
+    resized = image.copy()
+    resized.thumbnail((_MAX_OCR_DIMENSION, _MAX_OCR_DIMENSION), Image.Resampling.LANCZOS)
+    return resized
+
+
 @lru_cache
 def _engine():  # type: ignore[no-untyped-def]
     try:
@@ -104,6 +116,7 @@ def extract_screenshot_candidates(
     if image.width * image.height > 30_000_000:
         raise ValueError("截图像素过大")
 
+    image = _resize_for_ocr(image)
     result, _elapsed = _run_ocr(image)
     lines: list[dict[str, Any]] = []
     for entry in result or []:

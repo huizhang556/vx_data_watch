@@ -62,3 +62,10 @@ def test_deduplicates_overlapping_screenshots_by_confidence() -> None:
     high = {**common, "title": "同一条视频", "source_image": "second.png", "confidence": 0.95}
 
     assert ocr.deduplicate_candidates([low, high]) == [high]
+
+
+def test_resizes_high_resolution_images_before_ocr() -> None:
+    image = Image.new("RGB", (5000, 4000), "white")
+    resized = ocr._resize_for_ocr(image)
+    assert max(resized.size) == 3000
+    assert resized.size == (3000, 2400)
