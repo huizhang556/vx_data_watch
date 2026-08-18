@@ -21,7 +21,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VX_DATABASE_URL=sqlite:////app/data/vx_data.db \
     VX_COOKIE_SECURE=false
 WORKDIR /app
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
