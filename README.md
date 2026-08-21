@@ -161,7 +161,7 @@ docker compose -f docker-compose.yaml up -d --no-build
 docker compose -f docker-compose.yaml exec app python -m app.cli backup
 ```
 
-### Docker Compose 卸载
+### Docker Compose 卸载项目
 
 仅停止服务并保留数据库、主密钥、备份和导入数据：
 
@@ -326,7 +326,7 @@ sudo systemctl status vx-data-watch
 
 公网服务还应通过 Nginx 或 Caddy 提供 HTTPS，并在确认 HTTPS 可用后设置 `VX_COOKIE_SECURE=true`。
 
-### 源码部署卸载
+### 源码部署卸载项目
 
 如果使用 systemd，先停止并禁用服务：
 
@@ -351,6 +351,67 @@ rm -rf vx_data_watch
 ```
 
 源码卸载不会自动删除系统级的 Python、Node.js、uv、Nginx 或其他共享软件。删除前请确认 Nginx 配置不再引用本项目，并执行 `sudo nginx -t` 检查配置。
+
+### Nginx 反向代理（可选）
+
+源码服务默认监听 `127.0.0.1:8000`。如果要使用域名和 HTTPS，可以在源码部署完成并确认本机访问正常后配置 Nginx。
+
+安装 Nginx：
+
+```bash
+sudo apt update
+sudo apt install -y nginx
+```
+
+创建站点配置，将 `analytics.example.com` 替换为你的域名：
+
+```bash
+sudo nano /etc/nginx/sites-available/vx-data-watch
+```
+
+写入：
+
+```nginx
+server {
+    listen 80;
+    server_name analytics.example.com;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+    }
+}
+```
+
+启用配置并检查：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/vx-data-watch /etc/nginx/sites-enabled/vx-data-watch
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+确认域名可以通过 HTTP 访问后，再申请 HTTPS 证书：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d analytics.example.com
+```
+
+HTTPS 正常后，在 `.env` 中设置 `VX_COOKIE_SECURE=true`，然后重启源码服务：
+
+```bash
+sudo systemctl restart vx-data-watch
+```
+
+如果使用 Docker Compose，Nginx 配置完全相同，只需确认 Compose 端口映射为 `127.0.0.1:8000:8000`，HTTPS 配置生效后执行 `docker compose -f docker-compose.yaml up -d --no-build`。如果修改了 `VX_PORT`，同步替换 `proxy_pass` 中的端口。
 
 ## 使用流程
 
