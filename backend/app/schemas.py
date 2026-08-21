@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -8,9 +9,23 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator
 from .models import Role
 
 
+def validate_password_strength(value: str | None) -> str | None:
+    if value is not None and (len(value) < 10 or not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value)):
+        raise ValueError("密码至少 10 位，并同时包含字母和数字")
+    return value
+
+
+def validate_email_address(value: str | None) -> str | None:
+    if value is not None and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value.strip()):
+        raise ValueError("请输入有效的邮箱地址")
+    return value
+
+
 class SetupRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
     password: str = Field(min_length=10, max_length=200)
+
+    _password_strength = field_validator("password")(validate_password_strength)
 
 
 class LoginRequest(BaseModel):
@@ -23,6 +38,8 @@ class RegisterCodeRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     captcha_token: str | None = None
 
+    _email_format = field_validator("email")(validate_email_address)
+
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
@@ -31,10 +48,15 @@ class RegisterRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
     captcha_token: str | None = None
 
+    _password_strength = field_validator("password")(validate_password_strength)
+    _email_format = field_validator("email")(validate_email_address)
+
 
 class PasswordResetRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     captcha_token: str | None = None
+
+    _email_format = field_validator("email")(validate_email_address)
 
 
 class PasswordResetConfirm(BaseModel):
@@ -43,6 +65,40 @@ class PasswordResetConfirm(BaseModel):
     new_password: str = Field(min_length=10, max_length=200)
     captcha_token: str | None = None
 
+    _password_strength = field_validator("new_password")(validate_password_strength)
+    _email_format = field_validator("email")(validate_email_address)
+
+
+class AuthSettingsUpdate(BaseModel):
+    registration_enabled: bool = False
+    smtp_host: str | None = Field(default=None, max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = Field(default=None, max_length=254)
+    smtp_password: str | None = Field(default=None, max_length=500)
+    smtp_from: str | None = Field(default=None, max_length=254)
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    verification_code_minutes: int = Field(default=10, ge=1, le=60)
+    captcha_enabled: bool = False
+    captcha_provider: str = Field(default="turnstile", max_length=30)
+    captcha_site_key: str | None = Field(default=None, max_length=500)
+    captcha_secret_key: str | None = Field(default=None, max_length=500)
+
+    @field_validator("smtp_from")
+    @classmethod
+    def validate_sender(cls, value: str | None) -> str | None:
+        if value and "<" in value and ">" in value:
+            address = value[value.rfind("<") + 1:value.rfind(">")]
+            validate_email_address(address)
+            return value
+        return validate_email_address(value)
+
+
+class SMTPTestRequest(BaseModel):
+    recipient: str = Field(min_length=5, max_length=254)
+
+    _email_format = field_validator("recipient")(validate_email_address)
+
 
 class UsernameChange(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
@@ -50,13 +106,29 @@ class UsernameChange(BaseModel):
 
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
+    email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=200)
     role: Role = Role.viewer
+
+    _password_strength = field_validator("password")(validate_password_strength)
+    _email_format = field_validator("email")(validate_email_address)
+
+
+class UserAdminUpdate(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
+    password: str | None = Field(default=None, min_length=10, max_length=200)
+    role: Role | None = None
+    is_active: bool | None = None
+
+    _password_strength = field_validator("password")(validate_password_strength)
+    _email_format = field_validator("email")(validate_email_address)
 
 
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str = Field(min_length=10, max_length=200)
+
+    _password_strength = field_validator("new_password")(validate_password_strength)
 
 
 class UserResponse(BaseModel):

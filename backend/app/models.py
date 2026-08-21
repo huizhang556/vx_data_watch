@@ -53,6 +53,7 @@ class User(Base):
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.admin)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class VerificationCode(Base):
@@ -65,6 +66,15 @@ class VerificationCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    value: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class LoginSession(Base):

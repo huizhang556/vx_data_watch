@@ -25,7 +25,7 @@ def test_admin_can_create_user(client: TestClient, auth: dict[str, str]) -> None
     response = client.post(
         "/api/users",
         headers=auth,
-        json={"username": "viewer", "password": "viewer-pass-123", "role": "viewer"},
+            json={"username": "viewer", "email": "viewer@example.com", "password": "viewer-pass-123", "role": "viewer"},
     )
     assert response.status_code == 201, response.text
     users = client.get("/api/users")

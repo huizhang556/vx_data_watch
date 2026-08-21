@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Layout, Menu, Select, Spin, Typography } from 'antd'
-import { BarChart3, Bot, FileUp, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Video } from 'lucide-react'
+import { BarChart3, Bot, DatabaseBackup, FileUp, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { AccountContext } from './account'
@@ -8,6 +8,7 @@ import { useAuth } from './auth'
 import type { Account } from './types'
 
 const AIPage = lazy(() => import('./pages/AIPage'))
+const BackupPage = lazy(() => import('./pages/BackupPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ImportsPage = lazy(() => import('./pages/ImportsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
@@ -19,6 +20,7 @@ const items = [
   { key: '/videos', icon: <Video size={19} />, label: '视频贡献' },
   { key: '/imports', icon: <FileUp size={19} />, label: '数据导入' },
   { key: '/ai', icon: <Bot size={19} />, label: 'AI 建议' },
+  { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
   { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
   { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
 ]
@@ -81,6 +83,7 @@ export default function App() {
                 <Route path="/videos" element={<VideosPage />} />
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
+                <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

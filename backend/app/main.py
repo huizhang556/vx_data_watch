@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import gc
 import json
@@ -38,7 +38,7 @@ from .ai_service import (
 )
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
-from .auth_service import consume_code, email_user, normalize_email, require_captcha, send_code
+from .auth_service import auth_settings, consume_code, email_user, normalize_email, require_captcha, save_auth_settings, send_code, test_smtp_connection
 from .backups import create_backup
 from .config import get_settings
 from .database import get_db, init_db
@@ -77,6 +77,8 @@ from .models import (
 from .ocr import OCRUnavailableError, deduplicate_candidates, extract_screenshot_candidates
 from .schemas import (
     AccountCreate,
+    AuthSettingsUpdate,
+    SMTPTestRequest,
     AIAnalyzeRequest,
     AIProviderDraft,
     AIProviderInput,
@@ -90,6 +92,7 @@ from .schemas import (
     SetupRequest,
     SystemUpdateRequest,
     UserCreate,
+    UserAdminUpdate,
     UsernameChange,
     VideoMetricCommit,
 )
@@ -222,13 +225,45 @@ def setup_status(db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
 
 
 @app.get("/api/auth/config")
-def auth_config() -> dict[str, Any]:
+def auth_config(db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    values = auth_settings(db)
     return {
-        "registration_enabled": settings.registration_enabled,
-        "captcha_enabled": settings.captcha_enabled,
-        "captcha_provider": settings.captcha_provider,
-        "captcha_site_key": settings.captcha_site_key,
+        "registration_enabled": values["registration_enabled"],
+        "captcha_enabled": values["captcha_enabled"],
+        "captcha_provider": values["captcha_provider"],
+        "captcha_site_key": values["captcha_site_key"],
     }
+
+
+@app.get("/api/settings/auth")
+def read_auth_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    values = auth_settings(db)
+    return {**values, "smtp_password_set": bool(values.get("smtp_password")), "smtp_password": None, "captcha_secret_key_set": bool(values.get("captcha_secret_key")), "captcha_secret_key": None}
+
+
+@app.put("/api/settings/auth")
+def update_auth_settings(payload: AuthSettingsUpdate, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    current = auth_settings(db)
+    values = payload.model_dump()
+    if not values.get("smtp_password"):
+        values["smtp_password"] = current.get("smtp_password")
+    if not values.get("captcha_secret_key"):
+        values["captcha_secret_key"] = current.get("captcha_secret_key")
+    save_auth_settings(db, values)
+    db.commit()
+    return {**values, "smtp_password_set": bool(values.get("smtp_password")), "smtp_password": None, "captcha_secret_key_set": bool(values.get("captcha_secret_key")), "captcha_secret_key": None}
+
+
+@app.post("/api/settings/auth/test")
+def test_auth_smtp(payload: SMTPTestRequest, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    test_smtp_connection(db, payload.recipient)
+    return {"message": "测试邮件已发送"}
 
 
 @app.post("/api/setup", status_code=201)
@@ -259,7 +294,7 @@ def login(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    require_captcha(request, payload.captcha_token)
+    require_captcha(request, payload.captcha_token, db)
     attempt_key = (
         f"{request.client.host if request.client else 'unknown'}:{payload.username.lower()}"
     )
@@ -275,6 +310,7 @@ def login(
         _login_attempts[attempt_key] = attempts
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     _login_attempts.pop(attempt_key, None)
+    user.last_login_at = datetime.now(UTC)
     raw_token, login_session = _create_session(db, user, request)
     write_audit(db, "auth.login", user, "session")
     db.commit()
@@ -284,9 +320,9 @@ def login(
 
 @app.post("/api/auth/register/request-code")
 def register_request_code(payload: RegisterCodeRequest, request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
-    if not settings.registration_enabled:
+    if not bool(auth_settings(db)["registration_enabled"]):
         raise HTTPException(status_code=404, detail="注册功能当前已关闭")
-    require_captcha(request, payload.captcha_token)
+    require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
     if email_user(db, email):
         raise HTTPException(status_code=409, detail="该邮箱已注册")
@@ -297,9 +333,9 @@ def register_request_code(payload: RegisterCodeRequest, request: Request, db: An
 
 @app.post("/api/auth/register", status_code=201)
 def register(payload: RegisterRequest, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if not settings.registration_enabled:
+    if not bool(auth_settings(db)["registration_enabled"]):
         raise HTTPException(status_code=404, detail="注册功能当前已关闭")
-    require_captcha(request, payload.captcha_token)
+    require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
     if db.scalar(select(User).where((User.username == payload.username) | (User.email == email))):
         raise HTTPException(status_code=409, detail="用户名或邮箱已存在")
@@ -318,7 +354,7 @@ def register(payload: RegisterRequest, request: Request, response: Response, db:
 
 @app.post("/api/auth/password-reset/request-code")
 def reset_request_code(payload: PasswordResetRequest, request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
-    require_captcha(request, payload.captcha_token)
+    require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
     if not email_user(db, email):
         # Avoid exposing whether an address is registered.
@@ -330,7 +366,7 @@ def reset_request_code(payload: PasswordResetRequest, request: Request, db: Anno
 
 @app.post("/api/auth/password-reset")
 def reset_password(payload: PasswordResetConfirm, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    require_captcha(request, payload.captcha_token)
+    require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
     user = email_user(db, email)
     if not user or not consume_code(db, email, "reset", payload.code):
@@ -460,7 +496,9 @@ def list_users(
             "username": row.username,
             "role": row.role.value,
             "is_active": row.is_active,
+            "email": row.email,
             "created_at": row.created_at,
+            "last_login_at": row.last_login_at,
         }
         for row in rows
     ]
@@ -474,8 +512,13 @@ def create_user(
 ) -> dict[str, Any]:
     if db.scalar(select(User).where(User.username == payload.username)):
         raise HTTPException(status_code=409, detail="用户名已存在")
+    email = normalize_email(payload.email)
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status_code=409, detail="注册邮箱已存在")
     created = User(
         username=payload.username,
+        email=email,
+        email_verified=True,
         password_hash=hash_password(payload.password),
         role=payload.role,
     )
@@ -484,6 +527,43 @@ def create_user(
     write_audit(db, "user.create", user, "user", created.id, {"role": created.role.value})
     db.commit()
     return {"id": created.id, "username": created.username, "role": created.role.value}
+
+
+@app.patch("/api/users/{user_id}")
+def update_user(user_id: int, payload: UserAdminUpdate, user: Annotated[User, Depends(require_csrf_admin)], db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target.id == user.id and payload.is_active is False:
+        raise HTTPException(status_code=400, detail="不能停用当前登录用户")
+    if payload.email is not None:
+        normalized_email = normalize_email(payload.email) if payload.email else None
+        if normalized_email and db.scalar(select(User).where(User.email == normalized_email, User.id != target.id)):
+            raise HTTPException(status_code=409, detail="注册邮箱已被其他用户使用")
+        target.email = normalized_email
+        target.email_verified = bool(target.email)
+    if payload.password:
+        target.password_hash = hash_password(payload.password)
+    if payload.role is not None:
+        target.role = payload.role
+    if payload.is_active is not None:
+        target.is_active = payload.is_active
+    write_audit(db, "user.update", user, "user", target.id)
+    db.commit()
+    return {"id": target.id, "username": target.username, "email": target.email, "role": target.role.value, "is_active": target.is_active}
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, user: Annotated[User, Depends(require_csrf_admin)], db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target.id == user.id:
+        raise HTTPException(status_code=400, detail="不能删除当前登录用户")
+    db.delete(target)
+    write_audit(db, "user.delete", user, "user", user_id)
+    db.commit()
+    return {"message": "用户已删除"}
 
 
 @app.get("/api/accounts")
