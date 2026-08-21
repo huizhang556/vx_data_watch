@@ -24,8 +24,9 @@ export default function SettingsPage() {
   const [testRecipient, setTestRecipient] = useState('')
   const [loading, setLoading] = useState(false)
   const loadUsers = () => user.role === 'admin' ? api<LocalUser[]>('/api/users').then(setUsers) : Promise.resolve()
-  const loadAuthSettings = () => user.role === 'admin' ? api<AuthSettings>('/api/settings/auth').then((value) => { setAuthSettings(value); authForm.setFieldsValue(value) }) : Promise.resolve()
   const [authForm] = Form.useForm<AuthSettings>()
+  const [captchaForm] = Form.useForm<AuthSettings>()
+  const loadAuthSettings = () => user.role === 'admin' ? api<AuthSettings>('/api/settings/auth').then((value) => { setAuthSettings(value); authForm.setFieldsValue(value); captchaForm.setFieldsValue(value) }) : Promise.resolve()
   useEffect(() => {
     if (user.role === 'admin') { void loadUsers(); void loadAuthSettings() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -35,6 +36,7 @@ export default function SettingsPage() {
       const saved = await api<AuthSettings>('/api/settings/auth', { method: 'PUT', body: JSON.stringify(values) })
       setAuthSettings(saved)
       authForm.setFieldsValue(saved)
+      captchaForm.setFieldsValue(saved)
       if (notify) message.success('邮箱与注册配置已保存')
       return saved
     } catch (cause) {
@@ -56,6 +58,11 @@ export default function SettingsPage() {
       message.success('测试邮件已发送，请检查收件箱')
     } catch (cause) { message.error(cause instanceof Error ? cause.message : '测试邮件发送失败') }
     finally { setLoading(false) }
+  }
+  const saveCaptchaSettings = async (values: AuthSettings) => {
+    // 人机验证使用独立表单，但后端配置存储仍是一个加密配置对象。
+    // 以已保存的邮箱配置作为基线，避免提交人机验证时覆盖 SMTP 设置。
+    await saveAuthSettings({ ...(authSettings || {}), ...values }, true)
   }
   const createAccount = async (values: { name: string; description?: string }) => {
     setLoading(true)
@@ -97,7 +104,7 @@ export default function SettingsPage() {
           <Form.Item name="verification_code_minutes" label="验证码有效期（分钟）" rules={[{ required: true, message: '请输入验证码有效期' }, { type: 'number', min: 1, max: 60, message: '有效期范围为 1-60 分钟' }]}><InputNumber min={1} max={60} style={{ width: 190 }} /></Form.Item>
           <div className="settings-actions"><Button type="primary" htmlType="submit" loading={loading}>保存邮箱配置</Button><Input value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} placeholder="测试收件邮箱" /><Button onClick={() => void testAuthSMTP()} loading={loading}>发送测试邮件</Button></div>
         </Form>}
-        {user.role === 'admin' && <Form form={authForm} layout="vertical" onFinish={saveAuthSettings} requiredMark={false} className="captcha-settings-form">
+        {user.role === 'admin' && <Form form={captchaForm} layout="vertical" onFinish={saveCaptchaSettings} requiredMark={false} className="captcha-settings-form">
           <Typography.Title level={3}>人机验证</Typography.Title><Typography.Text type="secondary">登录、注册和重置密码的人机验证配置</Typography.Text>
           <Form.Item name="captcha_enabled" label="启用人机验证" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item name="captcha_provider" label="验证服务商"><Select options={[{ value: 'turnstile', label: 'Cloudflare Turnstile' }]} /></Form.Item>
