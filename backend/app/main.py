@@ -248,10 +248,13 @@ def update_auth_settings(payload: AuthSettingsUpdate, user: CsrfUser, db: Annota
     if user.role != Role.admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     current = auth_settings(db)
-    values = payload.model_dump()
-    if not values.get("smtp_password"):
+    # Settings forms are independent. Merge only fields actually submitted so
+    # saving SMTP cannot reset captcha and vice versa.
+    updates = payload.model_dump(exclude_unset=True)
+    values = {**current, **updates}
+    if not updates.get("smtp_password"):
         values["smtp_password"] = current.get("smtp_password")
-    if not values.get("captcha_secret_key"):
+    if not updates.get("captcha_secret_key"):
         values["captcha_secret_key"] = current.get("captcha_secret_key")
     save_auth_settings(db, values)
     db.commit()

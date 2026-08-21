@@ -30,14 +30,14 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user.role === 'admin') { void loadUsers(); void loadAuthSettings() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const saveAuthSettings = async (values: AuthSettings, notify = true) => {
+  const saveAuthSettings = async (values: Partial<AuthSettings>, notify = true, successMessage = '邮箱与注册配置已保存') => {
     setLoading(true)
     try {
       const saved = await api<AuthSettings>('/api/settings/auth', { method: 'PUT', body: JSON.stringify(values) })
       setAuthSettings(saved)
       authForm.setFieldsValue(saved)
       captchaForm.setFieldsValue(saved)
-      if (notify) message.success('邮箱与注册配置已保存')
+      if (notify) message.success(successMessage)
       return saved
     } catch (cause) {
       if (notify) message.error(cause instanceof Error ? cause.message : '保存邮箱配置失败')
@@ -62,7 +62,7 @@ export default function SettingsPage() {
   const saveCaptchaSettings = async (values: AuthSettings) => {
     // 人机验证使用独立表单，但后端配置存储仍是一个加密配置对象。
     // 以已保存的邮箱配置作为基线，避免提交人机验证时覆盖 SMTP 设置。
-    await saveAuthSettings({ ...(authSettings || {}), ...values }, true)
+    await saveAuthSettings(values, true, '人机验证配置已保存')
   }
   const createAccount = async (values: { name: string; description?: string }) => {
     setLoading(true)

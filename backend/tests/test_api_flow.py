@@ -33,6 +33,33 @@ def test_admin_can_create_user(client: TestClient, auth: dict[str, str]) -> None
     assert any(row["username"] == "viewer" for row in users.json())
 
 
+def test_auth_settings_forms_update_independently(client: TestClient, auth: dict[str, str]) -> None:
+    email_only = client.put(
+        "/api/settings/auth", headers=auth, json={"registration_enabled": True}
+    )
+    assert email_only.status_code == 200, email_only.text
+    assert email_only.json()["registration_enabled"] is True
+    assert email_only.json()["captcha_enabled"] is False
+
+    captcha_only = client.put(
+        "/api/settings/auth",
+        headers=auth,
+        json={"captcha_enabled": True, "captcha_site_key": "site-key"},
+    )
+    assert captcha_only.status_code == 200, captcha_only.text
+    saved = client.get("/api/settings/auth")
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["registration_enabled"] is True
+    assert saved.json()["captcha_enabled"] is True
+    # Keep the shared test database usable for the following authentication tests.
+    reset = client.put(
+        "/api/settings/auth",
+        headers=auth,
+        json={"registration_enabled": False, "captcha_enabled": False},
+    )
+    assert reset.status_code == 200, reset.text
+
+
 def test_admin_can_check_and_queue_system_update(
     client: TestClient,
     auth: dict[str, str],
