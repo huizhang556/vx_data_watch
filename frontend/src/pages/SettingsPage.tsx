@@ -29,17 +29,32 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user.role === 'admin') { void loadUsers(); void loadAuthSettings() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const saveAuthSettings = async (values: AuthSettings) => {
+  const saveAuthSettings = async (values: AuthSettings, notify = true) => {
     setLoading(true)
-    try { const saved = await api<AuthSettings>('/api/settings/auth', { method: 'PUT', body: JSON.stringify(values) }); setAuthSettings(saved); authForm.setFieldsValue(saved); message.success('邮箱与注册配置已保存') }
-    catch (cause) { message.error(cause instanceof Error ? cause.message : '保存配置失败') }
-    finally { setLoading(false) }
+    try {
+      const saved = await api<AuthSettings>('/api/settings/auth', { method: 'PUT', body: JSON.stringify(values) })
+      setAuthSettings(saved)
+      authForm.setFieldsValue(saved)
+      if (notify) message.success('邮箱与注册配置已保存')
+      return saved
+    } catch (cause) {
+      if (notify) message.error(cause instanceof Error ? cause.message : '保存邮箱配置失败')
+      throw cause
+    } finally { setLoading(false) }
   }
   const testAuthSMTP = async () => {
     if (!testRecipient.trim()) { message.warning('请输入测试收件邮箱'); return }
     setLoading(true)
-    try { await api('/api/settings/auth/test', { method: 'POST', body: JSON.stringify({ recipient: testRecipient.trim() }) }); message.success('测试邮件已发送，请检查收件箱') }
-    catch (cause) { message.error(cause instanceof Error ? cause.message : '测试邮件发送失败') }
+    try {
+      // 测试接口读取数据库配置，因此先保存当前表单中的 SMTP 配置。
+      const smtpValues = await authForm.validateFields([
+        'registration_enabled', 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_password',
+        'smtp_from', 'smtp_starttls', 'smtp_ssl', 'verification_code_minutes',
+      ])
+      await saveAuthSettings({ ...authForm.getFieldsValue(), ...smtpValues }, false)
+      await api('/api/settings/auth/test', { method: 'POST', body: JSON.stringify({ recipient: testRecipient.trim() }) })
+      message.success('测试邮件已发送，请检查收件箱')
+    } catch (cause) { message.error(cause instanceof Error ? cause.message : '测试邮件发送失败') }
     finally { setLoading(false) }
   }
   const createAccount = async (values: { name: string; description?: string }) => {
