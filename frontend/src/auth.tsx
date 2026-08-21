@@ -29,6 +29,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true); const [initialized, setInitialized] = useState(false); const [user, setUser] = useState<User | null>(null); const [error, setError] = useState('')
   const [config, setConfig] = useState({ registration_enabled: false, captcha_enabled: false, captcha_site_key: '' }); const [mode, setMode] = useState<Mode>('login'); const [captcha, setCaptcha] = useState<string>(); const [email, setEmail] = useState(''); const [busy, setBusy] = useState(false)
   const [form] = Form.useForm()
+  const captchaReady = !config.captcha_enabled || Boolean(captcha)
+  useEffect(() => {
+    const button = document.querySelector<HTMLButtonElement>('.auth-panel form button[type="submit"]')
+    if (!button) return
+    button.disabled = !captchaReady || busy
+    button.setAttribute('aria-disabled', String(!captchaReady || busy))
+  }, [captchaReady, busy, mode])
   useEffect(() => { void (async () => { try { const [status, authConfig] = await Promise.all([api<{ initialized: boolean }>('/api/setup/status'), api<typeof config>('/api/auth/config')]); setInitialized(status.initialized); setConfig(authConfig); if (status.initialized) { try { const me = await api<User>('/api/auth/me'); setCsrfToken(me.csrf_token); setUser(me) } catch { setUser(null) } } } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接后端') } finally { setLoading(false) } })() }, [])
   useEffect(() => { const onUnauthorized = () => { setCsrfToken(); setUser(null); localStorage.removeItem('vx_account_id') }; window.addEventListener('vx:unauthorized', onUnauthorized); return () => window.removeEventListener('vx:unauthorized', onUnauthorized) }, [])
   const switchMode = (next: Mode) => { setMode(next); setError(''); setCaptcha(undefined); form.resetFields(); setEmail('') }
