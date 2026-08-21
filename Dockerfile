@@ -1,6 +1,6 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.3.8
+ARG APP_VERSION=0.3.9
 
 FROM ${NODE_IMAGE} AS frontend-build
 WORKDIR /build/frontend
