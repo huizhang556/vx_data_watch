@@ -161,6 +161,31 @@ docker compose -f docker-compose.yaml up -d --no-build
 docker compose -f docker-compose.yaml exec app python -m app.cli backup
 ```
 
+### Docker Compose 卸载
+
+仅停止服务并保留数据库、主密钥、备份和导入数据：
+
+```bash
+cd /path/to/vx_data_watch
+docker compose -f docker-compose.yaml down --remove-orphans
+```
+
+确认已经备份且不再需要项目数据后，删除 Compose 容器、命名卷和本地构建镜像：
+
+```bash
+cd /path/to/vx_data_watch
+docker compose -f docker-compose.yaml down --volumes --remove-orphans --rmi local
+```
+
+最后再删除源码目录：
+
+```bash
+cd ..
+rm -rf vx_data_watch
+```
+
+`--volumes` 会删除 `vx-data` 数据卷，可能造成数据库、主密钥和备份永久丢失。
+
 ### 5. 在线更新
 
 管理员可在左侧“在线更新”中检查 Docker Hub 正式版本，选择高于当前版本且不高于最新版的版本进行更新。系统会先创建加密备份，再拉取镜像、替换应用容器并等待健康检查；失败时自动恢复旧容器，成功后页面自动重新连接。
@@ -300,6 +325,32 @@ sudo systemctl status vx-data-watch
 源码部署可以在网页中检查是否有新版本，但网页不会执行 Git 命令或控制宿主机进程。更新后需要用户在终端重新启动。
 
 公网服务还应通过 Nginx 或 Caddy 提供 HTTPS，并在确认 HTTPS 可用后设置 `VX_COOKIE_SECURE=true`。
+
+### 源码部署卸载
+
+如果使用 systemd，先停止并禁用服务：
+
+```bash
+sudo systemctl disable --now vx-data-watch
+sudo rm -f /etc/systemd/system/vx-data-watch.service
+sudo systemctl daemon-reload
+```
+
+只清理源码环境并保留 `data/` 数据：
+
+```bash
+cd /path/to/vx_data_watch
+rm -rf .venv frontend/node_modules frontend/dist .pytest_cache .ruff_cache
+```
+
+确认已经备份且不再需要数据库、主密钥、备份和导入数据后，删除整个源码目录：
+
+```bash
+cd ..
+rm -rf vx_data_watch
+```
+
+源码卸载不会自动删除系统级的 Python、Node.js、uv、Nginx 或其他共享软件。删除前请确认 Nginx 配置不再引用本项目，并执行 `sudo nginx -t` 检查配置。
 
 ## 使用流程
 
