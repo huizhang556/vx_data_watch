@@ -38,6 +38,7 @@ from .ai_service import (
 )
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
+from .auth_service import consume_code, email_user, normalize_email, require_captcha, send_code
 from .backups import create_backup
 from .config import get_settings
 from .database import get_db, init_db
@@ -82,9 +83,14 @@ from .schemas import (
     AIProviderSelect,
     LoginRequest,
     PasswordChange,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RegisterCodeRequest,
+    RegisterRequest,
     SetupRequest,
     SystemUpdateRequest,
     UserCreate,
+    UsernameChange,
     VideoMetricCommit,
 )
 from .security import (
@@ -133,9 +139,9 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; "
-        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; connect-src 'self' https://challenges.cloudflare.com; font-src 'self' data:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src https://challenges.cloudflare.com"
     )
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
@@ -215,6 +221,16 @@ def setup_status(db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
     return {"initialized": (db.scalar(select(func.count(User.id))) or 0) > 0}
 
 
+@app.get("/api/auth/config")
+def auth_config() -> dict[str, Any]:
+    return {
+        "registration_enabled": settings.registration_enabled,
+        "captcha_enabled": settings.captcha_enabled,
+        "captcha_provider": settings.captcha_provider,
+        "captcha_site_key": settings.captcha_site_key,
+    }
+
+
 @app.post("/api/setup", status_code=201)
 def setup(
     payload: SetupRequest,
@@ -243,6 +259,7 @@ def login(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
+    require_captcha(request, payload.captcha_token)
     attempt_key = (
         f"{request.client.host if request.client else 'unknown'}:{payload.username.lower()}"
     )
@@ -250,7 +267,9 @@ def login(
     attempts = [value for value in _login_attempts.get(attempt_key, []) if now - value < 300]
     if len(attempts) >= 5:
         raise HTTPException(status_code=429, detail="登录失败次数过多，请 5 分钟后重试")
-    user = db.scalar(select(User).where(User.username == payload.username))
+    user = db.scalar(select(User).where(
+        (User.username == payload.username) | (User.email == normalize_email(payload.username))
+    ))
     if not user or not user.is_active or not verify_password(user.password_hash, payload.password):
         attempts.append(now)
         _login_attempts[attempt_key] = attempts
@@ -261,6 +280,68 @@ def login(
     db.commit()
     _set_session_cookie(request, response, raw_token)
     return _user_payload(user, login_session.csrf_token)
+
+
+@app.post("/api/auth/register/request-code")
+def register_request_code(payload: RegisterCodeRequest, request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    if not settings.registration_enabled:
+        raise HTTPException(status_code=404, detail="注册功能当前已关闭")
+    require_captcha(request, payload.captcha_token)
+    email = normalize_email(payload.email)
+    if email_user(db, email):
+        raise HTTPException(status_code=409, detail="该邮箱已注册")
+    send_code(db, email, "register")
+    db.commit()
+    return {"message": "验证码已发送"}
+
+
+@app.post("/api/auth/register", status_code=201)
+def register(payload: RegisterRequest, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if not settings.registration_enabled:
+        raise HTTPException(status_code=404, detail="注册功能当前已关闭")
+    require_captcha(request, payload.captcha_token)
+    email = normalize_email(payload.email)
+    if db.scalar(select(User).where((User.username == payload.username) | (User.email == email))):
+        raise HTTPException(status_code=409, detail="用户名或邮箱已存在")
+    if not consume_code(db, email, "register", payload.code):
+        raise HTTPException(status_code=422, detail="验证码错误或已过期")
+    user = User(username=payload.username, email=email, email_verified=True,
+                password_hash=hash_password(payload.password), role=Role.viewer)
+    db.add(user)
+    db.flush()
+    raw_token, session = _create_session(db, user, request)
+    write_audit(db, "auth.register", user, "user", user.id)
+    db.commit()
+    _set_session_cookie(request, response, raw_token)
+    return _user_payload(user, session.csrf_token)
+
+
+@app.post("/api/auth/password-reset/request-code")
+def reset_request_code(payload: PasswordResetRequest, request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    require_captcha(request, payload.captcha_token)
+    email = normalize_email(payload.email)
+    if not email_user(db, email):
+        # Avoid exposing whether an address is registered.
+        return {"message": "如果邮箱已注册，验证码将发送至该邮箱"}
+    send_code(db, email, "reset")
+    db.commit()
+    return {"message": "如果邮箱已注册，验证码将发送至该邮箱"}
+
+
+@app.post("/api/auth/password-reset")
+def reset_password(payload: PasswordResetConfirm, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    require_captcha(request, payload.captcha_token)
+    email = normalize_email(payload.email)
+    user = email_user(db, email)
+    if not user or not consume_code(db, email, "reset", payload.code):
+        raise HTTPException(status_code=422, detail="验证码错误或已过期")
+    user.password_hash = hash_password(payload.new_password)
+    db.execute(LoginSession.__table__.delete().where(LoginSession.user_id == user.id))
+    raw_token, session = _create_session(db, user, request)
+    write_audit(db, "auth.password.reset", user)
+    db.commit()
+    _set_session_cookie(request, response, raw_token)
+    return _user_payload(user, session.csrf_token)
 
 
 @app.get("/api/auth/me")
@@ -317,6 +398,15 @@ def change_password(
     db.commit()
     _set_session_cookie(request, response, raw_token)
     return {"csrf_token": login_session.csrf_token}
+
+
+@app.post("/api/auth/username")
+def change_username(payload: UsernameChange, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    if db.scalar(select(User).where(User.username == payload.username, User.id != user.id)):
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    user.username = payload.username
+    db.commit()
+    return {"username": user.username}
 
 
 @app.get("/api/auth/sessions")

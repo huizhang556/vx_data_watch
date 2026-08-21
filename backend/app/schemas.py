@@ -16,6 +16,36 @@ class SetupRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    captcha_token: str | None = None
+
+
+class RegisterCodeRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    captcha_token: str | None = None
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=200)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    captcha_token: str | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    captcha_token: str | None = None
+
+
+class PasswordResetConfirm(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=10, max_length=200)
+    captcha_token: str | None = None
+
+
+class UsernameChange(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
 
 
 class UserCreate(BaseModel):

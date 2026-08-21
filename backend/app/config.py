@@ -21,6 +21,19 @@ class Settings(BaseSettings):
     update_env_file: Path = Path("/project/.env")
     update_project: str = "vx-data-watch"
     update_service: str = "app"
+    registration_enabled: bool = False
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False
+    captcha_enabled: bool = False
+    captcha_provider: str = "turnstile"
+    captcha_site_key: str | None = None
+    captcha_secret_key: str | None = None
+    verification_code_minutes: int = 10
 
     @property
     def max_upload_bytes(self) -> int:

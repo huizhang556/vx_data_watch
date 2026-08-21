@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Empty, Form, Input, Modal, Select, Table, Tag, Typography, message } from 'antd'
-import { DatabaseBackup, Download, KeyRound, Plus, ShieldCheck, UserPlus } from 'lucide-react'
+import { DatabaseBackup, Download, KeyRound, Plus, ShieldCheck, UserPlus, UserRound } from 'lucide-react'
 import dayjs from 'dayjs'
 import { api, setCsrfToken } from '../api'
 import { useAccount } from '../account'
@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [open, setOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [usernameOpen, setUsernameOpen] = useState(false)
   const [backups, setBackups] = useState<Backup[]>([])
   const [users, setUsers] = useState<LocalUser[]>([])
   const [loading, setLoading] = useState(false)
@@ -47,6 +48,12 @@ export default function SettingsPage() {
     catch (cause) { message.error(cause instanceof Error ? cause.message : '修改失败') }
     finally { setLoading(false) }
   }
+  const changeUsername = async (values: { username: string }) => {
+    setLoading(true)
+    try { await api('/api/auth/username', { method: 'POST', body: JSON.stringify(values) }); setUsernameOpen(false); message.success('用户名已修改') }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : '修改失败') }
+    finally { setLoading(false) }
+  }
   return (
     <div className="page">
       <div className="page-heading"><div><Typography.Title level={2}>系统设置</Typography.Title><Typography.Text type="secondary">账号、数据安全与备份</Typography.Text></div></div>
@@ -55,7 +62,7 @@ export default function SettingsPage() {
         {!accounts.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有视频号账号" /> : <div className="account-list">{accounts.map((account) => <article key={account.id}><div className="account-icon">号</div><div><strong>{account.name}</strong><span>{account.description || '暂无备注'}</span></div><Tag color="green">使用中</Tag></article>)}</div>}
       </section>
       <section className="section-band">
-        <div className="section-heading"><div><Typography.Title level={3}>本地用户</Typography.Title><Typography.Text type="secondary">当前用户：{user.username}（{user.role}）</Typography.Text></div><div><Button icon={<KeyRound size={18} />} onClick={() => setPasswordOpen(true)}>修改密码</Button>{user.role === 'admin' && <Button type="primary" icon={<UserPlus size={18} />} onClick={() => setUserOpen(true)} style={{ marginLeft: 8 }}>新增用户</Button>}</div></div>
+        <div className="section-heading"><div><Typography.Title level={3}>本地用户</Typography.Title><Typography.Text type="secondary">当前用户：{user.username}（{user.role}）</Typography.Text></div><div><Button icon={<UserRound size={18} />} onClick={() => setUsernameOpen(true)}>修改用户名</Button><Button icon={<KeyRound size={18} />} onClick={() => setPasswordOpen(true)} style={{ marginLeft: 8 }}>修改密码</Button>{user.role === 'admin' && <Button type="primary" icon={<UserPlus size={18} />} onClick={() => setUserOpen(true)} style={{ marginLeft: 8 }}>新增用户</Button>}</div></div>
         {user.role === 'admin' && <Table size="small" rowKey="id" pagination={false} dataSource={users} columns={[{ title: '用户名', dataIndex: 'username' }, { title: '角色', dataIndex: 'role', render: (value) => <Tag>{value}</Tag> }, { title: '状态', dataIndex: 'is_active', render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '启用' : '停用'}</Tag> }, { title: '创建时间', dataIndex: 'created_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm') }]} />}
       </section>
       <section className="section-band">
@@ -72,6 +79,7 @@ export default function SettingsPage() {
       <Modal title="新增视频号账号" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={createAccount} requiredMark={false}><Form.Item name="name" label="账号名称" rules={[{ required: true }]}><Input maxLength={120} /></Form.Item><Form.Item name="description" label="备注"><Input.TextArea maxLength={500} rows={3} /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>创建</Button></Form></Modal>
       <Modal title="新增本地用户" open={userOpen} onCancel={() => setUserOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={createUser} initialValues={{ role: 'viewer' }} requiredMark={false}><Form.Item name="username" label="用户名" rules={[{ required: true }, { min: 3 }]}><Input /></Form.Item><Form.Item name="password" label="初始密码" rules={[{ required: true }, { min: 10 }]}><Input.Password autoComplete="new-password" /></Form.Item><Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'editor', label: '编辑者' }, { value: 'viewer', label: '只读者' }]} /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>创建用户</Button></Form></Modal>
       <Modal title="修改密码" open={passwordOpen} onCancel={() => setPasswordOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={changePassword} requiredMark={false}><Form.Item name="current_password" label="当前密码" rules={[{ required: true }]}><Input.Password autoComplete="current-password" /></Form.Item><Form.Item name="new_password" label="新密码" rules={[{ required: true }, { min: 10 }]}><Input.Password autoComplete="new-password" /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>修改并撤销其他会话</Button></Form></Modal>
+      <Modal title="修改用户名" open={usernameOpen} onCancel={() => setUsernameOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={changeUsername} initialValues={{ username: user.username }} requiredMark={false}><Form.Item name="username" label="新用户名" rules={[{ required: true }, { min: 3 }]}><Input autoComplete="username" /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>保存</Button></Form></Modal>
     </div>
   )
 }
