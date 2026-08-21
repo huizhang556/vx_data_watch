@@ -6,12 +6,13 @@ import zhCN from 'antd/locale/zh_CN'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { AuthGate } from './auth'
+import { ThemeProvider } from './theme'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#137a63', borderRadius: 6, fontFamily: 'Inter, "Microsoft YaHei", sans-serif' } }}>
-      <BrowserRouter><AuthGate><App /></AuthGate></BrowserRouter>
+      <ThemeProvider><BrowserRouter><AuthGate><App /></AuthGate></BrowserRouter></ThemeProvider>
     </ConfigProvider>
   </React.StrictMode>,
 )

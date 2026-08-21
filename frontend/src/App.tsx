@@ -1,10 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Layout, Menu, Select, Spin, Typography } from 'antd'
-import { BarChart3, Bot, DatabaseBackup, FileUp, LogOut, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Video } from 'lucide-react'
+import { BarChart3, Bot, DatabaseBackup, FileUp, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { AccountContext } from './account'
 import { useAuth } from './auth'
+import { useTheme } from './theme'
 import type { Account } from './types'
 
 const AIPage = lazy(() => import('./pages/AIPage'))
@@ -27,6 +28,7 @@ const items = [
 
 export default function App() {
   const { user, logout } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountId, setAccountIdState] = useState<number>(() => Number(localStorage.getItem('vx_account_id')) || 0)
   const [siderCollapsed, setSiderCollapsed] = useState(() => localStorage.getItem('vx_sider_collapsed') === 'true')
@@ -66,6 +68,7 @@ export default function App() {
         <Layout>
           <header className="topbar">
             <div className="mobile-brand"><span className="brand-mark small">VX</span><strong>视频号数据</strong></div>
+            <Button className="theme-toggle" type="text" icon={theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'} aria-label={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'} onClick={toggleTheme} />
             <Select
               aria-label="当前视频号"
               className="account-select"
