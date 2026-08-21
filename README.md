@@ -61,7 +61,7 @@ rm -rf vx_data_watch
 
 ```bash
 docker image ls litehub/vx-data-watch
-docker image rm litehub/vx-data-watch:0.3.7
+docker image rm litehub/vx-data-watch:0.3.6
 ```
 
 不要使用 `docker system prune -a` 代替上述命令，它可能删除其他项目正在使用的镜像和缓存。Docker Hub 上的远程镜像不会因本地卸载而删除，需要在 Docker Hub 中单独管理。
@@ -103,12 +103,3 @@ rm -rf vx_data_watch
 sudo nginx -t
 sudo systemctl reload nginx
 ```
-# 账号注册、邮箱验证与人机验证
-
-默认关闭公开注册：`VX_REGISTRATION_ENABLED=false`。需要开放注册时，在部署目录的 `.env` 中设置为 `true`，并配置 SMTP；修改后执行 `docker compose up -d` 使配置生效。
-
-邮箱配置项：`VX_SMTP_HOST`、`VX_SMTP_PORT`、`VX_SMTP_USERNAME`、`VX_SMTP_PASSWORD`、`VX_SMTP_FROM`、`VX_SMTP_STARTTLS`、`VX_SMTP_SSL`。465 端口通常设置 `VX_SMTP_SSL=true`，587 端口通常使用 `VX_SMTP_STARTTLS=true`。系统只在数据库中保存验证码哈希，验证码默认 10 分钟有效，可用 `VX_VERIFICATION_CODE_MINUTES` 调整。
-
-可选的人机验证目前支持 Cloudflare Turnstile：配置 `VX_CAPTCHA_ENABLED=true`、`VX_CAPTCHA_PROVIDER=turnstile`、`VX_CAPTCHA_SITE_KEY` 和 `VX_CAPTCHA_SECRET_KEY`。站点域名必须在 Turnstile 控制台中登记。开启后登录、注册和重置密码都要求完成验证。
-
-已有本地管理员账号不受影响。注册用户默认是只读角色；管理员仍可在系统设置中创建和管理本地用户。用户可在登录后通过账户设置修改用户名，密码重置只能使用已验证邮箱。
