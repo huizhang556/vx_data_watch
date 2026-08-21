@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Layout, Menu, Select, Spin, Typography } from 'antd'
+import { Avatar, Button, Dropdown, Layout, Menu, Select, Spin, Typography, type MenuProps } from 'antd'
 import { BarChart3, Bot, DatabaseBackup, Download, FileUp, FolderCog, Info, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, UserRound, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
@@ -17,6 +17,7 @@ const UpdatesPage = lazy(() => import('./pages/UpdatesPage'))
 const VideosPage = lazy(() => import('./pages/VideosPage'))
 const DownloadPage = lazy(() => import('./pages/DownloadPage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
+const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
 const legacyItems = [
   { key: '/dashboard', icon: <BarChart3 size={19} />, label: '数据概览' },
@@ -64,6 +65,8 @@ export default function App() {
   }
   const account = accounts.find((row) => row.id === accountId) || null
   const context = useMemo(() => ({ accounts, account, setAccountId, reloadAccounts }), [accounts, account, reloadAccounts])
+  const profileMenu: MenuProps['items'] = [{ key: 'profile', label: '个人资料' }, { type: 'divider' }, { key: 'logout', label: '退出软件', danger: true }]
+  const handleProfileMenu: MenuProps['onClick'] = ({ key }) => { if (key === 'profile') navigate('/profile'); if (key === 'logout') void logout() }
 
   return (
     <AccountContext.Provider value={context}>
@@ -89,6 +92,9 @@ export default function App() {
               onChange={setAccountId}
               options={accounts.map((row) => ({ value: row.id, label: row.name }))}
             />
+            <Dropdown menu={{ items: profileMenu, onClick: handleProfileMenu }} trigger={['click']} placement="bottomRight">
+              <button type="button" className="profile-trigger" aria-label="打开用户菜单"><Avatar size={36} className="profile-avatar">{user.username.slice(0, 1).toUpperCase()}</Avatar></button>
+            </Dropdown>
             <Button className="mobile-logout" type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />
           </header>
           <Layout.Content className="content">
@@ -116,6 +122,7 @@ export default function App() {
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
+                <Route path="/profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Suspense>
