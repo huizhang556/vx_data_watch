@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Layout, Menu, Select, Spin, Typography } from 'antd'
-import { BarChart3, Bot, DatabaseBackup, FileUp, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, Video } from 'lucide-react'
+import { BarChart3, Bot, DatabaseBackup, Download, FileUp, FolderCog, Info, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, UserRound, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { AccountContext } from './account'
@@ -15,8 +15,10 @@ const ImportsPage = lazy(() => import('./pages/ImportsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const UpdatesPage = lazy(() => import('./pages/UpdatesPage'))
 const VideosPage = lazy(() => import('./pages/VideosPage'))
+const DownloadPage = lazy(() => import('./pages/DownloadPage'))
+const AboutPage = lazy(() => import('./pages/AboutPage'))
 
-const items = [
+const legacyItems = [
   { key: '/dashboard', icon: <BarChart3 size={19} />, label: '数据概览' },
   { key: '/videos', icon: <Video size={19} />, label: '视频贡献' },
   { key: '/imports', icon: <FileUp size={19} />, label: '数据导入' },
@@ -24,6 +26,16 @@ const items = [
   { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
   { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
   { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
+]
+
+const items = [
+  { key: '/users', icon: <UserRound size={19} />, label: '用户管理', children: [{ key: '/users/accounts', label: '视频号账号' }, { key: '/users/local', label: '本地用户' }] },
+  { key: '/analysis', icon: <BarChart3 size={19} />, label: '数据分析', children: [{ key: '/analysis/dashboard', label: '数据概览' }, { key: '/analysis/videos', icon: <Video size={17} />, label: '视频贡献' }, { key: '/analysis/imports', icon: <FileUp size={17} />, label: '数据导入' }, { key: '/analysis/ai', icon: <Bot size={17} />, label: 'AI 建议' }] },
+  { key: '/download', icon: <Download size={19} />, label: '视频下载', children: [{ key: '/download/config', label: '下载配置' }, { key: '/download/content', label: '下载内容' }] },
+  { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
+  { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
+  { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
+  { key: '/about', icon: <Info size={19} />, label: '关于开发', children: [{ key: '/about/architecture', label: '项目架构' }, { key: '/about/technology', label: '开发技术' }, { key: '/about/team', label: '关于我们' }] },
 ]
 
 export default function App() {
@@ -59,7 +71,7 @@ export default function App() {
         <Layout.Sider className="desktop-sider" width={224} collapsedWidth={72} collapsed={siderCollapsed} theme="light">
           <div className="brand"><span className="brand-mark small">VX</span>{!siderCollapsed && <span>视频号数据</span>}</div>
           <Button className="sider-toggle" type="text" icon={siderCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />} title={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-label={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} onClick={() => setSiderCollapsed((value) => { localStorage.setItem('vx_sider_collapsed', String(!value)); return !value })} />
-          <Menu selectedKeys={[location.pathname]} items={items} onClick={({ key }) => navigate(key)} />
+              <Menu selectedKeys={[location.pathname]} defaultOpenKeys={['/users', '/analysis', '/download', '/about']} items={items} onClick={({ key }) => navigate(key)} />
           <div className="sider-user">
             {!siderCollapsed && <div><Typography.Text strong>{user.username}</Typography.Text><br /><Typography.Text type="secondary">{user.role}</Typography.Text></div>}
             <Button type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />
@@ -86,6 +98,21 @@ export default function App() {
                 <Route path="/videos" element={<VideosPage />} />
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
+                <Route path="/analysis/dashboard" element={<DashboardPage />} />
+                <Route path="/analysis/videos" element={<VideosPage />} />
+                <Route path="/analysis/imports" element={<ImportsPage />} />
+                <Route path="/analysis/ai" element={<AIPage />} />
+                <Route path="/analysis" element={<Navigate to="/analysis/dashboard" replace />} />
+                <Route path="/users" element={<Navigate to="/users/accounts" replace />} />
+                <Route path="/users/accounts" element={<SettingsPage section="users" />} />
+                <Route path="/users/local" element={<SettingsPage section="users" />} />
+                <Route path="/download" element={<Navigate to="/download/config" replace />} />
+                <Route path="/download/config" element={<DownloadPage mode="config" />} />
+                <Route path="/download/content" element={<DownloadPage mode="content" />} />
+                <Route path="/about/architecture" element={<AboutPage section="architecture" />} />
+                <Route path="/about/technology" element={<AboutPage section="technology" />} />
+                <Route path="/about/team" element={<AboutPage section="team" />} />
+                <Route path="/about" element={<Navigate to="/about/architecture" replace />} />
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
