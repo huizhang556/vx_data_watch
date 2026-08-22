@@ -11,7 +11,7 @@ import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#137a63', borderRadius: 6, fontFamily: 'Inter, "Microsoft YaHei", sans-serif' } }}>
+    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#137a63', borderRadius: 8, fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif' } }}>
       <ThemeProvider><BrowserRouter><AuthGate><App /></AuthGate></BrowserRouter></ThemeProvider>
     </ConfigProvider>
   </React.StrictMode>,

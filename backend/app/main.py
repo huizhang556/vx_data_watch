@@ -42,6 +42,7 @@ from .auth_service import auth_settings, consume_code, email_user, normalize_ema
 from .backups import create_backup
 from .config import get_settings
 from .database import get_db, init_db
+from .download_service import start_task
 from .deps import (
     CsrfUser,
     CurrentUser,
@@ -61,10 +62,12 @@ from .models import (
     AIProviderConfig,
     AIQueryHistory,
     AuditLog,
+    AppSetting,
     ChannelsAccount,
     DailyAccountMetric,
     DailyAccountMetricRevision,
     DailyVideoMetric,
+    DownloadTask,
     ImportBatch,
     ImportRow,
     ImportStatus,
@@ -95,6 +98,9 @@ from .schemas import (
     UserAdminUpdate,
     UsernameChange,
     VideoMetricCommit,
+    DownloadCookieTest,
+    DownloadSettings,
+    DownloadTaskCreate,
 )
 from .security import (
     decrypt_secret,
@@ -193,7 +199,12 @@ def _user_payload(user: User, csrf_token: str | None = None) -> dict[str, Any]:
     return {
         "id": user.id,
         "username": user.username,
+        "email": user.email,
         "role": user.role.value,
+        "is_active": user.is_active,
+        "created_at": user.created_at,
+        "last_login_at": user.last_login_at,
+        "avatar": user.avatar or "default",
         "csrf_token": csrf_token,
     }
 
@@ -217,6 +228,133 @@ def _get_account(db: Session, account_id: int) -> ChannelsAccount:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version}
+
+
+DOWNLOAD_SETTINGS_KEY = "download"
+DOWNLOAD_DEFAULTS = DownloadSettings().model_dump()
+
+
+def _download_settings(db: Session) -> dict[str, Any]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+    values = dict(DOWNLOAD_DEFAULTS)
+    stored: dict[str, Any] = {}
+    if row:
+        try:
+            decoded = json.loads(decrypt_secret(row.value))
+            stored = decoded if isinstance(decoded, dict) else {}
+            values.update(stored)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+    values["cookies"] = ""
+    values["cookies_set"] = bool(stored.get("cookies"))
+    return values
+
+
+@app.get("/api/download/settings")
+def read_download_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    return _download_settings(db)
+
+
+@app.put("/api/download/settings")
+def update_download_settings(
+    payload: DownloadSettings, user: CsrfUser, db: Annotated[Session, Depends(get_db)]
+) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    current = dict(DOWNLOAD_DEFAULTS)
+    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+    if row:
+        try:
+            stored = json.loads(decrypt_secret(row.value))
+            if isinstance(stored, dict):
+                current.update(stored)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+    current.update(payload.model_dump(exclude_none=True))
+    encrypted = encrypt_secret(json.dumps(current, ensure_ascii=False))
+    if row:
+        row.value = encrypted
+    else:
+        db.add(AppSetting(key=DOWNLOAD_SETTINGS_KEY, value=encrypted))
+    db.commit()
+    return _download_settings(db)
+
+
+@app.post("/api/download/cookies/test")
+def test_download_cookies(payload: DownloadCookieTest, user: CsrfUser) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    lines = [line for line in payload.cookies.splitlines() if line.strip() and not line.startswith("#")]
+    valid = all(len(line.split("\t")) >= 7 for line in lines)
+    if not lines:
+        raise HTTPException(status_code=400, detail="请先粘贴 Netscape 格式 Cookies")
+    if not valid:
+        raise HTTPException(status_code=400, detail="Cookies 格式无效，请粘贴 Netscape 格式文本")
+    return {"valid": True, "message": f"Cookies 格式有效，共识别 {len(lines)} 条记录"}
+
+
+def _download_task_payload(task: DownloadTask) -> dict[str, Any]:
+    return {"id": task.id, "url": task.url, "title": task.title or "待获取标题", "duration": task.duration or "-", "estimated_size": task.estimated_size or "-", "status": task.status, "progress": task.progress, "error": task.error}
+
+
+@app.get("/api/download/tasks")
+def list_download_tasks(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    return [_download_task_payload(task) for task in db.scalars(select(DownloadTask).order_by(DownloadTask.created_at.desc())).all()]
+
+
+@app.post("/api/download/tasks", status_code=201)
+def create_download_tasks(payload: DownloadTaskCreate, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    urls = [url.strip() for url in payload.urls if url.strip()]
+    if not urls or any(not url.startswith(("https://www.youtube.com/", "https://youtu.be/")) for url in urls):
+        raise HTTPException(status_code=400, detail="目前只支持 YouTube 视频或播放列表链接")
+    tasks = [DownloadTask(url=url) for url in urls]
+    db.add_all(tasks)
+    db.commit()
+    return [_download_task_payload(task) for task in tasks]
+
+
+@app.post("/api/download/tasks/{task_id}/start")
+def start_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    task = db.get(DownloadTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="下载任务不存在")
+    if task.status not in {"queued", "paused", "failed"}:
+        raise HTTPException(status_code=400, detail="当前任务不能开始")
+    task.status = "queued"
+    db.commit()
+    start_task(task.id)
+    return _download_task_payload(task)
+
+
+@app.post("/api/download/tasks/{task_id}/cancel")
+def cancel_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    task = db.get(DownloadTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="下载任务不存在")
+    task.status = "cancelled"
+    db.commit()
+    return _download_task_payload(task)
+
+
+@app.delete("/api/download/tasks/{task_id}", status_code=204)
+def delete_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> None:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    task = db.get(DownloadTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="下载任务不存在")
+    db.delete(task)
+    db.commit()
 
 
 @app.get("/api/setup/status")
@@ -502,6 +640,7 @@ def list_users(
             "email": row.email,
             "created_at": row.created_at,
             "last_login_at": row.last_login_at,
+            "avatar": row.avatar or "default",
         }
         for row in rows
     ]
@@ -524,6 +663,7 @@ def create_user(
         email_verified=True,
         password_hash=hash_password(payload.password),
         role=payload.role,
+        avatar=payload.avatar or "default",
     )
     db.add(created)
     db.flush()
@@ -551,9 +691,11 @@ def update_user(user_id: int, payload: UserAdminUpdate, user: Annotated[User, De
         target.role = payload.role
     if payload.is_active is not None:
         target.is_active = payload.is_active
+    if payload.avatar is not None:
+        target.avatar = payload.avatar or "default"
     write_audit(db, "user.update", user, "user", target.id)
     db.commit()
-    return {"id": target.id, "username": target.username, "email": target.email, "role": target.role.value, "is_active": target.is_active}
+    return {"id": target.id, "username": target.username, "email": target.email, "role": target.role.value, "is_active": target.is_active, "avatar": target.avatar or "default", "created_at": target.created_at, "last_login_at": target.last_login_at}
 
 
 @app.delete("/api/users/{user_id}")

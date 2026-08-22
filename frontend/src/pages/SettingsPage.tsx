@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Switch, Table, Tag, Typography, message } from 'antd'
-import { Pencil, Plus, Trash2, UserPlus } from 'lucide-react'
+import { Avatar, Button, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Switch, Table, Tag, Typography, Upload, message } from 'antd'
+import { ImagePlus, Pencil, Plus, Trash2, UserPlus } from 'lucide-react'
 import dayjs from 'dayjs'
 import { api } from '../api'
 import { useAccount } from '../account'
 import { useAuth } from '../auth'
 
-interface LocalUser { id: number; username: string; email?: string; role: string; is_active: boolean; created_at: string; last_login_at?: string }
+interface LocalUser { id: number; username: string; email?: string; role: string; is_active: boolean; created_at: string; last_login_at?: string; avatar?: string }
 interface AuthSettings { registration_enabled: boolean; smtp_host?: string; smtp_port: number; smtp_username?: string; smtp_password?: string; smtp_from?: string; smtp_starttls: boolean; smtp_ssl: boolean; verification_code_minutes: number; smtp_password_set?: boolean; captcha_enabled: boolean; captcha_provider: string; captcha_site_key?: string; captcha_secret_key?: string; captcha_secret_key_set?: boolean }
 const usernameRules = [{ required: true, message: '请输入用户名' }, { min: 3, max: 80, message: '用户名长度应为 3-80 个字符' }, { pattern: /^[A-Za-z0-9_.-]+$/, message: '用户名只能包含英文、数字、下划线、点和短横线' }]
 const passwordRules = [{ required: true, message: '请输入密码' }, { min: 10, max: 200, message: '密码长度应为 10-200 个字符' }, { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: '密码至少 10 位，并同时包含字母和数字' }]
@@ -27,6 +27,8 @@ export default function SettingsPage({ section = 'settings' }: { section?: Setti
   const loadUsers = () => user.role === 'admin' ? api<LocalUser[]>('/api/users').then(setUsers) : Promise.resolve()
   const [authForm] = Form.useForm<AuthSettings>()
   const [captchaForm] = Form.useForm<AuthSettings>()
+  const [userForm] = Form.useForm()
+  const [editUserForm] = Form.useForm()
   const loadAuthSettings = () => user.role === 'admin' ? api<AuthSettings>('/api/settings/auth').then((value) => { setAuthSettings(value); authForm.setFieldsValue(value); captchaForm.setFieldsValue(value) }) : Promise.resolve()
   useEffect(() => {
     if (user.role === 'admin') { void loadUsers(); void loadAuthSettings() }
@@ -71,13 +73,13 @@ export default function SettingsPage({ section = 'settings' }: { section?: Setti
     catch (cause) { message.error(cause instanceof Error ? cause.message : '创建失败') }
     finally { setLoading(false) }
   }
-  const createUser = async (values: { username: string; email: string; password: string; role: string }) => {
+  const createUser = async (values: { username: string; email: string; password: string; role: string; avatar?: string }) => {
     setLoading(true)
     try { await api('/api/users', { method: 'POST', body: JSON.stringify(values) }); await loadUsers(); setUserOpen(false); message.success('本地用户已创建') }
     catch (cause) { message.error(cause instanceof Error ? cause.message : '创建失败') }
     finally { setLoading(false) }
   }
-  const updateUser = async (values: { email?: string; password?: string; role?: string; is_active?: boolean }) => {
+  const updateUser = async (values: { email?: string; password?: string; role?: string; is_active?: boolean; avatar?: string }) => {
     if (!editingUser) return
     setLoading(true)
     try { await api(`/api/users/${editingUser.id}`, { method: 'PATCH', body: JSON.stringify(values) }); await loadUsers(); setEditUserOpen(false); message.success('用户信息已保存') }
@@ -88,6 +90,7 @@ export default function SettingsPage({ section = 'settings' }: { section?: Setti
     try { await api(`/api/users/${row.id}`, { method: 'DELETE' }); await loadUsers(); message.success('用户已删除') }
     catch (cause) { message.error(cause instanceof Error ? cause.message : '删除用户失败') }
   }
+  const avatarUpload = (form: ReturnType<typeof Form.useForm>[0]) => <Form.Item name="avatar" label="头像"><Upload accept="image/png,image/jpeg,image/webp" maxCount={1} showUploadList={false} beforeUpload={(file) => { if (file.size > 2 * 1024 * 1024) { message.error('头像不能超过 2MB'); return Upload.LIST_IGNORE } const reader = new FileReader(); reader.onload = () => form.setFieldValue('avatar', reader.result); reader.readAsDataURL(file); return false }}><Button icon={<ImagePlus size={16} />}>选择头像</Button></Upload></Form.Item>
   return (
     <div className="page">
       <div className="page-heading"><div><Typography.Title level={2}>{section === 'settings' ? '系统设置' : '用户管理'}</Typography.Title><Typography.Text type="secondary">{section === 'settings' ? '账号、数据安全与备份' : '管理视频号账号和本地用户'}</Typography.Text></div></div>
@@ -120,11 +123,11 @@ export default function SettingsPage({ section = 'settings' }: { section?: Setti
       </section>}
       {section === 'users' && <section className="section-band">
         <div className="section-heading"><div><Typography.Title level={3}>本地用户</Typography.Title><Typography.Text type="secondary">当前用户：{user.username}（{user.role}）</Typography.Text></div>{user.role === 'admin' && <Button type="primary" icon={<UserPlus size={18} />} onClick={() => setUserOpen(true)}>新增用户</Button>}</div>
-        {user.role === 'admin' && <Table size="small" rowKey="id" pagination={false} dataSource={users} columns={[{ title: '用户名', dataIndex: 'username' }, { title: '注册邮箱', dataIndex: 'email', render: (value) => value || '未绑定' }, { title: '角色', dataIndex: 'role', render: (value) => <Tag>{value}</Tag> }, { title: '状态', dataIndex: 'is_active', render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '启用' : '停用'}</Tag> }, { title: '注册时间', dataIndex: 'created_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm') }, { title: '最近登录', dataIndex: 'last_login_at', render: (value) => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '从未登录' }, { title: '操作', render: (_, row) => <><Button type="text" icon={<Pencil size={16} />} onClick={() => { setEditingUser(row); setEditUserOpen(true) }} /><Popconfirm title="删除用户" description={`确定删除 ${row.username} 吗？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteUser(row)}><Button type="text" danger icon={<Trash2 size={16} />} /></Popconfirm></> }]} />}
+        {user.role === 'admin' && <Table size="small" rowKey="id" pagination={false} dataSource={users} columns={[{ title: '头像', dataIndex: 'avatar', render: (value, row) => <Avatar src={value !== 'default' ? value : undefined}>{row.username.slice(0, 1).toUpperCase()}</Avatar> }, { title: '用户名', dataIndex: 'username' }, { title: '注册邮箱', dataIndex: 'email', render: (value) => value || '未绑定' }, { title: '角色', dataIndex: 'role', render: (value) => <Tag>{value}</Tag> }, { title: '状态', dataIndex: 'is_active', render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '启用' : '停用'}</Tag> }, { title: '注册时间', dataIndex: 'created_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm') }, { title: '最近登录', dataIndex: 'last_login_at', render: (value) => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '从未登录' }, { title: '操作', render: (_, row) => <><Button type="text" icon={<Pencil size={16} />} onClick={() => { setEditingUser(row); editUserForm.setFieldsValue(row); setEditUserOpen(true) }} /><Popconfirm title="删除用户" description={`确定删除 ${row.username} 吗？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteUser(row)}><Button type="text" danger icon={<Trash2 size={16} />} /></Popconfirm></> }]} />}
       </section>}
       <Modal title="新增视频号账号" open={open} onCancel={() => setOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={createAccount} requiredMark={false}><Form.Item name="name" label="账号名称" rules={[{ required: true }]}><Input maxLength={120} /></Form.Item><Form.Item name="description" label="备注"><Input.TextArea maxLength={500} rows={3} /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>创建</Button></Form></Modal>
-      <Modal title="新增本地用户" open={userOpen} onCancel={() => setUserOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={createUser} initialValues={{ role: 'viewer' }} requiredMark={false}><Form.Item name="username" label="用户名" rules={usernameRules}><Input autoComplete="username" /></Form.Item><Form.Item name="email" label="注册邮箱" rules={[{ required: true, type: 'email', message: '请输入有效的注册邮箱' }]}><Input autoComplete="email" /></Form.Item><Form.Item name="password" label="初始密码" rules={passwordRules}><Input.Password autoComplete="new-password" /></Form.Item><Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'editor', label: '编辑者' }, { value: 'viewer', label: '只读者' }]} /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>创建用户</Button></Form></Modal>
-      <Modal title="编辑用户" open={editUserOpen} onCancel={() => setEditUserOpen(false)} footer={null} destroyOnHidden><Form layout="vertical" onFinish={updateUser} initialValues={{ email: editingUser?.email, role: editingUser?.role, is_active: editingUser?.is_active }} requiredMark={false}><Form.Item name="email" label="注册邮箱" rules={[{ required: true, type: 'email', message: '请输入有效的注册邮箱' }]}><Input type="email" /></Form.Item><Form.Item name="password" label="新密码（留空不修改）" rules={optionalPasswordRules}><Input.Password autoComplete="new-password" /></Form.Item><Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'editor', label: '编辑者' }, { value: 'viewer', label: '只读者' }]} /></Form.Item><Form.Item name="is_active" label="账号状态"><Select options={[{ value: true, label: '启用' }, { value: false, label: '停用' }]} /></Form.Item><Button block type="primary" htmlType="submit" loading={loading}>保存用户修改</Button></Form></Modal>
+      <Modal title="新增本地用户" open={userOpen} onCancel={() => setUserOpen(false)} footer={null} destroyOnHidden><Form form={userForm} layout="vertical" onFinish={createUser} initialValues={{ role: 'viewer' }} requiredMark={false}><Form.Item name="username" label="用户名" rules={usernameRules}><Input autoComplete="username" /></Form.Item><Form.Item name="email" label="注册邮箱" rules={[{ required: true, type: 'email', message: '请输入有效的注册邮箱' }]}><Input autoComplete="email" /></Form.Item><Form.Item name="password" label="初始密码" rules={passwordRules}><Input.Password autoComplete="new-password" /></Form.Item><Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'editor', label: '编辑者' }, { value: 'viewer', label: '只读者' }]} /></Form.Item>{avatarUpload(userForm)}<Button block type="primary" htmlType="submit" loading={loading}>创建用户</Button></Form></Modal>
+      <Modal title="编辑用户" open={editUserOpen} onCancel={() => setEditUserOpen(false)} footer={null} destroyOnHidden><Form form={editUserForm} layout="vertical" onFinish={updateUser} requiredMark={false}><Form.Item name="email" label="注册邮箱" rules={[{ required: true, type: 'email', message: '请输入有效的注册邮箱' }]}><Input type="email" /></Form.Item><Form.Item name="password" label="新密码（留空不修改）" rules={optionalPasswordRules}><Input.Password autoComplete="new-password" /></Form.Item><Form.Item name="role" label="角色"><Select options={[{ value: 'admin', label: '管理员' }, { value: 'editor', label: '编辑者' }, { value: 'viewer', label: '只读者' }]} /></Form.Item><Form.Item name="is_active" label="账号状态"><Select options={[{ value: true, label: '启用' }, { value: false, label: '停用' }]} /></Form.Item>{avatarUpload(editUserForm)}<Button block type="primary" htmlType="submit" loading={loading}>保存用户修改</Button></Form></Modal>
     </div>
   )
 }

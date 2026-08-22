@@ -47,6 +47,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    avatar: Mapped[str | None] = mapped_column(Text)
     password_hash: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(254), unique=True, index=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -74,6 +75,22 @@ class AppSetting(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     value: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class DownloadTask(Base):
+    __tablename__ = "download_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(String(2000))
+    title: Mapped[str | None] = mapped_column(String(500))
+    duration: Mapped[str | None] = mapped_column(String(30))
+    estimated_size: Mapped[str | None] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    progress: Mapped[float] = mapped_column(default=0)
+    output_path: Mapped[str | None] = mapped_column(String(2000))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

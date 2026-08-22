@@ -1,6 +1,7 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.3.9
+ARG APP_VERSION=0.4.1
+ARG PIP_INDEX_URL=https://pypi.org/simple
 
 FROM ${NODE_IMAGE} AS frontend-build
 WORKDIR /build/frontend
@@ -11,11 +12,13 @@ RUN npm run build
 
 FROM ${PYTHON_IMAGE} AS runtime
 ARG APP_VERSION
+ARG PIP_INDEX_URL
 LABEL org.opencontainers.image.title="VX Data Watch" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.source="https://github.com/huizhang556/vx_data_watch"
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
     PYTHONPATH=/app/backend \
     VX_DATA_DIR=/app/data \
     VX_DATABASE_URL=sqlite:////app/data/vx_data.db \
@@ -23,7 +26,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 COPY backend/ ./backend/

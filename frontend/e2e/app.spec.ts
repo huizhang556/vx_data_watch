@@ -2,8 +2,8 @@ import { expect, test } from '@playwright/test'
 import path from 'node:path'
 
 test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ page }) => {
-  await page.route('**/api/system/versions', (route) => route.fulfill({ json: { current_version: '0.3.9', latest_version: '0.3.9', versions: [{ version: '0.3.9', published_at: '2026-08-21T00:00:00Z' }], repository: 'litehub/vx-data-watch', update_supported: true, deployment: 'docker' } }))
-  await page.route('**/api/system/update-status', (route) => route.fulfill({ json: { state: 'idle', current_version: '0.3.9' } }))
+  await page.route('**/api/system/versions', (route) => route.fulfill({ json: { current_version: '0.4.1', latest_version: '0.4.1', versions: [{ version: '0.4.1', published_at: '2026-08-23T00:00:00Z' }], repository: 'litehub/vx-data-watch', update_supported: true, deployment: 'docker' } }))
+  await page.route('**/api/system/update-status', (route) => route.fulfill({ json: { state: 'idle', current_version: '0.4.1' } }))
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '视频号数据分析' })).toBeVisible()
   await page.getByLabel('用户名').fill('admin')
@@ -12,7 +12,7 @@ test('initializes, imports seven-day CSV, and renders desktop/mobile', async ({ 
   await expect(page.getByText('数据概览', { exact: true }).first()).toBeVisible()
 
   await page.getByText('在线更新', { exact: true }).first().click()
-  await expect(page.getByText('v0.3.9').first()).toBeVisible()
+  await expect(page.getByText('v0.4.1').first()).toBeVisible()
   await expect(page.getByRole('button', { name: '更新并重启' })).toBeVisible()
   await page.getByText('系统设置', { exact: true }).first().click()
   await page.getByRole('button', { name: '新增账号' }).click()

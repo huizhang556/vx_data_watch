@@ -109,6 +109,7 @@ class UserCreate(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=200)
     role: Role = Role.viewer
+    avatar: str | None = Field(default=None, max_length=2_000_000)
 
     _password_strength = field_validator("password")(validate_password_strength)
     _email_format = field_validator("email")(validate_email_address)
@@ -119,6 +120,7 @@ class UserAdminUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=10, max_length=200)
     role: Role | None = None
     is_active: bool | None = None
+    avatar: str | None = Field(default=None, max_length=2_000_000)
 
     _password_strength = field_validator("password")(validate_password_strength)
     _email_format = field_validator("email")(validate_email_address)
@@ -243,3 +245,22 @@ class AIQueryHistoryUpdate(BaseModel):
 
 class SystemUpdateRequest(BaseModel):
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$", max_length=30)
+
+
+class DownloadSettings(BaseModel):
+    quality: Literal["best", "2160", "1440", "1080", "720", "480", "360"] = "1080"
+    download_type: Literal["video_audio", "video", "audio"] = "video_audio"
+    save_thumbnail: bool = True
+    transcode_enabled: bool = False
+    transcode_quality: Literal["fast", "balanced", "high"] = "balanced"
+    keep_original: bool = True
+    cookies_enabled: bool = True
+    cookies: str | None = Field(default=None, max_length=2_000_000)
+
+
+class DownloadCookieTest(BaseModel):
+    cookies: str = Field(default="", max_length=2_000_000)
+
+
+class DownloadTaskCreate(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=100)

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Avatar, Button, Dropdown, Layout, Menu, Select, Spin, Typography, type MenuProps } from 'antd'
-import { BarChart3, Bot, DatabaseBackup, Download, FileUp, FolderCog, Info, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, UserRound, Video } from 'lucide-react'
+import { BarChart3, Bot, DatabaseBackup, Download, FileUp, Info, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, UserRound, Video } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { AccountContext } from './account'
@@ -19,19 +19,9 @@ const DownloadPage = lazy(() => import('./pages/DownloadPage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
-const legacyItems = [
-  { key: '/dashboard', icon: <BarChart3 size={19} />, label: '数据概览' },
-  { key: '/videos', icon: <Video size={19} />, label: '视频贡献' },
-  { key: '/imports', icon: <FileUp size={19} />, label: '数据导入' },
-  { key: '/ai', icon: <Bot size={19} />, label: 'AI 建议' },
-  { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
-  { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
-  { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
-]
-
 const items = [
   { key: '/users', icon: <UserRound size={19} />, label: '用户管理', children: [{ key: '/users/accounts', label: '视频号账号' }, { key: '/users/local', label: '本地用户' }] },
-  { key: '/analysis', icon: <BarChart3 size={19} />, label: '数据分析', children: [{ key: '/analysis/dashboard', label: '数据概览' }, { key: '/analysis/videos', icon: <Video size={17} />, label: '视频贡献' }, { key: '/analysis/imports', icon: <FileUp size={17} />, label: '数据导入' }, { key: '/analysis/ai', icon: <Bot size={17} />, label: 'AI 建议' }] },
+  { key: '/analysis', icon: <BarChart3 size={19} />, label: '数据分析', children: [{ key: '/analysis/dashboard', icon: <BarChart3 size={17} />, label: '数据概览' }, { key: '/analysis/videos', icon: <Video size={17} />, label: '视频贡献' }, { key: '/analysis/imports', icon: <FileUp size={17} />, label: '数据导入' }, { key: '/analysis/ai', icon: <Bot size={17} />, label: 'AI 建议' }] },
   { key: '/download', icon: <Download size={19} />, label: '视频下载', children: [{ key: '/download/config', label: '下载配置' }, { key: '/download/content', label: '下载内容' }] },
   { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
   { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
@@ -45,6 +35,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountId, setAccountIdState] = useState<number>(() => Number(localStorage.getItem('vx_account_id')) || 0)
   const [siderCollapsed, setSiderCollapsed] = useState(() => localStorage.getItem('vx_sider_collapsed') === 'true')
+  const [openKeys, setOpenKeys] = useState<string[]>([])
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -74,7 +65,7 @@ export default function App() {
         <Layout.Sider className="desktop-sider" width={224} collapsedWidth={72} collapsed={siderCollapsed} theme="light">
           <div className="brand"><span className="brand-mark small">VX</span>{!siderCollapsed && <span>视频号数据</span>}</div>
           <Button className="sider-toggle" type="text" icon={siderCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />} title={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-label={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} onClick={() => setSiderCollapsed((value) => { localStorage.setItem('vx_sider_collapsed', String(!value)); return !value })} />
-              <Menu selectedKeys={[location.pathname]} defaultOpenKeys={['/users', '/analysis', '/download', '/about']} items={items} onClick={({ key }) => navigate(key)} />
+              <Menu mode="inline" inlineCollapsed={siderCollapsed} openKeys={siderCollapsed ? [] : openKeys} selectedKeys={[location.pathname]} items={items} onOpenChange={(keys) => setOpenKeys(keys.slice(-1))} onClick={({ key }) => navigate(key)} />
           <div className="sider-user">
             {!siderCollapsed && <div><Typography.Text strong>{user.username}</Typography.Text><br /><Typography.Text type="secondary">{user.role}</Typography.Text></div>}
             <Button type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />
@@ -92,7 +83,7 @@ export default function App() {
               onChange={setAccountId}
               options={accounts.map((row) => ({ value: row.id, label: row.name }))}
             />
-            <Dropdown menu={{ items: profileMenu, onClick: handleProfileMenu }} trigger={['click']} placement="bottomRight">
+            <Dropdown overlayClassName="profile-dropdown" menu={{ items: profileMenu, onClick: handleProfileMenu }} trigger={['click']} placement="bottomRight">
               <button type="button" className="profile-trigger" aria-label="打开用户菜单"><Avatar size={36} className="profile-avatar">{user.username.slice(0, 1).toUpperCase()}</Avatar></button>
             </Dropdown>
             <Button className="mobile-logout" type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />

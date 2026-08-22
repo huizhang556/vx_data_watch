@@ -5,6 +5,11 @@ export interface User {
   username: string
   role: Role
   csrf_token?: string
+  email?: string
+  is_active?: boolean
+  created_at?: string
+  last_login_at?: string
+  avatar?: string
 }
 
 export interface Account {
