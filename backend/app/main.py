@@ -298,6 +298,21 @@ def test_download_cookies(payload: DownloadCookieTest, user: CsrfUser) -> dict[s
     return {"valid": True, "message": f"Cookies 格式有效，共识别 {len(lines)} 条记录"}
 
 
+@app.get("/api/download/cookies/status")
+def download_cookies_status(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+    if not row:
+        return {"configured": False, "valid": False, "message": "尚未保存 Cookies"}
+    try:
+        stored = json.loads(decrypt_secret(row.value))
+        cookies = str(stored.get("cookies") or "") if isinstance(stored, dict) else ""
+    except (ValueError, TypeError, json.JSONDecodeError):
+        cookies = ""
+    lines = [line for line in cookies.splitlines() if line.strip() and not line.startswith("#")]
+    valid = bool(lines) and all(len(line.split("\t")) >= 7 for line in lines)
+    return {"configured": bool(cookies), "valid": valid, "message": "已保存 Cookies，格式检查通过" if valid else "已保存 Cookies，但格式检查未通过"}
+
+
 @app.post("/api/download/proxy/test")
 def test_download_proxy(payload: DownloadProxyTest, user: CsrfUser) -> dict[str, Any]:
     if user.role not in {Role.admin, Role.editor}:

@@ -58,6 +58,7 @@ type ProxyStatus = {
   youtube_supported: boolean;
   message: string;
 };
+type CookieStatus = { configured: boolean; valid: boolean; message: string };
 const defaults: Settings = {
   quality: "1080",
   download_type: "video_audio",
@@ -90,10 +91,15 @@ export default function DownloadPage({
   const [taskLoading, setTaskLoading] = useState(false);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [proxyVerified, setProxyVerified] = useState(false);
+  const [cookieStatus, setCookieStatus] = useState<CookieStatus | null>(null);
+  const [cookiesValid, setCookiesValid] = useState(false);
   useEffect(() => {
     if (!isConfig) return;
     void api<Settings>("/api/download/settings")
-      .then(setSettings)
+      .then((value) => {
+        setSettings(value);
+        void api<CookieStatus>("/api/download/cookies/status").then(setCookieStatus).catch(() => setCookieStatus(null));
+      })
       .catch((cause) =>
         message.error(
           cause instanceof Error ? cause.message : "无法读取下载配置",
@@ -151,6 +157,8 @@ export default function DownloadPage({
         { method: "POST", body: JSON.stringify({ cookies }) },
       );
       message.success(result.message);
+      setCookiesValid(true);
+      setCookieStatus({ configured: true, valid: true, message: result.message });
     } catch (cause) {
       message.error(
         cause instanceof Error ? cause.message : "Cookies 测试失败",
@@ -158,6 +166,20 @@ export default function DownloadPage({
     } finally {
       setCookieTesting(false);
     }
+  };
+  const saveCookies = async () => {
+    if (!cookiesValid || !cookies.trim()) return;
+    setSaving(true);
+    try {
+      const result = await api<Settings>("/api/download/settings", { method: "PUT", body: JSON.stringify({ ...settings, cookies: cookies.trim() }) });
+      setSettings(result);
+      setCookies("");
+      setCookiesValid(false);
+      setCookieStatus({ configured: true, valid: true, message: "Cookies 已保存并加密存储" });
+      message.success("Cookies 已保存");
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : "Cookies 保存失败");
+    } finally { setSaving(false); }
   };
   const testProxy = async () => {
     if (!settings.proxy_url?.trim()) {
@@ -533,9 +555,12 @@ export default function DownloadPage({
             {settings.cookies_set && (
               <Alert type="success" showIcon message="已保存一份加密 Cookies" />
             )}
+            {cookieStatus && (
+              <Alert type={cookieStatus.valid ? "success" : "warning"} showIcon message={cookieStatus.message} style={{ marginBottom: 12 }} />
+            )}
             <Input.TextArea
               value={cookies}
-              onChange={(event) => setCookies(event.target.value)}
+              onChange={(event) => { setCookies(event.target.value); setCookiesValid(false); }}
               disabled={!settings.cookies_enabled}
               rows={7}
               placeholder="请粘贴 Netscape 格式 Cookies 文本。Cookies 仅保存在本地并加密存储。"
@@ -548,6 +573,9 @@ export default function DownloadPage({
                 onClick={() => void testCookies()}
               >
                 测试 Cookies
+              </Button>
+              <Button type="primary" disabled={!cookiesValid} loading={saving} onClick={() => void saveCookies()}>
+                保存 Cookies
               </Button>
               <Button
                 icon={<Eraser size={16} />}
@@ -611,6 +639,7 @@ export default function DownloadPage({
               }
               addonBefore="/app/data/"
             />
+            <Alert type="info" showIcon message="下载任务在服务器端执行，完成后请在下载内容中使用浏览器下载到本地电脑；本设置仅用于服务器临时保存目录。" style={{ marginTop: 12 }} />
             <Typography.Paragraph type="secondary">
               仅允许数据目录内的相对路径，默认保存到 downloads。
             </Typography.Paragraph>

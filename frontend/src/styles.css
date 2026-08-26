@@ -62,7 +62,7 @@ button, input, textarea, select { letter-spacing: 0; }
 .profile-trigger:hover .profile-avatar { box-shadow: 0 0 0 4px #c7e5da; }
 .mobile-brand { display: none; align-items: center; gap: 9px; }
 .mobile-logout { display: none; }
-.account-select { width: min(260px, 48vw); }
+.account-select { width: min(180px, 42vw); }
 .content { min-height: calc(100vh - 68px); }
 .page { width: min(1260px, 100%); margin: 0 auto; padding: 34px 32px 70px; }
 .page-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
@@ -238,7 +238,7 @@ button, input, textarea, select { letter-spacing: 0; }
 }
 
 @media (max-width: 380px) {
-  .account-select { width: 43vw; }
+  .account-select { width: 42vw; }
   .brand-mark.small { width: 29px; height: 29px; }
   .mobile-brand strong { font-size: 13px; }
 }
