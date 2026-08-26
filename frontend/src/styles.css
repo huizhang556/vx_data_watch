@@ -245,13 +245,13 @@ button, input, textarea, select { letter-spacing: 0; }
 
 /* Dark theme keeps the same information hierarchy while reducing glare. */
 [data-theme='dark'] {
-  --vx-bg: #0d1718;
-  --vx-surface: #142224;
-  --vx-surface-soft: #1a2b2d;
-  --vx-border: #2b4445;
-  --vx-text: #e5f0ed;
-  --vx-muted: #9bb0ac;
-  --vx-accent: #39b994;
+  --vx-bg: #0b1216;
+  --vx-surface: #141f25;
+  --vx-surface-soft: #1b2a32;
+  --vx-border: #344750;
+  --vx-text: #edf4f5;
+  --vx-muted: #a7b7bd;
+  --vx-accent: #56d6b0;
   color: var(--vx-text);
   background: var(--vx-bg);
 }
@@ -332,6 +332,49 @@ button, input, textarea, select { letter-spacing: 0; }
 [data-theme='dark'] .ant-modal-title { color: var(--vx-text); }
 [data-theme='dark'] .ant-modal-close { color: var(--vx-muted); }
 [data-theme='dark'] .mobile-nav { box-shadow: 0 -8px 24px rgba(0,0,0,.16); }
+
+/* Dark-mode interaction states: keep contrast predictable and avoid Ant Design's bright default blue. */
+[data-theme='dark'] .ant-btn-default,
+[data-theme='dark'] .ant-btn-text,
+[data-theme='dark'] .ant-btn-link { color: #d7e4e7; }
+[data-theme='dark'] .ant-btn-default { background: #1b2a32; border-color: #40545d; }
+[data-theme='dark'] .ant-btn-default:not(:disabled):hover,
+[data-theme='dark'] .ant-btn-text:not(:disabled):hover { color: #75e4c2 !important; background: #263a42 !important; border-color: #5bc9aa !important; }
+[data-theme='dark'] .ant-btn-primary { color: #071713; background: #56d6b0; border-color: #56d6b0; }
+[data-theme='dark'] .ant-btn-primary:not(:disabled):hover { color: #061410 !important; background: #78e4c5 !important; border-color: #78e4c5 !important; }
+[data-theme='dark'] .ant-btn-dangerous:not(:disabled):hover { color: #ffb4b4 !important; background: #4a252b !important; border-color: #d86a76 !important; }
+[data-theme='dark'] .ant-input:hover, [data-theme='dark'] .ant-input-affix-wrapper:hover,
+[data-theme='dark'] .ant-input-number:hover, [data-theme='dark'] .ant-select-selector:hover,
+[data-theme='dark'] .ant-picker:hover { border-color: #5bc9aa !important; }
+[data-theme='dark'] .ant-input:focus, [data-theme='dark'] .ant-input-affix-wrapper-focused,
+[data-theme='dark'] .ant-select-focused .ant-select-selector, [data-theme='dark'] .ant-picker-focused {
+  border-color: #56d6b0 !important;
+  box-shadow: 0 0 0 3px rgba(86,214,176,.2) !important;
+}
+[data-theme='dark'] .ant-select-item { color: #d7e4e7; }
+[data-theme='dark'] .ant-select-item-option-active:not(.ant-select-item-option-disabled),
+[data-theme='dark'] .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  color: #75e4c2; background: #263a42;
+}
+[data-theme='dark'] .ant-table-tbody > tr:hover > td { background: #20343b !important; color: #ffffff; }
+[data-theme='dark'] .ant-table-tbody > tr.ant-table-row-selected > td { background: #1d403b !important; }
+[data-theme='dark'] .ant-pagination-item:hover, [data-theme='dark'] .ant-pagination-prev:hover,
+[data-theme='dark'] .ant-pagination-next:hover { border-color: #56d6b0; }
+[data-theme='dark'] .ant-pagination-item a, [data-theme='dark'] .ant-pagination-prev button,
+[data-theme='dark'] .ant-pagination-next button { color: #d7e4e7; }
+[data-theme='dark'] .ant-pagination-item-active { background: #1d403b; border-color: #56d6b0; }
+[data-theme='dark'] .ant-pagination-item-active a { color: #75e4c2; }
+[data-theme='dark'] .ant-checkbox-wrapper, [data-theme='dark'] .ant-radio-wrapper,
+[data-theme='dark'] .ant-form-item-label > label { color: #d7e4e7; }
+[data-theme='dark'] .ant-checkbox-checked .ant-checkbox-inner { background: #56d6b0; border-color: #56d6b0; }
+[data-theme='dark'] .ant-switch-checked { background: #2a9d7d; }
+[data-theme='dark'] .ant-alert-info { background: #182c38; border-color: #315d72; }
+[data-theme='dark'] .ant-alert-success { background: #18352f; border-color: #347e68; }
+[data-theme='dark'] .ant-alert-warning { background: #3c3020; border-color: #8d6d34; }
+[data-theme='dark'] .ant-alert-error { background: #3c252b; border-color: #8d4654; }
+[data-theme='dark'] .ant-tag { background: #26353c; border-color: #455b64; color: #d7e4e7; }
+[data-theme='dark'] .ant-divider { border-color: var(--vx-border); }
+[data-theme='dark'] ::selection { color: #071713; background: #56d6b0; }
 
 @media (max-width: 700px) {
   .page { padding: 24px 14px 36px; }
