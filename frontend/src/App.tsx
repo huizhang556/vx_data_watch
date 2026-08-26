@@ -1,95 +1,289 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { Avatar, Button, Dropdown, Layout, Menu, Select, Spin, Typography, type MenuProps } from 'antd'
-import { BarChart3, Bot, DatabaseBackup, Download, FileUp, Info, LogOut, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, Sun, UserRound, Video } from 'lucide-react'
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { api } from './api'
-import { AccountContext } from './account'
-import { useAuth } from './auth'
-import { useTheme } from './theme'
-import type { Account } from './types'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  Avatar,
+  Button,
+  Dropdown,
+  Layout,
+  Menu,
+  Select,
+  Spin,
+  Typography,
+  type MenuProps,
+} from "antd";
+import {
+  BarChart3,
+  Bot,
+  DatabaseBackup,
+  Download,
+  FileUp,
+  Info,
+  LogOut,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  Settings,
+  Sun,
+  UserRound,
+  Video,
+} from "lucide-react";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { api } from "./api";
+import { AccountContext } from "./account";
+import { useAuth } from "./auth";
+import { useTheme } from "./theme";
+import type { Account } from "./types";
 
-const AIPage = lazy(() => import('./pages/AIPage'))
-const BackupPage = lazy(() => import('./pages/BackupPage'))
-const DashboardPage = lazy(() => import('./pages/DashboardPage'))
-const ImportsPage = lazy(() => import('./pages/ImportsPage'))
-const SettingsPage = lazy(() => import('./pages/SettingsPage'))
-const UpdatesPage = lazy(() => import('./pages/UpdatesPage'))
-const VideosPage = lazy(() => import('./pages/VideosPage'))
-const DownloadPage = lazy(() => import('./pages/DownloadPage'))
-const AboutPage = lazy(() => import('./pages/AboutPage'))
-const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const AIPage = lazy(() => import("./pages/AIPage"));
+const BackupPage = lazy(() => import("./pages/BackupPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ImportsPage = lazy(() => import("./pages/ImportsPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const UpdatesPage = lazy(() => import("./pages/UpdatesPage"));
+const VideosPage = lazy(() => import("./pages/VideosPage"));
+const DownloadPage = lazy(() => import("./pages/DownloadPage"));
+const AboutPage = lazy(() => import("./pages/AboutPage"));
+const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 
 const items = [
-  { key: '/users', icon: <UserRound size={19} />, label: '用户管理', children: [{ key: '/users/accounts', label: '视频号账号' }, { key: '/users/local', label: '本地用户' }] },
-  { key: '/analysis', icon: <BarChart3 size={19} />, label: '数据分析', children: [{ key: '/analysis/dashboard', icon: <BarChart3 size={17} />, label: '数据概览' }, { key: '/analysis/videos', icon: <Video size={17} />, label: '视频贡献' }, { key: '/analysis/imports', icon: <FileUp size={17} />, label: '数据导入' }, { key: '/analysis/ai', icon: <Bot size={17} />, label: 'AI 建议' }] },
-  { key: '/download', icon: <Download size={19} />, label: '视频下载', children: [{ key: '/download/config', label: '下载配置' }, { key: '/download/content', label: '下载内容' }] },
-  { key: '/settings', icon: <Settings size={19} />, label: '系统设置' },
-  { key: '/backups', icon: <DatabaseBackup size={19} />, label: '加密备份' },
-  { key: '/updates', icon: <RefreshCw size={19} />, label: '在线更新' },
-  { key: '/about', icon: <Info size={19} />, label: '关于开发', children: [{ key: '/about/architecture', label: '项目架构' }, { key: '/about/technology', label: '开发技术' }, { key: '/about/team', label: '关于我们' }] },
-]
+  {
+    key: "/users",
+    icon: <UserRound size={19} />,
+    label: "用户管理",
+    children: [
+      { key: "/users/accounts", label: "视频号账号" },
+      { key: "/users/local", label: "本地用户" },
+    ],
+  },
+  {
+    key: "/analysis",
+    icon: <BarChart3 size={19} />,
+    label: "数据分析",
+    children: [
+      {
+        key: "/analysis/dashboard",
+        icon: <BarChart3 size={17} />,
+        label: "数据概览",
+      },
+      { key: "/analysis/videos", icon: <Video size={17} />, label: "视频贡献" },
+      {
+        key: "/analysis/imports",
+        icon: <FileUp size={17} />,
+        label: "数据导入",
+      },
+      { key: "/analysis/ai", icon: <Bot size={17} />, label: "AI 建议" },
+    ],
+  },
+  {
+    key: "/download",
+    icon: <Download size={19} />,
+    label: "视频下载",
+    children: [
+      { key: "/download/config", label: "下载配置" },
+      { key: "/download/content", label: "下载内容" },
+    ],
+  },
+  { key: "/settings", icon: <Settings size={19} />, label: "系统设置" },
+  { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
+  { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
+  {
+    key: "/about",
+    icon: <Info size={19} />,
+    label: "关于开发",
+    children: [
+      { key: "/about/architecture", label: "项目架构" },
+      { key: "/about/technology", label: "开发技术" },
+      { key: "/about/team", label: "关于我们" },
+    ],
+  },
+];
 
 export default function App() {
-  const { user, logout } = useAuth()
-  const { theme, toggleTheme } = useTheme()
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [accountId, setAccountIdState] = useState<number>(() => Number(localStorage.getItem('vx_account_id')) || 0)
-  const [siderCollapsed, setSiderCollapsed] = useState(() => localStorage.getItem('vx_sider_collapsed') === 'true')
-  const [openKeys, setOpenKeys] = useState<string[]>([])
-  const location = useLocation()
-  const navigate = useNavigate()
+  const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountId, setAccountIdState] = useState<number>(
+    () => Number(localStorage.getItem("vx_account_id")) || 0,
+  );
+  const [siderCollapsed, setSiderCollapsed] = useState(
+    () => localStorage.getItem("vx_sider_collapsed") === "true",
+  );
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const reloadAccounts = useCallback(async () => {
-    const rows = await api<Account[]>('/api/accounts')
-    setAccounts(rows)
+    const rows = await api<Account[]>("/api/accounts");
+    setAccounts(rows);
     setAccountIdState((current) => {
-      const next = rows.some((row) => row.id === current) ? current : (rows[0]?.id || 0)
-      if (next) localStorage.setItem('vx_account_id', String(next))
-      return next
-    })
-  }, [])
-  useEffect(() => { void reloadAccounts() }, [reloadAccounts])
+      const next = rows.some((row) => row.id === current)
+        ? current
+        : rows[0]?.id || 0;
+      if (next) localStorage.setItem("vx_account_id", String(next));
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    void reloadAccounts();
+  }, [reloadAccounts]);
 
   const setAccountId = (id: number) => {
-    setAccountIdState(id)
-    localStorage.setItem('vx_account_id', String(id))
-  }
-  const account = accounts.find((row) => row.id === accountId) || null
-  const context = useMemo(() => ({ accounts, account, setAccountId, reloadAccounts }), [accounts, account, reloadAccounts])
-  const profileMenu: MenuProps['items'] = [{ key: 'profile', label: '个人资料' }, { type: 'divider' }, { key: 'logout', label: '退出软件', danger: true }]
-  const handleProfileMenu: MenuProps['onClick'] = ({ key }) => { if (key === 'profile') navigate('/profile'); if (key === 'logout') void logout() }
+    setAccountIdState(id);
+    localStorage.setItem("vx_account_id", String(id));
+  };
+  const account = accounts.find((row) => row.id === accountId) || null;
+  const context = useMemo(
+    () => ({ accounts, account, setAccountId, reloadAccounts }),
+    [accounts, account, reloadAccounts],
+  );
+  const profileMenu: MenuProps["items"] = [
+    { key: "profile", label: "个人资料" },
+    { type: "divider" },
+    { key: "logout", label: "退出软件", danger: true },
+  ];
+  const handleProfileMenu: MenuProps["onClick"] = ({ key }) => {
+    if (key === "profile") navigate("/profile");
+    if (key === "logout") void logout();
+  };
 
   return (
     <AccountContext.Provider value={context}>
-      <Layout className={`app-shell ${siderCollapsed ? 'sider-collapsed' : ''}`}>
-        <Layout.Sider className="desktop-sider" width={224} collapsedWidth={72} collapsed={siderCollapsed} theme="light">
-          <div className="brand"><span className="brand-mark small">VX</span>{!siderCollapsed && <span>视频号数据</span>}</div>
-          <Button className="sider-toggle" type="text" icon={siderCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />} title={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-label={siderCollapsed ? '展开侧边栏' : '收起侧边栏'} onClick={() => setSiderCollapsed((value) => { localStorage.setItem('vx_sider_collapsed', String(!value)); return !value })} />
-              <Menu mode="inline" inlineCollapsed={siderCollapsed} openKeys={siderCollapsed ? [] : openKeys} selectedKeys={[location.pathname]} items={items} onOpenChange={(keys) => setOpenKeys(keys.slice(-1))} onClick={({ key }) => navigate(key)} />
+      <Layout
+        className={`app-shell ${siderCollapsed ? "sider-collapsed" : ""}`}
+      >
+        <Layout.Sider
+          className="desktop-sider"
+          width={224}
+          collapsedWidth={72}
+          collapsed={siderCollapsed}
+          theme="light"
+        >
+          <div className="brand">
+            <span className="brand-mark small">VX</span>
+            {!siderCollapsed && <span>视频号数据</span>}
+          </div>
+          <Button
+            className="sider-toggle"
+            type="text"
+            icon={
+              siderCollapsed ? (
+                <PanelLeftOpen size={18} />
+              ) : (
+                <PanelLeftClose size={18} />
+              )
+            }
+            title={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            onClick={() =>
+              setSiderCollapsed((value) => {
+                localStorage.setItem("vx_sider_collapsed", String(!value));
+                return !value;
+              })
+            }
+          />
+          <Menu
+            mode="inline"
+            inlineCollapsed={siderCollapsed}
+            openKeys={siderCollapsed ? [] : openKeys}
+            selectedKeys={[location.pathname]}
+            items={items}
+            onOpenChange={(keys) => setOpenKeys(keys.slice(-1))}
+            onClick={({ key }) => navigate(key)}
+          />
           <div className="sider-user">
-            {!siderCollapsed && <div><Typography.Text strong>{user.username}</Typography.Text><br /><Typography.Text type="secondary">{user.role}</Typography.Text></div>}
-            <Button type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />
+            {!siderCollapsed && (
+              <div>
+                <Typography.Text strong>{user.username}</Typography.Text>
+                <br />
+                <Typography.Text type="secondary">{user.role}</Typography.Text>
+              </div>
+            )}
+            <Button
+              type="text"
+              icon={<LogOut size={18} />}
+              title="退出登录"
+              aria-label="退出登录"
+              onClick={() => void logout()}
+            />
           </div>
         </Layout.Sider>
         <Layout>
           <header className="topbar">
-            <div className="mobile-brand"><span className="brand-mark small">VX</span><strong>视频号数据</strong></div>
-            <Button className="theme-toggle" type="text" icon={theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'} aria-label={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'} onClick={toggleTheme} />
+            <div className="mobile-brand">
+              <span className="brand-mark small">VX</span>
+              <strong>视频号数据</strong>
+            </div>
+            <Button
+              className="theme-toggle"
+              type="text"
+              icon={theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              title={theme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
+              aria-label={
+                theme === "dark" ? "切换到白天模式" : "切换到黑夜模式"
+              }
+              onClick={toggleTheme}
+            />
             <Select
               aria-label="当前视频号"
               className="account-select"
               placeholder="请先创建视频号"
               value={accountId || undefined}
               onChange={setAccountId}
-              options={accounts.map((row) => ({ value: row.id, label: row.name }))}
+              options={accounts.map((row) => ({
+                value: row.id,
+                label: row.name,
+              }))}
             />
-            <Dropdown overlayClassName="profile-dropdown" menu={{ items: profileMenu, onClick: handleProfileMenu }} trigger={['click']} placement="bottomRight">
-              <button type="button" className="profile-trigger" aria-label="打开用户菜单"><Avatar size={36} className="profile-avatar">{user.username.slice(0, 1).toUpperCase()}</Avatar></button>
+            <Dropdown
+              overlayClassName="profile-dropdown"
+              menu={{ items: profileMenu, onClick: handleProfileMenu }}
+              trigger={["click"]}
+              placement="bottomRight"
+            >
+              <button
+                type="button"
+                className="profile-trigger"
+                aria-label="打开用户菜单"
+              >
+                <Avatar
+                  size={36}
+                  className="profile-avatar"
+                  src={user.avatar && user.avatar !== "default" ? user.avatar : undefined}
+                >
+                  {user.username.slice(0, 1).toUpperCase()}
+                </Avatar>
+              </button>
             </Dropdown>
-            <Button className="mobile-logout" type="text" icon={<LogOut size={18} />} title="退出登录" aria-label="退出登录" onClick={() => void logout()} />
+            <Button
+              className="mobile-logout"
+              type="text"
+              icon={<LogOut size={18} />}
+              title="退出登录"
+              aria-label="退出登录"
+              onClick={() => void logout()}
+            />
           </header>
           <Layout.Content className="content">
-            <Suspense fallback={<div className="page-loading"><Spin size="large" /></div>}>
+            <Suspense
+              fallback={
+                <div className="page-loading">
+                  <Spin size="large" />
+                </div>
+              }
+            >
               <Routes>
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/videos" element={<VideosPage />} />
@@ -99,34 +293,75 @@ export default function App() {
                 <Route path="/analysis/videos" element={<VideosPage />} />
                 <Route path="/analysis/imports" element={<ImportsPage />} />
                 <Route path="/analysis/ai" element={<AIPage />} />
-                <Route path="/analysis" element={<Navigate to="/analysis/dashboard" replace />} />
-                <Route path="/users" element={<Navigate to="/users/accounts" replace />} />
-                <Route path="/users/accounts" element={<SettingsPage section="users" />} />
-                <Route path="/users/local" element={<SettingsPage section="users" />} />
-                <Route path="/download" element={<Navigate to="/download/config" replace />} />
-                <Route path="/download/config" element={<DownloadPage mode="config" />} />
-                <Route path="/download/content" element={<DownloadPage mode="content" />} />
-                <Route path="/about/architecture" element={<AboutPage section="architecture" />} />
-                <Route path="/about/technology" element={<AboutPage section="technology" />} />
-                <Route path="/about/team" element={<AboutPage section="team" />} />
-                <Route path="/about" element={<Navigate to="/about/architecture" replace />} />
+                <Route
+                  path="/analysis"
+                  element={<Navigate to="/analysis/dashboard" replace />}
+                />
+                <Route
+                  path="/users"
+                  element={<Navigate to="/users/accounts" replace />}
+                />
+                <Route
+                  path="/users/accounts"
+                  element={<SettingsPage section="accounts" />}
+                />
+                <Route
+                  path="/users/local"
+                  element={<SettingsPage section="local" />}
+                />
+                <Route
+                  path="/download"
+                  element={<Navigate to="/download/config" replace />}
+                />
+                <Route
+                  path="/download/config"
+                  element={<DownloadPage mode="config" />}
+                />
+                <Route
+                  path="/download/content"
+                  element={<DownloadPage mode="content" />}
+                />
+                <Route
+                  path="/about/architecture"
+                  element={<AboutPage section="architecture" />}
+                />
+                <Route
+                  path="/about/technology"
+                  element={<AboutPage section="technology" />}
+                />
+                <Route
+                  path="/about/team"
+                  element={<AboutPage section="team" />}
+                />
+                <Route
+                  path="/about"
+                  element={<Navigate to="/about/architecture" replace />}
+                />
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                <Route
+                  path="*"
+                  element={<Navigate to="/dashboard" replace />}
+                />
               </Routes>
             </Suspense>
           </Layout.Content>
           <nav className="mobile-nav" aria-label="主导航">
             {items.map((item) => (
-              <button key={item.key} className={location.pathname === item.key ? 'active' : ''} onClick={() => navigate(item.key)}>
-                {item.icon}<span>{item.label.replace('数据', '')}</span>
+              <button
+                key={item.key}
+                className={location.pathname === item.key ? "active" : ""}
+                onClick={() => navigate(item.key)}
+              >
+                {item.icon}
+                <span>{item.label.replace("数据", "")}</span>
               </button>
             ))}
           </nav>
         </Layout>
       </Layout>
     </AccountContext.Provider>
-  )
+  );
 }

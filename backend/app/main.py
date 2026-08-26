@@ -3,6 +3,8 @@
 import gc
 import json
 import time
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -42,7 +44,7 @@ from .auth_service import auth_settings, consume_code, email_user, normalize_ema
 from .backups import create_backup
 from .config import get_settings
 from .database import get_db, init_db
-from .download_service import start_task
+from .download_service import cancel_task, pause_task, start_task
 from .deps import (
     CsrfUser,
     CurrentUser,
@@ -99,6 +101,7 @@ from .schemas import (
     UsernameChange,
     VideoMetricCommit,
     DownloadCookieTest,
+    DownloadProxyTest,
     DownloadSettings,
     DownloadTaskCreate,
 )
@@ -295,6 +298,22 @@ def test_download_cookies(payload: DownloadCookieTest, user: CsrfUser) -> dict[s
     return {"valid": True, "message": f"Cookies 格式有效，共识别 {len(lines)} 条记录"}
 
 
+@app.post("/api/download/proxy/test")
+def test_download_proxy(payload: DownloadProxyTest, user: CsrfUser) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    if not payload.proxy_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="代理测试目前支持 HTTP 或 HTTPS 地址")
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": payload.proxy_url, "https": payload.proxy_url}))
+        with opener.open("https://www.youtube.com/", timeout=10) as response:
+            if response.status >= 400:
+                raise OSError(f"HTTP {response.status}")
+    except (OSError, urllib.error.URLError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"代理连接失败：{exc}") from exc
+    return {"valid": True, "message": "代理连接正常"}
+
+
 def _download_task_payload(task: DownloadTask) -> dict[str, Any]:
     return {"id": task.id, "url": task.url, "title": task.title or "待获取标题", "duration": task.duration or "-", "estimated_size": task.estimated_size or "-", "status": task.status, "progress": task.progress, "error": task.error}
 
@@ -343,6 +362,33 @@ def cancel_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, De
         raise HTTPException(status_code=404, detail="下载任务不存在")
     task.status = "cancelled"
     db.commit()
+    cancel_task(task_id)
+    return _download_task_payload(task)
+
+
+@app.post("/api/download/tasks/{task_id}/pause")
+def pause_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    task = db.get(DownloadTask, task_id)
+    if not task or task.status != "downloading":
+        raise HTTPException(status_code=400, detail="当前任务不能暂停")
+    pause_task(task_id)
+    task.status = "paused"
+    db.commit()
+    return _download_task_payload(task)
+
+
+@app.post("/api/download/tasks/{task_id}/resume")
+def resume_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role not in {Role.admin, Role.editor}:
+        raise HTTPException(status_code=403, detail="需要编辑权限")
+    task = db.get(DownloadTask, task_id)
+    if not task or task.status != "paused":
+        raise HTTPException(status_code=400, detail="当前任务不能继续")
+    task.status = "queued"
+    db.commit()
+    start_task(task.id)
     return _download_task_payload(task)
 
 

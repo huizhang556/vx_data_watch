@@ -255,11 +255,19 @@ class DownloadSettings(BaseModel):
     transcode_quality: Literal["fast", "balanced", "high"] = "balanced"
     keep_original: bool = True
     cookies_enabled: bool = True
+    proxy_enabled: bool = False
+    proxy_url: str | None = Field(default=None, max_length=500)
+    proxy_auto_check: bool = True
+    output_dir: str = Field(default="downloads", min_length=1, max_length=500)
     cookies: str | None = Field(default=None, max_length=2_000_000)
 
 
 class DownloadCookieTest(BaseModel):
     cookies: str = Field(default="", max_length=2_000_000)
+
+
+class DownloadProxyTest(BaseModel):
+    proxy_url: str = Field(min_length=8, max_length=500)
 
 
 class DownloadTaskCreate(BaseModel):

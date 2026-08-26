@@ -117,11 +117,11 @@ export default function SettingsPage({ section = 'settings' }: { section?: Setti
           <Button type="primary" htmlType="submit" loading={loading}>保存人机验证配置</Button>
         </Form>}
       </section>}
-      {section === 'users' && <section className="section-band">
+      {(section === 'users' || section === 'accounts') && <section className="section-band">
         <div className="section-heading"><Typography.Title level={3}>视频号账号</Typography.Title>{user.role !== 'viewer' && <Button type="primary" icon={<Plus size={18} />} onClick={() => setOpen(true)}>新增账号</Button>}</div>
         {!accounts.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有视频号账号" /> : <div className="account-list">{accounts.map((account) => <article key={account.id}><div className="account-icon">号</div><div><strong>{account.name}</strong><span>{account.description || '暂无备注'}</span></div><Tag color="green">使用中</Tag></article>)}</div>}
       </section>}
-      {section === 'users' && <section className="section-band">
+      {(section === 'users' || section === 'local') && <section className="section-band">
         <div className="section-heading"><div><Typography.Title level={3}>本地用户</Typography.Title><Typography.Text type="secondary">当前用户：{user.username}（{user.role}）</Typography.Text></div>{user.role === 'admin' && <Button type="primary" icon={<UserPlus size={18} />} onClick={() => setUserOpen(true)}>新增用户</Button>}</div>
         {user.role === 'admin' && <Table size="small" rowKey="id" pagination={false} dataSource={users} columns={[{ title: '头像', dataIndex: 'avatar', render: (value, row) => <Avatar src={value !== 'default' ? value : undefined}>{row.username.slice(0, 1).toUpperCase()}</Avatar> }, { title: '用户名', dataIndex: 'username' }, { title: '注册邮箱', dataIndex: 'email', render: (value) => value || '未绑定' }, { title: '角色', dataIndex: 'role', render: (value) => <Tag>{value}</Tag> }, { title: '状态', dataIndex: 'is_active', render: (value) => <Tag color={value ? 'green' : 'default'}>{value ? '启用' : '停用'}</Tag> }, { title: '注册时间', dataIndex: 'created_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm') }, { title: '最近登录', dataIndex: 'last_login_at', render: (value) => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '从未登录' }, { title: '操作', render: (_, row) => <><Button type="text" icon={<Pencil size={16} />} onClick={() => { setEditingUser(row); editUserForm.setFieldsValue(row); setEditUserOpen(true) }} /><Popconfirm title="删除用户" description={`确定删除 ${row.username} 吗？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteUser(row)}><Button type="text" danger icon={<Trash2 size={16} />} /></Popconfirm></> }]} />}
       </section>}
