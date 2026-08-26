@@ -2,6 +2,7 @@ name: vx-data-watch
 
 services:
   app:
+    container_name: vx-data-watch-app
     build:
       context: .
       dockerfile: Dockerfile
@@ -38,6 +39,7 @@ services:
     restart: unless-stopped
 
   updater:
+    container_name: vx-data-watch-updater
     build:
       context: .
       dockerfile: Dockerfile
