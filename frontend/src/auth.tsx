@@ -37,13 +37,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
     button.setAttribute('aria-disabled', String(!captchaReady || busy))
   }, [captchaReady, busy, mode])
   useEffect(() => { void (async () => { try { const [status, authConfig] = await Promise.all([api<{ initialized: boolean }>('/api/setup/status'), api<typeof config>('/api/auth/config')]); setInitialized(status.initialized); setConfig(authConfig); if (status.initialized) { try { const me = await api<User>('/api/auth/me'); setCsrfToken(me.csrf_token); setUser(me) } catch { setUser(null) } } } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接后端') } finally { setLoading(false) } })() }, [])
+  useEffect(() => {
+    if (user !== null || !initialized) return
+    void api<typeof config>('/api/auth/config').then(setConfig).catch(() => undefined)
+  }, [user, initialized])
   useEffect(() => { const onUnauthorized = () => { setCsrfToken(); setUser(null); localStorage.removeItem('vx_account_id') }; window.addEventListener('vx:unauthorized', onUnauthorized); return () => window.removeEventListener('vx:unauthorized', onUnauthorized) }, [])
   const switchMode = (next: Mode) => { setMode(next); setError(''); setCaptcha(undefined); form.resetFields(); setEmail('') }
   const finishLogin = (next: User) => { setCsrfToken(next.csrf_token); setUser(next); setInitialized(true); message.success('登录成功') }
   const submit = async (values: { username?: string; password: string; email?: string; code?: string }) => { setBusy(true); setError(''); try { if (mode === 'login') finishLogin(await api<User>(initialized ? '/api/auth/login' : '/api/setup', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else if (mode === 'register') finishLogin(await api<User>('/api/auth/register', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else finishLogin(await api<User>('/api/auth/password-reset', { method: 'POST', body: JSON.stringify({ email: values.email, code: values.code, new_password: values.password, captcha_token: captcha }) })) } catch (cause) { setError(cause instanceof Error ? cause.message : '操作失败') } finally { setBusy(false) } }
   const syncField = (name: string, value: string) => { form.setFieldValue(name, value); if (name === 'email') setEmail(value) }
   const sendCode = async (value?: string) => { const targetEmail = value || form.getFieldValue('email') || email; setBusy(true); try { await api(mode === 'register' ? '/api/auth/register/request-code' : '/api/auth/password-reset/request-code', { method: 'POST', body: JSON.stringify({ email: targetEmail, captcha_token: captcha }) }); message.success('验证码已发送，请检查邮箱') } catch (cause) { message.error(cause instanceof Error ? cause.message : '发送失败') } finally { setBusy(false) } }
-  const logout = async () => { try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* clear local state even if server is unavailable */ } finally { setCsrfToken(); setUser(null); localStorage.removeItem('vx_account_id'); window.history.replaceState({}, '', '/') } }
+  const logout = async () => { try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* clear local state even if server is unavailable */ } finally { setCsrfToken(); setUser(null); setMode('login'); setCaptcha(undefined); form.resetFields(); localStorage.removeItem('vx_account_id'); window.history.replaceState({}, '', '/') } }
   const value = useMemo(() => user ? { user, logout } : null, [user])
   if (loading) return <div className="center-screen"><Spin size="large" /></div>
   if (user) return <AuthContext.Provider value={value!}>{children}</AuthContext.Provider>

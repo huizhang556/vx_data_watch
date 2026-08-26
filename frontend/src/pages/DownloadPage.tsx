@@ -51,6 +51,13 @@ type Task = {
   progress: number;
   error?: string | null;
 };
+type ProxyStatus = {
+  ip: string;
+  country: string;
+  country_code: string;
+  youtube_supported: boolean;
+  message: string;
+};
 const defaults: Settings = {
   quality: "1080",
   download_type: "video_audio",
@@ -81,6 +88,8 @@ export default function DownloadPage({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [taskLoading, setTaskLoading] = useState(false);
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [proxyVerified, setProxyVerified] = useState(false);
   useEffect(() => {
     if (!isConfig) return;
     void api<Settings>("/api/download/settings")
@@ -91,6 +100,12 @@ export default function DownloadPage({
         ),
       )
       .finally(() => setLoading(false));
+  }, [isConfig]);
+  useEffect(() => {
+    if (!isConfig) return;
+    void api<ProxyStatus>("/api/download/proxy/status")
+      .then(setProxyStatus)
+      .catch(() => setProxyStatus(null));
   }, [isConfig]);
   useEffect(() => {
     if (isConfig) return;
@@ -109,6 +124,10 @@ export default function DownloadPage({
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings((current) => ({ ...current, [key]: value }));
   const save = async () => {
+    if (settings.proxy_enabled && !proxyStatus?.youtube_supported && !proxyVerified) {
+      message.warning("当前地区可能无法访问 YouTube，请先测试代理成功后再保存");
+      return;
+    }
     setSaving(true);
     try {
       const result = await api<Settings>("/api/download/settings", {
@@ -155,6 +174,7 @@ export default function DownloadPage({
         },
       );
       message.success(result.message);
+      setProxyVerified(true);
     } catch (cause) {
       message.error(cause instanceof Error ? cause.message : "代理测试失败");
     } finally {
@@ -539,6 +559,14 @@ export default function DownloadPage({
             </Space>
           </Card>
           <Card className="download-config-group" title="代理设置">
+            {proxyStatus && (
+              <Alert
+                showIcon
+                type={proxyStatus.youtube_supported ? "success" : "warning"}
+                message={`${proxyStatus.message}（${proxyStatus.country}，${proxyStatus.ip}）`}
+                style={{ marginBottom: 12 }}
+              />
+            )}
             <Checkbox
               checked={settings.proxy_enabled}
               onChange={(event) =>

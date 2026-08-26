@@ -314,6 +314,28 @@ def test_download_proxy(payload: DownloadProxyTest, user: CsrfUser) -> dict[str,
     return {"valid": True, "message": "代理连接正常"}
 
 
+@app.get("/api/download/proxy/status")
+def download_proxy_status(user: CurrentUser) -> dict[str, Any]:
+    """Report the server's public region before asking users to configure a proxy."""
+    try:
+        with urllib.request.urlopen("https://ipapi.co/json/", timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        country_code = str(payload.get("country_code") or "").upper()
+        country = str(payload.get("country_name") or country_code or "未知")
+        ip = str(payload.get("ip") or "未知")
+    except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail=f"无法查询服务器公网 IP 和地区：{exc}") from exc
+    blocked = {"CN", "KP", "IR", "SY", "TM", "SD", "CU"}
+    supported = country_code not in blocked
+    return {
+        "ip": ip,
+        "country_code": country_code,
+        "country": country,
+        "youtube_supported": supported,
+        "message": "当前服务器所在地区原生支持 YouTube，无需代理" if supported else "当前服务器所在地区访问 YouTube 可能受限，请配置可用代理",
+    }
+
+
 def _download_task_payload(task: DownloadTask) -> dict[str, Any]:
     return {"id": task.id, "url": task.url, "title": task.title or "待获取标题", "duration": task.duration or "-", "estimated_size": task.estimated_size or "-", "status": task.status, "progress": task.progress, "error": task.error}
 
