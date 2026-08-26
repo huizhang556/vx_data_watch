@@ -70,7 +70,7 @@ def test_admin_can_check_and_queue_system_update(
 
     async def versions(_repository: str) -> list[dict[str, str]]:
         return [
-            {"version": "0.4.1", "published_at": "2026-08-20T00:00:00Z"},
+            {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
                 {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z"},
             {"version": "0.3.4", "published_at": "2026-08-19T00:00:00Z"},
         ]
@@ -82,7 +82,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.4.1"
+    assert checked.json()["current_version"] == "0.4.2"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.4.0", "0.3.4"]
 
     queued = client.post(
