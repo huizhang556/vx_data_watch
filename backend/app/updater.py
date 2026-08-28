@@ -9,6 +9,8 @@ from typing import Any
 from .config import get_settings
 from .docker_engine import DockerEngine
 from .updates import (
+    ALLOWED_REGISTRIES,
+    REGISTRY_REPOSITORIES,
     SEMVER_PATTERN,
     prepare_update_dir_for_app,
     update_paths,
@@ -48,22 +50,27 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     settings = get_settings()
     version = request.get("version")
     repository = request.get("repository")
+    registry = request.get("registry", "docker.io")
     if not isinstance(version, str) or not SEMVER_PATTERN.fullmatch(version):
         raise ValueError("更新版本号无效")
-    if repository != settings.update_repository:
+    expected_repository = REGISTRY_REPOSITORIES.get(registry, settings.update_repository)
+    if repository != expected_repository or registry not in ALLOWED_REGISTRIES:
         raise ValueError("更新镜像仓库不在允许列表中")
     docker = engine or DockerEngine()
     _status(request, "pulling", "正在拉取目标镜像")
-    docker.pull(repository, version)
+    pull_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
+    docker.pull(pull_repository, version)
     env_existed = settings.update_env_file.exists()
     previous_env = (
         settings.update_env_file.read_text(encoding="utf-8") if env_existed else ""
     )
-    _persist_image(settings.update_env_file, f"docker.io/{repository}:{version}")
+    image_ref = f"docker.io/{pull_repository}:{version}" if registry == "docker.io" else f"{pull_repository}:{version}"
+    _persist_image(settings.update_env_file, image_ref)
     _status(request, "restarting", "正在替换并重启应用")
     try:
+        compose_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
         docker.replace_compose_service(
-            settings.update_project, settings.update_service, repository, version
+            settings.update_project, settings.update_service, compose_repository, version
         )
     except Exception:
         _status(request, "rolling_back", "更新失败，正在恢复原版本")

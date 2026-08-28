@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     master_key: str | None = None
     updater_enabled: bool = False
     update_repository: str = "litehub/vx-data-watch"
+    update_registry: str = "docker.io"
     update_env_file: Path = Path("/project/.env")
     update_project: str = "vx-data-watch"
     update_service: str = "app"

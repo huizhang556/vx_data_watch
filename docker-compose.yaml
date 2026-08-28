@@ -11,7 +11,7 @@ services:
         PYTHON_IMAGE: ${VX_PYTHON_IMAGE:-python:3.12-slim}
     image: ${VX_IMAGE:-vx-data:local}
     ports:
-      - "${VX_BIND_ADDRESS:-127.0.0.1}:${VX_PORT:-8000}:8000"
+      - "${VX_BIND_ADDRESS:-127.0.0.1}:${VX_HOST_PORT:-10000}:8000"
     environment:
       VX_DATA_DIR: /app/data
       VX_DATABASE_URL: sqlite:////app/data/vx_data.db
@@ -21,6 +21,7 @@ services:
       VX_MASTER_KEY: ${VX_MASTER_KEY:-}
       VX_UPDATER_ENABLED: "true"
       VX_UPDATE_REPOSITORY: ${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}
+      VX_UPDATE_REGISTRY: ${VX_UPDATE_REGISTRY:-docker.io}
       VX_REGISTRATION_ENABLED: ${VX_REGISTRATION_ENABLED:-false}
       VX_SMTP_HOST: ${VX_SMTP_HOST:-}
       VX_SMTP_PORT: ${VX_SMTP_PORT:-587}
@@ -52,6 +53,7 @@ services:
     environment:
       VX_DATA_DIR: /app/data
       VX_UPDATE_REPOSITORY: ${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}
+      VX_UPDATE_REGISTRY: ${VX_UPDATE_REGISTRY:-docker.io}
       VX_UPDATE_ENV_FILE: /project/.env
       VX_UPDATE_PROJECT: vx-data-watch
       VX_UPDATE_SERVICE: app

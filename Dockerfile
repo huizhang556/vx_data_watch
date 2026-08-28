@@ -1,6 +1,6 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.4.2
+ARG APP_VERSION=0.4.3
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
 FROM ${NODE_IMAGE} AS frontend-build

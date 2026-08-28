@@ -4,6 +4,14 @@ VX Data Watch 是一个本地优先、适配桌面端和移动端浏览器的微
 
 项目不需要微信扫码登录，也不会获取微信账号凭据。导入数据默认只保存在部署者自己的 SQLite 数据库中；只有用户主动请求 AI 分析时，所选区间的结构化统计数据才会发送到用户配置的 OpenAI 兼容接口。
 
+## 先看这里：选择部署方式
+
+- **一键运维脚本**：适合首次安装、终端更新、备份迁移和卸载；应用无法打开时，也可以通过 SSH 维护。
+- **Docker Compose（手动部署）**：服务器只需安装 Docker，直接使用已发布镜像，不需要安装 Python、Node.js 或 OCR 构建依赖。
+- **Ubuntu/Debian 源码部署**：适合需要阅读或修改源码的用户，需要自行安装 Python、Node.js、uv 以及 OCR 依赖。
+
+默认部署地区为海外服务器并使用 Docker Hub。中国大陆服务器在一键安装时会显示公网 IP 检测结果和镜像建议，用户确认后才可选择阿里云 ACR；检测失败时由用户手动选择。无论哪种方式，镜像地址都可以通过 `.env` 的 `VX_IMAGE` 明确指定。
+
 ## 主要功能
 
 - 导入视频号后台 CSV，按日期持久化、去重并保留修订记录。
@@ -33,42 +41,54 @@ VX Data Watch 是一个本地优先、适配桌面端和移动端浏览器的微
 
 | 项目 | 最低要求 | 推荐配置 |
 | --- | --- | --- |
-| 操作系统 | Ubuntu 22.04 / Debian 12，64 位 | Ubuntu 24.04，64 位 |
+| 操作系统 | Ubuntu 24.04 / Debian 12，64 位 | Ubuntu 24.04，64 位 |
 | CPU | 2 核 x86_64 | 4 核 x86_64 |
 | 内存 | 2 GB | 4 GB 或更多 |
 | 可用磁盘 | 5 GB | 10 GB 或更多，并定期备份 |
 | 网络 | 可访问 GitHub 和 Docker Hub | 稳定的公网连接 |
 | 浏览器 | 当前版本 Chrome、Edge 或 Firefox | 当前版本 Chrome 或 Edge |
 
-服务器还需开放一个 TCP 访问端口，默认是 `8000`，可以在 `.env` 中修改。公网部署应准备域名、HTTPS 证书和 Nginx/Caddy 等反向代理。
+服务器还需开放一个宿主机 TCP 访问端口。Docker Compose 和一键脚本默认使用 `10000`，通过 `VX_HOST_PORT` 修改；容器内部端口始终固定为 `8000`。源码部署没有宿主机端口映射，应用直接使用 `VX_PORT`，默认也是 `8000`。公网部署应准备域名、HTTPS 证书和 Nginx/Caddy 等反向代理。
 
 ## 部署前配置
 
-两种部署方式都从 `.env.example` 创建 `.env`：
+Docker Compose、源码部署和一键脚本最终都使用 `.env` 配置文件；手动部署从 `.env.example` 创建，一键脚本会自动生成并填充必要的随机配置：
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-常用配置如下：
+## 必须配置的内容
 
-| 变量 | 用途 | 默认值 |
+大多数用户只需要确认下面两项，其他配置可以保持默认值：
+
+| 变量 | 什么时候需要配置 | 示例 |
 | --- | --- | --- |
-| `VX_BIND_ADDRESS` | 服务监听地址（反向代理场景建议保持本机监听） | `127.0.0.1` |
-| `VX_PORT` | 浏览器访问端口 | `8000` |
-| `VX_COOKIE_SECURE` | 仅通过 HTTPS 发送登录 Cookie | `false` |
-| `VX_SESSION_DAYS` | 登录会话有效天数 | `14` |
-| `VX_MAX_UPLOAD_MB` | 单个上传文件大小限制，单位 MB | `20` |
-| `VX_MASTER_KEY` | Base64 编码的 32 字节加密主密钥 | 未设置时自动生成 |
+| `VX_IMAGE` | Docker Compose 部署时确认镜像源；海外默认 Docker Hub，中国大陆可按提示选择阿里云 ACR | `docker.io/litehub/vx-data-watch:latest` |
+| `VX_MASTER_KEY` | 用于加密密钥和备份；一键脚本会自动生成，手动部署可留空让程序生成 | `openssl rand -base64 32` 的输出 |
 
-例如服务器的 `8000` 端口已被占用，可将 `.env` 改为：
+只有启用对应功能时才需要配置：
+
+- 邮箱注册或密码重置：将 `VX_REGISTRATION_ENABLED=true`，并填写 SMTP 服务器、用户名、密码和发件人。
+- Cloudflare Turnstile：将 `VX_CAPTCHA_ENABLED=true`，并填写站点密钥和服务端密钥。
+- HTTPS：将 `VX_COOKIE_SECURE=true`。
+
+通常不需要修改：
+
+- Docker Compose 对外端口默认 `VX_HOST_PORT=10000`，容器内部端口固定 `8000`。
+- 源码部署应用端口默认 `VX_PORT=8000`。
+- 数据目录、数据库地址、会话时长、上传大小和基础镜像均可先使用默认值。
+
+不要把 SMTP 密码、Turnstile 密钥、主密钥或真实数据提交到 Git。
+
+例如服务器的 `10000` 端口已被占用，可将 Docker Compose 的 `.env` 改为：
 
 ```dotenv
-VX_PORT=3000
+VX_HOST_PORT=3000
 ```
 
-修改后通过 `http://服务器IP:3000` 访问。公网 HTTPS 部署还应设置：
+修改后通过 `http://服务器IP:3000` 访问，容器内部仍使用 `8000`。公网 HTTPS 部署还应设置：
 
 ```dotenv
 VX_COOKIE_SECURE=true
@@ -84,7 +104,40 @@ openssl rand -base64 32
 
 将输出填写到 `.env` 的 `VX_MASTER_KEY=` 后面。不要把 `.env`、主密钥、数据库、备份、真实 CSV 或截图提交到 Git。主密钥丢失后，已保存的 AI Key 和加密备份将无法解密。
 
-## Docker Compose 部署（推荐）
+## 一键运维脚本（Ubuntu 24.04 / Debian 12）
+
+脚本固定将项目安装到 `/opt/vx-data-watch`，Docker Compose 宿主机默认端口为 `10000`，容器内部端口固定为 `8000`，镜像为 `litehub/vx-data-watch:latest`。使用前建议先下载并审阅脚本：
+
+```bash
+sudo apt update && sudo apt install -y curl
+curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
+less vx-data.sh
+chmod +x vx-data.sh
+sudo ./vx-data.sh install
+```
+
+安装时会检查 Docker、Compose、`curl`、`openssl` 和 `rsync`。缺少 Docker 或依赖时，脚本会先询问是否自动安装；拒绝后立即退出。脚本会尝试检测服务器公网 IP 所在国家，仅将结果作为建议：海外默认建议 Docker Hub，中国大陆可选择 Docker Hub 或阿里云 ACR，检测失败时由用户手动选择。中国大陆服务器还可在交互步骤选择 Docker 镜像加速地址。加速地址并非永久可靠，连续失败时请更换云服务器或手动配置代理。所有下载和镜像拉取都带有限次重试。
+
+常用命令：
+
+```bash
+sudo /opt/vx-data-watch/vx-data.sh update             # 先备份再更新 latest
+sudo /opt/vx-data-watch/vx-data.sh update 0.4.2       # 更新到指定版本
+sudo /opt/vx-data-watch/vx-data.sh backup              # 备份到 /home/vx_backed
+sudo /opt/vx-data-watch/vx-data.sh backup /data/backup # 自定义备份目录
+sudo /opt/vx-data-watch/vx-data.sh migrate             # 导出后 rsync 到另一台服务器
+sudo /opt/vx-data-watch/vx-data.sh uninstall           # 选择保留数据或完全卸载
+```
+
+`migrate` 需要目标服务器已启用 SSH，使用密钥或密码完成认证；默认只迁移数据库、配置和分析数据，并支持断点续传，脚本会询问是否包含下载目录中的大文件。目标端得到的是数据卷归档，需要在目标服务器手动解压/恢复到 `vx-data` 卷。备份前会检查目标目录可写及可用空间，请预留不少于当前数据量再加 10 MB。
+
+卸载分为“删除容器但保留数据”和“删除容器、数据卷及项目目录”，完全卸载前会再次确认，并单独询问保留当前镜像、删除当前镜像或删除全部相关镜像。删除数据卷不可恢复，请先执行备份。首次安装会自动生成随机 `VX_MASTER_KEY`，不要公开 `.env` 或备份文件。
+
+网页中的在线更新和加密备份仍可继续使用；一键脚本适用于服务器初次安装、终端更新、迁移和卸载，不会保存 SSH 凭据。
+
+脚本安装完成后不要求配置 Nginx。没有域名时直接使用提示的服务器 IP 和 `VX_HOST_PORT` 访问；需要域名或 HTTPS 时，再按文末的 Nginx 指引由用户自行配置。
+
+## Docker Compose 部署（手动）
 
 这种方式直接下载官方镜像，不需要安装 Python、Node.js，也不需要在服务器构建镜像。
 
@@ -114,10 +167,18 @@ cp .env.example .env
 
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
-| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:0.3.5` |
+| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:latest` |
 | `VX_UPDATE_REPOSITORY` | 在线更新允许使用的固定仓库 | `litehub/vx-data-watch` |
 | `VX_NODE_IMAGE` | 仅自行构建时使用的 Node 基础镜像 | `node:24-alpine` |
 | `VX_PYTHON_IMAGE` | 仅自行构建时使用的 Python 基础镜像 | `python:3.12-slim` |
+
+海外服务器默认使用 Docker Hub。中国大陆服务器只有在用户明确选择时才使用阿里云 ACR，例如：
+
+```dotenv
+VX_IMAGE=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch:latest
+```
+
+使用 ACR 镜像时，请先按本地发布手册登录 ACR。终端一键更新会沿用 `.env` 中当前镜像的仓库地址；网页在线更新只允许在 Docker Hub 和已配置的阿里云 ACR 两个受信任仓库之间选择。
 
 普通部署无需修改这些 Docker 变量。
 
@@ -129,12 +190,12 @@ docker compose -f docker-compose.yaml up -d --no-build
 docker compose -f docker-compose.yaml ps
 ```
 
-当 `app` 显示为 `healthy` 后，访问 `http://服务器IP:8000`；如果修改了 `VX_PORT`，请使用修改后的端口。首次打开时创建管理员账号，项目没有默认用户名或密码。
+当 `app` 显示为 `healthy` 后，访问 `http://服务器IP:10000`；如果修改了 `VX_HOST_PORT`，请使用修改后的宿主机端口。首次打开时创建管理员账号，项目没有默认用户名或密码。
 
 同时确认云服务器安全组和系统防火墙已经放行所用端口。例如使用 UFW 放行默认端口：
 
 ```bash
-sudo ufw allow 8000/tcp
+sudo ufw allow 10000/tcp
 ```
 
 ### 4. 日常管理
@@ -192,6 +253,8 @@ rm -rf vx_data_watch
 
 主 Web 容器不访问 Docker Socket。只有不开放网络端口的 `updater` Companion 可以访问 Docker Engine，并且它只接受固定仓库 `litehub/vx-data-watch` 和三段式正式版本号。
 
+Docker Compose 部署完成后不要求配置 Nginx。没有域名时直接使用服务器 IP 和 `VX_HOST_PORT` 访问；需要域名或 HTTPS 时，再按文末的 Nginx 指引配置。
+
 ## Ubuntu/Debian 源码部署
 
 源码方式适合无法使用 Docker 或需要阅读、修改代码的用户。生产服务器仍优先推荐 Docker Compose。
@@ -229,13 +292,14 @@ cd vx_data_watch
 cp .env.example .env
 ```
 
-也可以下载 `v0.3.0` 的 GitHub 自动源码归档，不需要项目维护者重复上传压缩包：
+也可以下载指定版本的 GitHub 自动源码归档，不需要项目维护者重复上传压缩包：
 
 ```bash
-curl -L -o vx-data-watch-v0.3.0.tar.gz \
-  https://github.com/huizhang556/vx_data_watch/archive/refs/tags/v0.3.0.tar.gz
-tar -xzf vx-data-watch-v0.3.0.tar.gz
-cd vx_data_watch-0.3.0
+VERSION=0.4.2
+curl -L -o vx-data-watch-v${VERSION}.tar.gz \
+  https://github.com/huizhang556/vx_data_watch/archive/refs/tags/v${VERSION}.tar.gz
+tar -xzf vx-data-watch-v${VERSION}.tar.gz
+cd vx_data_watch-${VERSION}
 cp .env.example .env
 ```
 
@@ -352,9 +416,11 @@ rm -rf vx_data_watch
 
 源码卸载不会自动删除系统级的 Python、Node.js、uv、Nginx 或其他共享软件。删除前请确认 Nginx 配置不再引用本项目，并执行 `sudo nginx -t` 检查配置。
 
-### Nginx 反向代理（可选）
+源码部署完成后不要求配置 Nginx。没有域名时直接使用服务器 IP 和 `VX_PORT` 访问；需要域名或 HTTPS 时，再按文末的 Nginx 指引配置。
 
-源码服务默认监听 `127.0.0.1:8000`。如果要使用域名和 HTTPS，可以在源码部署完成并确认本机访问正常后配置 Nginx。
+## Nginx 反向代理（可选）
+
+三种部署方式都不强制要求域名或 Nginx。没有域名时可以直接使用服务器 IP 和端口；如果需要域名、HTTPS 或统一入口，再由用户自行安装并配置 Nginx。先确认应用本机访问正常，再按实际部署方式选择上游端口：源码部署通常为 `127.0.0.1:8000`，Docker Compose/一键脚本默认是 `127.0.0.1:10000`。
 
 安装 Nginx：
 
@@ -405,13 +471,14 @@ sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d analytics.example.com
 ```
 
-HTTPS 正常后，在 `.env` 中设置 `VX_COOKIE_SECURE=true`，然后重启源码服务：
+HTTPS 正常后，在 `.env` 中设置 `VX_COOKIE_SECURE=true`，然后重启对应部署方式的服务：
 
 ```bash
-sudo systemctl restart vx-data-watch
+sudo systemctl restart vx-data-watch       # 源码部署
+# Docker Compose/一键脚本：docker compose -f docker-compose.yaml up -d --no-build
 ```
 
-如果使用 Docker Compose，Nginx 配置完全相同，只需确认 Compose 端口映射为 `127.0.0.1:8000:8000`，HTTPS 配置生效后执行 `docker compose -f docker-compose.yaml up -d --no-build`。如果修改了 `VX_PORT`，同步替换 `proxy_pass` 中的端口。
+Docker Compose 的端口映射默认是 `127.0.0.1:10000:8000`；如果修改了 `VX_HOST_PORT`，将 Nginx 的 `proxy_pass` 端口同步改为新的宿主机端口。一键脚本安装的项目同样按此规则配置。
 
 ## 使用流程
 

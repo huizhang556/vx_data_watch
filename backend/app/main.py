@@ -16,6 +16,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     Response,
     UploadFile,
@@ -115,6 +116,8 @@ from .security import (
     verify_password,
 )
 from .updates import (
+    ALLOWED_REGISTRIES,
+    REGISTRY_REPOSITORIES,
     UpdateBusyError,
     UpdateRegistryError,
     fetch_registry_versions,
@@ -1720,12 +1723,16 @@ def audit_logs(
 @app.get("/api/system/versions")
 async def system_versions(
     user: Annotated[User, Depends(require_admin)],
+    registry: str | None = Query(default=None),
 ) -> dict[str, Any]:
+    selected_registry = registry or settings.update_registry
+    if selected_registry not in ALLOWED_REGISTRIES:
+        raise HTTPException(status_code=400, detail="不支持的镜像仓库")
     try:
-        versions = await fetch_registry_versions(settings.update_repository)
+        versions = await fetch_registry_versions(REGISTRY_REPOSITORIES.get(selected_registry, settings.update_repository), selected_registry)
     except UpdateRegistryError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return version_payload(versions)
+    return version_payload(versions, selected_registry)
 
 
 @app.get("/api/system/update-status")
@@ -1743,20 +1750,22 @@ async def system_update(
 ) -> dict[str, Any]:
     if not settings.updater_enabled:
         raise HTTPException(status_code=409, detail="当前部署未启用在线更新服务")
+    if payload.registry not in ALLOWED_REGISTRIES:
+        raise HTTPException(status_code=400, detail="不支持的镜像仓库")
     if version_key(payload.version) == version_key(__version__):
         raise HTTPException(status_code=400, detail="不能更新到当前正在运行的版本")
     try:
-        versions = await fetch_registry_versions(settings.update_repository)
+        versions = await fetch_registry_versions(REGISTRY_REPOSITORIES.get(payload.registry, settings.update_repository), payload.registry)
     except UpdateRegistryError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.version not in {row["version"] for row in versions}:
-        raise HTTPException(status_code=404, detail="Docker Hub 中不存在该版本")
+        raise HTTPException(status_code=404, detail="所选镜像仓库中不存在该版本")
     try:
         backup = create_backup()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"更新前创建备份失败：{exc}") from exc
     try:
-        request = queue_update(payload.version, backup.name)
+        request = queue_update(payload.version, backup.name, payload.registry)
     except UpdateBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

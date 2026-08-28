@@ -89,6 +89,8 @@ export interface SystemVersionInfo {
   latest_version: string | null
   versions: SystemVersion[]
   repository: string
+  registry: string
+  registries: { registry: string; label: string; repository: string }[]
   update_supported: boolean
   deployment: 'docker' | 'source'
 }

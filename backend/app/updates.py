@@ -36,15 +36,31 @@ def version_key(value: str) -> tuple[int, int, int]:
     return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
 
 
-async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
-    url = f"https://hub.docker.com/v2/repositories/{repository}/tags"
+ALLOWED_REGISTRIES = {
+    "docker.io": "Docker Hub",
+    "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com": "阿里云 ACR",
+}
+REGISTRY_REPOSITORIES = {
+    "docker.io": "litehub/vx-data-watch",
+    "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com": "zhang_spaces/vx-data-watch",
+}
+
+
+async def fetch_registry_versions(repository: str, registry: str = "docker.io") -> list[dict[str, Any]]:
+    if registry not in ALLOWED_REGISTRIES:
+        raise UpdateRegistryError("不支持的镜像仓库")
+    if registry == "docker.io":
+        url = f"https://hub.docker.com/v2/repositories/{repository}/tags"
+    else:
+        url = f"https://{registry}/v2/{repository}/tags/list"
     last_error: Exception | None = None
     try:
         async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
             for attempt in range(3):
                 try:
                     response = await client.get(
-                        url, params={"page_size": 100, "ordering": "last_updated"}
+                        url,
+                        params={"page_size": 100, "ordering": "last_updated"} if registry == "docker.io" else None,
                     )
                     response.raise_for_status()
                     payload = response.json()
@@ -62,7 +78,8 @@ async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
         raise
 
     versions: list[dict[str, Any]] = []
-    for row in payload.get("results", []):
+    rows = payload.get("results", []) if registry == "docker.io" else [{"name": name} for name in payload.get("tags", [])]
+    for row in rows:
         name = row.get("name")
         if not isinstance(name, str) or not SEMVER_PATTERN.fullmatch(name):
             continue
@@ -78,14 +95,18 @@ async def fetch_registry_versions(repository: str) -> list[dict[str, Any]]:
     return versions
 
 
-def version_payload(versions: list[dict[str, Any]]) -> dict[str, Any]:
+def version_payload(versions: list[dict[str, Any]], registry: str | None = None) -> dict[str, Any]:
     settings = get_settings()
+    selected_registry = registry or getattr(settings, "update_registry", "docker.io")
+    repository = REGISTRY_REPOSITORIES.get(selected_registry, settings.update_repository)
     selectable = [row for row in versions if row["version"] != __version__]
     return {
         "current_version": __version__,
         "latest_version": versions[0]["version"] if versions else None,
         "versions": selectable,
-        "repository": settings.update_repository,
+        "repository": f"{selected_registry}/{repository}",
+        "registry": selected_registry,
+        "registries": [{"registry": key, "label": label, "repository": f"{key}/{REGISTRY_REPOSITORIES[key]}"} for key, label in ALLOWED_REGISTRIES.items()],
         "update_supported": settings.updater_enabled,
         "deployment": "docker" if settings.updater_enabled else "source",
     }
@@ -143,7 +164,7 @@ def read_update_status() -> dict[str, Any]:
         return {"state": "unknown", "message": "更新状态文件不可读"}
 
 
-def queue_update(version: str, backup_filename: str) -> dict[str, Any]:
+def queue_update(version: str, backup_filename: str, registry: str = "docker.io") -> dict[str, Any]:
     request_path, processing_path, status_path = update_paths()
     status = read_update_status()
     if request_path.exists() or processing_path.exists() or status.get("state") in ACTIVE_STATES:
@@ -151,7 +172,8 @@ def queue_update(version: str, backup_filename: str) -> dict[str, Any]:
     request = {
         "id": uuid.uuid4().hex,
         "version": version,
-        "repository": get_settings().update_repository,
+        "repository": REGISTRY_REPOSITORIES.get(registry, get_settings().update_repository),
+        "registry": registry,
         "backup_filename": backup_filename,
         "requested_at": datetime.now(UTC).isoformat(),
     }

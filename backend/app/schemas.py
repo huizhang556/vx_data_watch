@@ -245,6 +245,7 @@ class AIQueryHistoryUpdate(BaseModel):
 
 class SystemUpdateRequest(BaseModel):
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$", max_length=30)
+    registry: str = Field(default="docker.io", pattern=r"^[a-z0-9.-]+(?::\d+)?$", max_length=255)
 
 
 class DownloadSettings(BaseModel):
