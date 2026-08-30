@@ -209,6 +209,10 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-category-order { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .ai-chat-category-order span { cursor: grab; padding: 4px 9px; border: 1px dashed var(--vx-border); border-radius: 5px; background: var(--vx-surface-soft); font-size: 12px; }
 .ai-chat-category-order span:active { cursor: grabbing; }
+.ai-chat-page > .ant-tabs { width: 100%; }
+.ai-chat-page > .ant-tabs .ant-tabs-nav-list { width: 100%; }
+.ai-chat-page > .ant-tabs .ant-tabs-tab { flex: 1; justify-content: center; min-height: 52px; padding: 14px 20px; font-size: 16px; font-weight: 600; }
+.ai-chat-page > .ant-tabs .ant-tabs-tab-btn { width: 100%; text-align: center; }
 [data-theme='dark'] .ai-chat-sidebar { background: #151e23; }
 [data-theme='dark'] .ai-chat-message-content { background: #202b31; }
 [data-theme='dark'] .ai-chat-message.user .ai-chat-message-content { background: #24483f; }
