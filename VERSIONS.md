@@ -2,7 +2,12 @@
 
 本文件记录 VX Data Watch 各正式版本的主要功能。版本以 [GitHub 主仓库](https://github.com/huizhang556/vx_data_watch/tags) 为准；中国大陆访问可使用 [Gitee 同步仓库](https://gitee.com/huizhang556/vx_data_watch)。
 
-## 0.5.0 - 2026-08-30
+## 0.5.0 - 2026-08-31
+
+### 发布补充
+- 在线更新检测失败时保留已有版本库数据，并提供重新检测、刷新页面和切换镜像源的恢复入口；检测失败期间禁止误触发版本切换。
+- Docker Compose 未指定 `VX_IMAGE` 时默认使用 `docker.io/litehub/vx-data-watch:latest`，避免误启动旧的 `vx-data:local` 镜像。
+- 下载配置页进入时显示服务器出口 IP、地区检测中的状态及失败原因，帮助用户判断是否需要配置代理。
 
 ### AI 速问与模型接口
 
