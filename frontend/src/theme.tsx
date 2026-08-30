@@ -1,23 +1,34 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'system' | 'morning' | 'night' | 'rose' | 'lavender' | 'mist' | 'mint' | 'cream'
 
-interface ThemeContextValue { theme: ThemeMode; toggleTheme: () => void }
+export const THEME_LABELS: Record<ThemeMode, string> = { system: '跟随系统', morning: '晨曦模式', night: '暮夜模式', rose: '玫瑰柔和模式', lavender: '薰衣草模式', mist: '雾蓝模式', mint: '薄荷模式', cream: '奶油模式' }
+interface ThemeContextValue { theme: ThemeMode; setTheme: (theme: ThemeMode) => void; toggleTheme: () => void }
 const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 function initialTheme(): ThemeMode {
   const stored = localStorage.getItem('vx_theme')
-  if (stored === 'dark' || stored === 'light') return stored
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  if (stored === 'light') return 'morning'
+  if (stored === 'dark') return 'night'
+  if (stored && stored in THEME_LABELS) return stored as ThemeMode
+  return 'system'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>(initialTheme)
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
+    const apply = () => { const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'night' : 'morning'; document.documentElement.dataset.theme = theme === 'system' ? systemTheme : theme }
+    apply()
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    media?.addEventListener('change', apply)
     localStorage.setItem('vx_theme', theme)
+    return () => media?.removeEventListener('change', apply)
   }, [theme])
-  const value = useMemo(() => ({ theme, toggleTheme: () => setTheme((current) => current === 'dark' ? 'light' : 'dark') }), [theme])
+  const value = useMemo(() => ({
+    theme,
+    setTheme,
+    toggleTheme: () => setTheme((current) => { const modes: ThemeMode[] = ['morning', 'night', 'rose', 'lavender', 'mist', 'mint', 'cream']; const index = modes.indexOf(current); return modes[(index + 1) % modes.length] }),
+  }), [theme])
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }
 

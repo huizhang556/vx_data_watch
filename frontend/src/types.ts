@@ -4,6 +4,7 @@ export interface User {
   id: number
   username: string
   role: Role
+  level: number
   csrf_token?: string
   email?: string
   is_active?: boolean
@@ -90,6 +91,7 @@ export interface SystemVersionInfo {
   versions: SystemVersion[]
   repository: string
   registry: string
+  configured_registry?: string
   registries: { registry: string; label: string; repository: string }[]
   update_supported: boolean
   deployment: 'docker' | 'source'

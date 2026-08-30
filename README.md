@@ -12,6 +12,8 @@ VX Data Watch 是一个本地优先、适配桌面端和移动端浏览器的微
 
 默认部署地区为海外服务器并使用 Docker Hub。中国大陆服务器在一键安装时会显示公网 IP 检测结果和镜像建议，用户确认后才可选择阿里云 ACR；检测失败时由用户手动选择。无论哪种方式，镜像地址都可以通过 `.env` 的 `VX_IMAGE` 明确指定。
 
+代码仓库以 [GitHub 主仓库](https://github.com/huizhang556/vx_data_watch) 为准，国内访问可使用 [Gitee 同步仓库](https://gitee.com/huizhang556/vx_data_watch)。镜像仓库为 Docker Hub `litehub/vx-data-watch`（海外默认）和阿里云 ACR `crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch`（中国大陆备用）。
+
 ## 主要功能
 
 - 导入视频号后台 CSV，按日期持久化、去重并保留修订记录。
@@ -111,10 +113,32 @@ openssl rand -base64 32
 ```bash
 sudo apt update && sudo apt install -y curl
 curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
+
+国内网络无法访问 GitHub 时，改用 Gitee 同步仓库：
+
+```bash
+curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
+```
 less vx-data.sh
 chmod +x vx-data.sh
 sudo ./vx-data.sh install
 ```
+
+脚本下载地址按网络环境分为两组。海外服务器优先使用 GitHub：
+
+```text
+安装、更新、迁移备份共用脚本：https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
+```
+
+中国大陆服务器优先使用 Gitee：
+
+```text
+安装、更新、迁移备份共用脚本：https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
+```
+
+安装脚本启动时会检测公网 IP 所在地区，并将对应代码仓库作为默认源；首选源不可访问时会自动尝试另一源。安装完成后，更新和迁移备份直接执行 `/opt/vx-data-watch/vx-data.sh update` 或 `/opt/vx-data-watch/vx-data.sh migrate`，无需再次下载脚本。
+
+脚本检测的 `.env.example` 是仓库中体积很小、固定存在的公共文件，仅用于确认代码源可以正常访问，不包含用户密码、密钥或业务数据；它不是在读取服务器配置，也不会暴露隐私信息。
 
 安装时会检查 Docker、Compose、`curl`、`openssl` 和 `rsync`。缺少 Docker 或依赖时，脚本会先询问是否自动安装；拒绝后立即退出。脚本会尝试检测服务器公网 IP 所在国家，仅将结果作为建议：海外默认建议 Docker Hub，中国大陆可选择 Docker Hub 或阿里云 ACR，检测失败时由用户手动选择。中国大陆服务器还可在交互步骤选择 Docker 镜像加速地址。加速地址并非永久可靠，连续失败时请更换云服务器或手动配置代理。所有下载和镜像拉取都带有限次重试。
 
@@ -159,6 +183,12 @@ sudo systemctl enable --now docker
 sudo apt update
 sudo apt install -y git
 git clone https://github.com/huizhang556/vx_data_watch.git
+
+中国大陆服务器无法访问 GitHub 时，可改用 Gitee 同步仓库：
+
+```bash
+git clone https://gitee.com/huizhang556/vx_data_watch.git
+```
 cd vx_data_watch
 cp .env.example .env
 ```

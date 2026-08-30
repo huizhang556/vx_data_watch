@@ -70,7 +70,11 @@ async def fetch_registry_versions(repository: str, registry: str = "docker.io") 
                     if attempt < 2:
                         await asyncio.sleep(0.25 * (attempt + 1))
             else:
-                raise UpdateRegistryError("无法连接 Docker Hub 获取版本信息") from last_error
+                label = ALLOWED_REGISTRIES.get(registry, registry)
+                raise UpdateRegistryError(
+                    f"镜像仓库 {registry}（{label}）不可用，无法获取版本信息；请检查服务器网络、镜像源可用性或仓库权限"
+                ) from last_error
+                raise UpdateRegistryError(f"无法连接 {label} 获取版本信息，请检查服务器网络、镜像源可用性或仓库权限") from last_error
     except UpdateRegistryError:
         cached = _version_cache.get(repository)
         if cached and time.monotonic() - cached[0] <= _VERSION_CACHE_TTL:
@@ -106,10 +110,36 @@ def version_payload(versions: list[dict[str, Any]], registry: str | None = None)
         "versions": selectable,
         "repository": f"{selected_registry}/{repository}",
         "registry": selected_registry,
+        "configured_registry": getattr(settings, "update_registry", "docker.io"),
         "registries": [{"registry": key, "label": label, "repository": f"{key}/{REGISTRY_REPOSITORIES[key]}"} for key, label in ALLOWED_REGISTRIES.items()],
         "update_supported": settings.updater_enabled,
         "deployment": "docker" if settings.updater_enabled else "source",
     }
+
+
+def save_update_registry(registry: str) -> None:
+    """Persist the selected registry in the deployment .env file."""
+    if registry not in ALLOWED_REGISTRIES:
+        raise UpdateRegistryError("不支持的镜像仓库")
+    settings = get_settings()
+    path = settings.update_env_file
+    if not path.is_file() and Path(".env").is_file():
+        path = Path(".env")
+    if not path.is_file():
+        raise UpdateRegistryError("找不到部署配置文件 .env，无法保存镜像源")
+    try:
+        content = path.read_text(encoding="utf-8")
+        line = f"VX_UPDATE_REGISTRY={registry}"
+        if re.search(r"(?m)^VX_UPDATE_REGISTRY=.*$", content):
+            content = re.sub(r"(?m)^VX_UPDATE_REGISTRY=.*$", line, content)
+        else:
+            content = content.rstrip("\r\n") + "\n" + line + "\n"
+        temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+        settings.update_registry = registry
+    except OSError as exc:
+        raise UpdateRegistryError(f"保存镜像源配置失败：{exc}") from exc
 
 
 def _update_dir() -> Path:

@@ -25,8 +25,11 @@ class DownloadControl(Exception):
         self.status = status
 
 
-def _settings(db: Session) -> dict[str, Any]:
-    row = db.scalar(select(AppSetting).where(AppSetting.key == "download"))
+def _settings(db: Session, user_id: int | None = None) -> dict[str, Any]:
+    key = f"download:{user_id}" if user_id is not None else "download"
+    row = db.scalar(select(AppSetting).where(AppSetting.key == key))
+    if not row and user_id is not None:
+        row = db.scalar(select(AppSetting).where(AppSetting.key == "download"))
     if not row:
         return {}
     try:
@@ -81,7 +84,7 @@ def _run_task(task_id: int) -> None:
         task = db.get(DownloadTask, task_id)
         if not task:
             return
-        options = _settings(db)
+        options = _settings(db, task.user_id)
         control = _controls.setdefault(task_id, {"pause": threading.Event(), "cancel": threading.Event()})
         relative_dir = str(options.get("output_dir") or "downloads").replace("\\", "/").strip("/")
         output_dir = (get_settings().data_dir / relative_dir).resolve()

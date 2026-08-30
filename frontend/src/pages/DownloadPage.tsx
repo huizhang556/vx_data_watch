@@ -27,6 +27,9 @@ import {
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
+type LocalDirectoryHandle = { name: string; getFileHandle: (name: string, options?: { create?: boolean }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> };
+let selectedDownloadDirectory: LocalDirectoryHandle | null = null;
+
 type Settings = {
   quality: string;
   download_type: string;
@@ -93,6 +96,7 @@ export default function DownloadPage({
   const [proxyVerified, setProxyVerified] = useState(false);
   const [cookieStatus, setCookieStatus] = useState<CookieStatus | null>(null);
   const [cookiesValid, setCookiesValid] = useState(false);
+  const [localDirectoryName, setLocalDirectoryName] = useState("");
   useEffect(() => {
     if (!isConfig) return;
     void api<Settings>("/api/download/settings")
@@ -239,6 +243,30 @@ export default function DownloadPage({
     } finally {
       setTaskLoading(false);
     }
+  };
+  const chooseLocalDirectory = async () => {
+    const picker = (window as Window & { showDirectoryPicker?: () => Promise<LocalDirectoryHandle> }).showDirectoryPicker;
+    if (!picker) { message.info("当前浏览器不支持选择文件夹，将使用浏览器默认下载目录"); return; }
+    try {
+      selectedDownloadDirectory = await picker();
+      setLocalDirectoryName(selectedDownloadDirectory.name);
+      message.success(`已选择本地保存位置：${selectedDownloadDirectory.name}`);
+    } catch (cause) { if ((cause as DOMException)?.name !== "AbortError") message.error("无法访问所选本地文件夹"); }
+  };
+  const downloadTaskFile = async (task: Task) => {
+    try {
+      const response = await fetch(`/api/download/tasks/${task.id}/file`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("下载文件获取失败");
+      const blob = await response.blob();
+      const filename = `vx-download-${task.id}.zip`;
+      if (selectedDownloadDirectory) {
+        const file = await selectedDownloadDirectory.getFileHandle(filename, { create: true });
+        const writable = await file.createWritable(); await writable.write(blob); await writable.close();
+        message.success("文件已保存到选择的本地文件夹");
+      } else {
+        const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
+      }
+    } catch (cause) { message.error(cause instanceof Error ? cause.message : "下载文件失败"); }
   };
   const taskAction = async (
     task: Task,
@@ -449,6 +477,7 @@ export default function DownloadPage({
               >
                 清空列表
               </Button>
+              {selectedTasks.filter((task) => task.status === "completed").map((task) => <Button key={`download-${task.id}`} icon={<Download size={16} />} onClick={() => void downloadTaskFile(task)}>下载 {task.title || `任务 ${task.id}`}</Button>)}
             </Space>
           </Card>
         </div>
@@ -627,22 +656,8 @@ export default function DownloadPage({
             </Checkbox>
           </Card>
           <Card className="download-config-group" title="保存位置">
-            <Input
-              value={settings.output_dir}
-              onChange={(event) =>
-                update(
-                  "output_dir",
-                  event.target.value
-                    .replace(/[^a-zA-Z0-9_./-]/g, "")
-                    .replace(/^\/+/, "") || "downloads",
-                )
-              }
-              addonBefore="/app/data/"
-            />
-            <Alert type="info" showIcon message="下载任务在服务器端执行，完成后请在下载内容中使用浏览器下载到本地电脑；本设置仅用于服务器临时保存目录。" style={{ marginTop: 12 }} />
-            <Typography.Paragraph type="secondary">
-              仅允许数据目录内的相对路径，默认保存到 downloads。
-            </Typography.Paragraph>
+            <div className="local-save-picker"><Button type="primary" icon={<Download size={16} />} onClick={() => void chooseLocalDirectory()}>选择本地文件夹</Button><Typography.Text type="secondary">{localDirectoryName ? `已选择：${localDirectoryName}` : "尚未选择，将使用浏览器默认下载目录"}</Typography.Text></div>
+            <Alert type="info" showIcon message="下载任务在服务器端执行。任务完成后，在“下载内容”中点击“下载”即可保存到这里选择的本地文件夹；不支持目录选择的浏览器会使用其默认下载目录。" style={{ marginTop: 12 }} />
           </Card>
           <div className="download-config-actions">
             <Button type="primary" loading={saving} onClick={() => void save()}>

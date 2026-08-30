@@ -109,6 +109,7 @@ class UserCreate(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=200)
     role: Role = Role.viewer
+    level: int = Field(default=0, ge=0, le=3)
     avatar: str | None = Field(default=None, max_length=2_000_000)
 
     _password_strength = field_validator("password")(validate_password_strength)
@@ -119,6 +120,7 @@ class UserAdminUpdate(BaseModel):
     email: str | None = Field(default=None, max_length=254)
     password: str | None = Field(default=None, min_length=10, max_length=200)
     role: Role | None = None
+    level: int | None = Field(default=None, ge=0, le=3)
     is_active: bool | None = None
     avatar: str | None = Field(default=None, max_length=2_000_000)
 
@@ -137,6 +139,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: Role
+    level: int
     csrf_token: str | None = None
 
 
@@ -176,7 +179,7 @@ class AIProviderInput(BaseModel):
     name: str = Field(default="默认 AI", max_length=100)
     base_url: str = Field(min_length=8, max_length=500)
     model: str = Field(min_length=1, max_length=200)
-    protocol: Literal["chat_completions", "responses"] = "chat_completions"
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok"] = "chat_completions"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
 
@@ -194,7 +197,7 @@ class AIProviderDraft(BaseModel):
     provider_id: int | None = None
     base_url: str = Field(min_length=8, max_length=500)
     model: str | None = Field(default=None, max_length=200)
-    protocol: Literal["chat_completions", "responses"] = "chat_completions"
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok"] = "chat_completions"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
 
@@ -210,6 +213,30 @@ class AIProviderDraft(BaseModel):
 class AIProviderSelect(BaseModel):
     account_id: int
     provider_id: int
+
+
+class AIChatCategoryInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    sort_order: int | None = Field(default=None, ge=0)
+
+
+class AIChatSessionInput(BaseModel):
+    title: str = Field(default="新对话", min_length=1, max_length=200)
+    category_id: int | None = None
+    provider_id: int | None = None
+
+
+class AIChatSessionUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    category_id: int | None = None
+    pinned: bool | None = None
+    provider_id: int | None = None
+
+
+class AIChatMessageInput(BaseModel):
+    content: str = Field(default="", max_length=100_000)
+    provider_id: int | None = None
+    attachments: list[dict[str, str]] = Field(default_factory=list, max_length=8)
 
 
 class AIAnalyzeRequest(BaseModel):
@@ -246,6 +273,10 @@ class AIQueryHistoryUpdate(BaseModel):
 class SystemUpdateRequest(BaseModel):
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$", max_length=30)
     registry: str = Field(default="docker.io", pattern=r"^[a-z0-9.-]+(?::\d+)?$", max_length=255)
+
+
+class SystemRegistryUpdate(BaseModel):
+    registry: str = Field(pattern=r"^[a-z0-9.-]+(?::\d+)?$", max_length=255)
 
 
 class DownloadSettings(BaseModel):

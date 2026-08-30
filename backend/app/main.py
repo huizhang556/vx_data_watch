@@ -1,10 +1,15 @@
 ﻿from __future__ import annotations
 
 import gc
+import base64
 import json
+import shutil
+import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -23,6 +28,8 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
@@ -38,13 +45,14 @@ from .ai_service import (
     list_provider_models,
     test_provider,
     test_provider_values,
+    stream_chat_provider,
 )
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
 from .auth_service import auth_settings, consume_code, email_user, normalize_email, require_captcha, save_auth_settings, send_code, test_smtp_connection
 from .backups import create_backup
 from .config import get_settings
-from .database import get_db, init_db
+from .database import SessionLocal, get_db, init_db
 from .download_service import cancel_task, pause_task, start_task
 from .deps import (
     CsrfUser,
@@ -64,6 +72,11 @@ from .models import (
     AIAnalysisReport,
     AIProviderConfig,
     AIQueryHistory,
+    AIChatCategory,
+    AIChatSession,
+    AIChatMessage,
+    AIChatAttachment,
+    UsageCounter,
     AuditLog,
     AppSetting,
     ChannelsAccount,
@@ -89,6 +102,10 @@ from .schemas import (
     AIProviderDraft,
     AIProviderInput,
     AIProviderSelect,
+    AIChatCategoryInput,
+    AIChatSessionInput,
+    AIChatSessionUpdate,
+    AIChatMessageInput,
     LoginRequest,
     PasswordChange,
     PasswordResetConfirm,
@@ -96,6 +113,7 @@ from .schemas import (
     RegisterCodeRequest,
     RegisterRequest,
     SetupRequest,
+    SystemRegistryUpdate,
     SystemUpdateRequest,
     UserCreate,
     UserAdminUpdate,
@@ -123,6 +141,7 @@ from .updates import (
     fetch_registry_versions,
     queue_update,
     read_update_status,
+    save_update_registry,
     version_key,
     version_payload,
 )
@@ -207,6 +226,7 @@ def _user_payload(user: User, csrf_token: str | None = None) -> dict[str, Any]:
         "username": user.username,
         "email": user.email,
         "role": user.role.value,
+        "level": user.level,
         "is_active": user.is_active,
         "created_at": user.created_at,
         "last_login_at": user.last_login_at,
@@ -240,8 +260,11 @@ DOWNLOAD_SETTINGS_KEY = "download"
 DOWNLOAD_DEFAULTS = DownloadSettings().model_dump()
 
 
-def _download_settings(db: Session) -> dict[str, Any]:
-    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+def _download_settings(db: Session, user_id: int | None = None) -> dict[str, Any]:
+    key = f"{DOWNLOAD_SETTINGS_KEY}:{user_id}" if user_id is not None else DOWNLOAD_SETTINGS_KEY
+    row = db.scalar(select(AppSetting).where(AppSetting.key == key))
+    if not row and user_id is not None:
+        row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
     values = dict(DOWNLOAD_DEFAULTS)
     stored: dict[str, Any] = {}
     if row:
@@ -258,19 +281,16 @@ def _download_settings(db: Session) -> dict[str, Any]:
 
 @app.get("/api/download/settings")
 def read_download_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    return _download_settings(db)
+    return _download_settings(db, user.id)
 
 
 @app.put("/api/download/settings")
 def update_download_settings(
     payload: DownloadSettings, user: CsrfUser, db: Annotated[Session, Depends(get_db)]
 ) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
     current = dict(DOWNLOAD_DEFAULTS)
-    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+    setting_key = f"{DOWNLOAD_SETTINGS_KEY}:{user.id}"
+    row = db.scalar(select(AppSetting).where(AppSetting.key == setting_key))
     if row:
         try:
             stored = json.loads(decrypt_secret(row.value))
@@ -285,13 +305,11 @@ def update_download_settings(
     else:
         db.add(AppSetting(key=DOWNLOAD_SETTINGS_KEY, value=encrypted))
     db.commit()
-    return _download_settings(db)
+    return _download_settings(db, user.id)
 
 
 @app.post("/api/download/cookies/test")
 def test_download_cookies(payload: DownloadCookieTest, user: CsrfUser) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
     lines = [line for line in payload.cookies.splitlines() if line.strip() and not line.startswith("#")]
     valid = all(len(line.split("\t")) >= 7 for line in lines)
     if not lines:
@@ -303,7 +321,9 @@ def test_download_cookies(payload: DownloadCookieTest, user: CsrfUser) -> dict[s
 
 @app.get("/api/download/cookies/status")
 def download_cookies_status(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
+    row = db.scalar(select(AppSetting).where(AppSetting.key == f"{DOWNLOAD_SETTINGS_KEY}:{user.id}"))
+    if not row:
+        row = db.scalar(select(AppSetting).where(AppSetting.key == DOWNLOAD_SETTINGS_KEY))
     if not row:
         return {"configured": False, "valid": False, "message": "尚未保存 Cookies"}
     try:
@@ -358,21 +378,52 @@ def _download_task_payload(task: DownloadTask) -> dict[str, Any]:
     return {"id": task.id, "url": task.url, "title": task.title or "待获取标题", "duration": task.duration or "-", "estimated_size": task.estimated_size or "-", "status": task.status, "progress": task.progress, "error": task.error}
 
 
+def _owned_download_task(db: Session, task_id: int, user: User) -> DownloadTask | None:
+    query = select(DownloadTask).where(DownloadTask.id == task_id)
+    if user.role != Role.admin:
+        query = query.where(DownloadTask.user_id == user.id)
+    return db.scalar(query)
+
+
 @app.get("/api/download/tasks")
 def list_download_tasks(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    return [_download_task_payload(task) for task in db.scalars(select(DownloadTask).order_by(DownloadTask.created_at.desc())).all()]
+    query = select(DownloadTask).order_by(DownloadTask.created_at.desc())
+    if user.role != Role.admin:
+        query = query.where(DownloadTask.user_id == user.id)
+    return [_download_task_payload(task) for task in db.scalars(query).all()]
+
+
+@app.get("/api/download/tasks/{task_id}/file")
+def download_task_file(task_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
+    task = _owned_download_task(db, task_id, user)
+    if not task or task.status != "completed" or not task.output_path:
+        raise HTTPException(status_code=404, detail="下载文件不存在或任务尚未完成")
+    output_dir = Path(task.output_path).resolve()
+    data_root = get_settings().data_dir.resolve()
+    if data_root not in output_dir.parents or not output_dir.is_dir():
+        raise HTTPException(status_code=404, detail="下载文件目录不存在")
+    files = [path for path in output_dir.iterdir() if path.is_file() and not path.name.startswith(".cookies-")]
+    if not files:
+        raise HTTPException(status_code=404, detail="下载文件不存在")
+    with tempfile.NamedTemporaryFile(prefix=f"vx-download-{task_id}-", suffix=".zip", delete=False) as temporary:
+        archive = Path(temporary.name)
+    try:
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in files:
+                bundle.write(path, path.name)
+    except OSError:
+        archive.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="打包下载文件失败") from None
+    return FileResponse(archive, media_type="application/zip", filename=f"vx-download-{task_id}.zip", background=BackgroundTask(lambda: archive.unlink(missing_ok=True)))
 
 
 @app.post("/api/download/tasks", status_code=201)
 def create_download_tasks(payload: DownloadTaskCreate, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
     urls = [url.strip() for url in payload.urls if url.strip()]
     if not urls or any(not url.startswith(("https://www.youtube.com/", "https://youtu.be/")) for url in urls):
         raise HTTPException(status_code=400, detail="目前只支持 YouTube 视频或播放列表链接")
-    tasks = [DownloadTask(url=url) for url in urls]
+    _consume_usage(db, user, "download", len(urls))
+    tasks = [DownloadTask(url=url, user_id=user.id) for url in urls]
     db.add_all(tasks)
     db.commit()
     return [_download_task_payload(task) for task in tasks]
@@ -380,9 +431,7 @@ def create_download_tasks(payload: DownloadTaskCreate, user: CsrfUser, db: Annot
 
 @app.post("/api/download/tasks/{task_id}/start")
 def start_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    task = db.get(DownloadTask, task_id)
+    task = _owned_download_task(db, task_id, user)
     if not task:
         raise HTTPException(status_code=404, detail="下载任务不存在")
     if task.status not in {"queued", "paused", "failed"}:
@@ -395,9 +444,7 @@ def start_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Dep
 
 @app.post("/api/download/tasks/{task_id}/cancel")
 def cancel_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    task = db.get(DownloadTask, task_id)
+    task = _owned_download_task(db, task_id, user)
     if not task:
         raise HTTPException(status_code=404, detail="下载任务不存在")
     task.status = "cancelled"
@@ -408,9 +455,7 @@ def cancel_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, De
 
 @app.post("/api/download/tasks/{task_id}/pause")
 def pause_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    task = db.get(DownloadTask, task_id)
+    task = _owned_download_task(db, task_id, user)
     if not task or task.status != "downloading":
         raise HTTPException(status_code=400, detail="当前任务不能暂停")
     pause_task(task_id)
@@ -421,9 +466,7 @@ def pause_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Dep
 
 @app.post("/api/download/tasks/{task_id}/resume")
 def resume_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    task = db.get(DownloadTask, task_id)
+    task = _owned_download_task(db, task_id, user)
     if not task or task.status != "paused":
         raise HTTPException(status_code=400, detail="当前任务不能继续")
     task.status = "queued"
@@ -434,9 +477,7 @@ def resume_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, De
 
 @app.delete("/api/download/tasks/{task_id}", status_code=204)
 def delete_download_task(task_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> None:
-    if user.role not in {Role.admin, Role.editor}:
-        raise HTTPException(status_code=403, detail="需要编辑权限")
-    task = db.get(DownloadTask, task_id)
+    task = _owned_download_task(db, task_id, user)
     if not task:
         raise HTTPException(status_code=404, detail="下载任务不存在")
     db.delete(task)
@@ -503,7 +544,7 @@ def setup(
     if (db.scalar(select(func.count(User.id))) or 0) > 0:
         raise HTTPException(status_code=409, detail="系统已经初始化")
     user = User(
-        username=payload.username, password_hash=hash_password(payload.password), role=Role.admin
+        username=payload.username, password_hash=hash_password(payload.password), role=Role.admin, level=3
     )
     db.add(user)
     db.flush()
@@ -569,7 +610,7 @@ def register(payload: RegisterRequest, request: Request, response: Response, db:
     if not consume_code(db, email, "register", payload.code):
         raise HTTPException(status_code=422, detail="验证码错误或已过期")
     user = User(username=payload.username, email=email, email_verified=True,
-                password_hash=hash_password(payload.password), role=Role.viewer)
+                password_hash=hash_password(payload.password), role=Role.viewer, level=0)
     db.add(user)
     db.flush()
     raw_token, session = _create_session(db, user, request)
@@ -722,6 +763,7 @@ def list_users(
             "id": row.id,
             "username": row.username,
             "role": row.role.value,
+            "level": row.level,
             "is_active": row.is_active,
             "email": row.email,
             "created_at": row.created_at,
@@ -749,13 +791,14 @@ def create_user(
         email_verified=True,
         password_hash=hash_password(payload.password),
         role=payload.role,
+        level=payload.level,
         avatar=payload.avatar or "default",
     )
     db.add(created)
     db.flush()
     write_audit(db, "user.create", user, "user", created.id, {"role": created.role.value})
     db.commit()
-    return {"id": created.id, "username": created.username, "role": created.role.value}
+    return {"id": created.id, "username": created.username, "role": created.role.value, "level": created.level}
 
 
 @app.patch("/api/users/{user_id}")
@@ -775,13 +818,15 @@ def update_user(user_id: int, payload: UserAdminUpdate, user: Annotated[User, De
         target.password_hash = hash_password(payload.password)
     if payload.role is not None:
         target.role = payload.role
+    if payload.level is not None:
+        target.level = payload.level
     if payload.is_active is not None:
         target.is_active = payload.is_active
     if payload.avatar is not None:
         target.avatar = payload.avatar or "default"
     write_audit(db, "user.update", user, "user", target.id)
     db.commit()
-    return {"id": target.id, "username": target.username, "email": target.email, "role": target.role.value, "is_active": target.is_active, "avatar": target.avatar or "default", "created_at": target.created_at, "last_login_at": target.last_login_at}
+    return {"id": target.id, "username": target.username, "email": target.email, "role": target.role.value, "level": target.level, "is_active": target.is_active, "avatar": target.avatar or "default", "created_at": target.created_at, "last_login_at": target.last_login_at}
 
 
 @app.delete("/api/users/{user_id}")
@@ -1257,6 +1302,194 @@ def _active_provider(db: Session, account_id: int) -> AIProviderConfig | None:
     )
 
 
+def _chat_category_payload(row: AIChatCategory) -> dict[str, Any]:
+    return {"id": row.id, "name": row.name, "sort_order": row.sort_order, "created_at": row.created_at, "updated_at": row.updated_at}
+
+
+def _chat_session_payload(row: AIChatSession) -> dict[str, Any]:
+    return {"id": row.id, "category_id": row.category_id, "title": row.title, "pinned": row.pinned, "provider_id": row.provider_id, "created_at": row.created_at, "updated_at": row.updated_at}
+
+
+def _chat_owned_session(db: Session, session_id: int, user: User) -> AIChatSession:
+    row = db.scalar(select(AIChatSession).where(AIChatSession.id == session_id, AIChatSession.user_id == user.id))
+    if not row:
+        raise HTTPException(status_code=404, detail="聊天不存在")
+    return row
+
+
+@app.get("/api/ai-chat/categories")
+def list_chat_categories(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.sort_order, AIChatCategory.id)).all()]
+
+
+@app.post("/api/ai-chat/categories", status_code=201)
+def create_chat_category(payload: AIChatCategoryInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    max_order = db.scalar(select(func.max(AIChatCategory.sort_order)).where(AIChatCategory.user_id == user.id)) or -1
+    row = AIChatCategory(user_id=user.id, name=payload.name.strip(), sort_order=payload.sort_order if payload.sort_order is not None else max_order + 1)
+    db.add(row); db.commit(); db.refresh(row)
+    return _chat_category_payload(row)
+
+
+@app.patch("/api/ai-chat/categories/{category_id}")
+def update_chat_category(category_id: int, payload: AIChatCategoryInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    row = db.scalar(select(AIChatCategory).where(AIChatCategory.id == category_id, AIChatCategory.user_id == user.id))
+    if not row: raise HTTPException(status_code=404, detail="分类不存在")
+    row.name = payload.name.strip()
+    if payload.sort_order is not None: row.sort_order = payload.sort_order
+    db.commit(); return _chat_category_payload(row)
+
+
+@app.delete("/api/ai-chat/categories/{category_id}", status_code=204)
+def delete_chat_category(category_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> Response:
+    row = db.scalar(select(AIChatCategory).where(AIChatCategory.id == category_id, AIChatCategory.user_id == user.id))
+    if not row: raise HTTPException(status_code=404, detail="分类不存在")
+    db.delete(row); db.commit(); return Response(status_code=204)
+
+
+@app.get("/api/ai-chat/sessions")
+def list_chat_sessions(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    rows = db.scalars(select(AIChatSession).where(AIChatSession.user_id == user.id).order_by(AIChatSession.pinned.desc(), AIChatSession.updated_at.desc())).all()
+    return [_chat_session_payload(row) for row in rows]
+
+
+@app.post("/api/ai-chat/sessions", status_code=201)
+def create_chat_session(payload: AIChatSessionInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if payload.category_id and not db.scalar(select(AIChatCategory).where(AIChatCategory.id == payload.category_id, AIChatCategory.user_id == user.id)):
+        raise HTTPException(status_code=404, detail="分类不存在")
+    row = AIChatSession(user_id=user.id, category_id=payload.category_id, title=payload.title.strip(), provider_id=payload.provider_id)
+    db.add(row); db.commit(); db.refresh(row); return _chat_session_payload(row)
+
+
+@app.patch("/api/ai-chat/sessions/{session_id}")
+def update_chat_session(session_id: int, payload: AIChatSessionUpdate, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    row = _chat_owned_session(db, session_id, user)
+    if payload.title is not None: row.title = payload.title.strip()
+    if payload.category_id is not None:
+        if not db.scalar(select(AIChatCategory).where(AIChatCategory.id == payload.category_id, AIChatCategory.user_id == user.id)): raise HTTPException(status_code=404, detail="分类不存在")
+        row.category_id = payload.category_id
+    if payload.pinned is not None: row.pinned = payload.pinned
+    if payload.provider_id is not None: row.provider_id = payload.provider_id
+    db.commit(); return _chat_session_payload(row)
+
+
+@app.get("/api/ai-chat/sessions/{session_id}/messages")
+def list_chat_messages(session_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    _chat_owned_session(db, session_id, user)
+    rows = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == session_id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
+    return [{"id": row.id, "role": row.role, "content": row.content, "created_at": row.created_at, "attachments": [{"id": item.id, "filename": item.filename, "content_type": item.content_type, "size_bytes": item.size_bytes} for item in db.scalars(select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)).all()]} for row in rows]
+
+
+@app.get("/api/ai-chat/attachments/{attachment_id}")
+def get_chat_attachment(attachment_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
+    attachment = db.scalar(select(AIChatAttachment).where(AIChatAttachment.id == attachment_id))
+    if not attachment:
+        raise HTTPException(status_code=404, detail="附件不存在")
+    message_row = db.get(AIChatMessage, attachment.message_id)
+    if not message_row or not db.scalar(select(AIChatSession).where(AIChatSession.id == message_row.session_id, AIChatSession.user_id == user.id)):
+        raise HTTPException(status_code=404, detail="附件不存在")
+    path = Path(attachment.storage_path).resolve()
+    data_root = (get_settings().data_dir / "ai-chat-attachments").resolve()
+    if data_root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="附件文件不存在")
+    return FileResponse(path, media_type=attachment.content_type, filename=attachment.filename)
+
+
+@app.get("/api/ai-chat/sessions/{session_id}/export")
+def export_chat_session(session_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)], format: str = Query("markdown", pattern="^(markdown|json)$")) -> Response:
+    row = _chat_owned_session(db, session_id, user)
+    messages = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == session_id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
+    if format == "json":
+        payload = {"title": row.title, "category_id": row.category_id, "created_at": row.created_at.isoformat(), "messages": [{"role": item.role, "content": item.content, "created_at": item.created_at.isoformat()} for item in messages]}
+        return Response(content=json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json", headers={"Content-Disposition": f'attachment; filename="ai-chat-{session_id}.json"'})
+    lines = [f"# {row.title}", ""]
+    for item in messages:
+        lines.extend([f"## {'用户' if item.role == 'user' else 'AI'}", "", item.content or "（附件消息）", ""])
+    return Response(content="\n".join(lines), media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="ai-chat-{session_id}.md"'})
+
+
+@app.delete("/api/ai-chat/sessions/{session_id}", status_code=204)
+def delete_chat_session(session_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> Response:
+    row = _chat_owned_session(db, session_id, user); attachment_dir = get_settings().data_dir / "ai-chat-attachments" / str(session_id); db.delete(row); db.commit(); shutil.rmtree(attachment_dir, ignore_errors=True); return Response(status_code=204)
+
+
+USAGE_LIMITS = {0: {"ai_chat": 20, "analysis": 5, "download": 5}, 1: {"ai_chat": 50, "analysis": 10, "download": 20}, 2: {"ai_chat": 100, "analysis": 20, "download": 50}}
+
+
+def _consume_usage(db: Session, user: User, kind: str, amount: int = 1) -> None:
+    if user.role.value == "admin" or user.level >= 3:
+        return
+    limit = USAGE_LIMITS.get(user.level, USAGE_LIMITS[0]).get(kind)
+    if limit is None:
+        return
+    today = datetime.now(UTC).date()
+    counter = db.scalar(select(UsageCounter).where(UsageCounter.user_id == user.id, UsageCounter.usage_date == today, UsageCounter.kind == kind))
+    if counter is None:
+        counter = UsageCounter(user_id=user.id, usage_date=today, kind=kind, count=0); db.add(counter); db.flush()
+    if counter.count + amount > limit:
+        raise HTTPException(status_code=429, detail=f"今日{kind}额度已用尽（上限 {limit} 次）")
+    counter.count += amount
+    db.commit()
+
+
+@app.post("/api/ai-chat/sessions/{session_id}/messages")
+async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> StreamingResponse:
+    _consume_usage(db, user, "ai_chat")
+    row = _chat_owned_session(db, session_id, user)
+    config = db.get(AIProviderConfig, payload.provider_id or row.provider_id) if (payload.provider_id or row.provider_id) else db.scalar(select(AIProviderConfig).where(AIProviderConfig.is_active.is_(True)).order_by(AIProviderConfig.id))
+    if not config: raise HTTPException(status_code=409, detail="请先配置并选择 AI 接口")
+    if config.account_id is not None and not db.get(ChannelsAccount, config.account_id): raise HTTPException(status_code=404, detail="AI 配置不存在")
+    if not payload.content.strip() and not payload.attachments:
+        raise HTTPException(status_code=422, detail="消息内容和附件不能同时为空")
+    attachment_dir = get_settings().data_dir / "ai-chat-attachments" / str(row.id)
+    content_parts: list[dict[str, Any]] = [{"type": "text", "text": payload.content.strip()}] if payload.content.strip() else []
+    attachment_rows: list[AIChatAttachment] = []
+    allowed_attachment = lambda content_type, filename: (
+        content_type.startswith("image/")
+        or content_type.startswith("text/")
+        or filename.lower().endswith((".txt", ".md", ".csv", ".json"))
+    )
+    total_attachment_size = 0
+    for item in payload.attachments:
+        filename = Path(item.get("filename", "attachment")).name[:255]
+        content_type = item.get("content_type", "application/octet-stream")
+        if not allowed_attachment(content_type, filename):
+            raise HTTPException(status_code=415, detail=f"附件 {filename} 类型不受支持，仅支持图片和文本文件")
+        encoded = item.get("data", "")
+        if "," in encoded and encoded.startswith("data:"): encoded = encoded.split(",", 1)[1]
+        try: raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError): raise HTTPException(status_code=422, detail=f"附件 {filename} 编码无效") from None
+        if len(raw) > 10 * 1024 * 1024: raise HTTPException(status_code=413, detail=f"附件 {filename} 不能超过 10 MB")
+        total_attachment_size += len(raw)
+        if total_attachment_size > 32 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="附件总大小不能超过 32 MB")
+        attachment_dir.mkdir(parents=True, exist_ok=True)
+        target = attachment_dir / f"{uuid.uuid4().hex}-{filename}"
+        target.write_bytes(raw)
+        attachment_rows.append(AIChatAttachment(message_id=0, filename=filename, content_type=content_type, storage_path=str(target), size_bytes=len(raw)))
+        if content_type.startswith("image/"):
+            content_parts.append({"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{base64.b64encode(raw).decode()}"}})
+        elif content_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
+            content_parts.append({"type": "text", "text": f"\n[附件 {filename}]\n{raw.decode('utf-8', errors='replace')}"})
+    previous = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == row.id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
+    user_message = AIChatMessage(session_id=row.id, role="user", content=payload.content.strip(), provider_snapshot_json=json.dumps({"model": config.model, "base_url": config.base_url}, ensure_ascii=False))
+    db.add(user_message); db.flush()
+    for attachment in attachment_rows: attachment.message_id = user_message.id; db.add(attachment)
+    db.commit()
+    messages = [{"role": item.role, "content": item.content} for item in previous[-20:]] + [{"role": "user", "content": content_parts}]
+    async def event_stream():
+        parts: list[str] = []
+        try:
+            async for part in stream_chat_provider(config, messages):
+                parts.append(part); yield f"data: {json.dumps({'type': 'delta', 'content': part}, ensure_ascii=False)}\n\n"
+            answer = "".join(parts)
+            with SessionLocal() as stream_db:
+                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=answer, provider_snapshot_json=json.dumps({"model": config.model}, ensure_ascii=False))); stream_db.commit()
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.get("/api/ai/providers")
 def list_ai_providers(
     account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
@@ -1468,6 +1701,7 @@ async def get_ai_models(
             base_url=payload.base_url,
             timeout_seconds=payload.timeout_seconds,
             api_key=_draft_api_key(payload, db),
+            protocol=payload.protocol,
         )
     except HTTPException:
         raise
@@ -1502,10 +1736,11 @@ async def test_ai_provider_draft(
 @app.post("/api/ai/analyze", status_code=201)
 async def analyze_with_ai(
     payload: AIAnalyzeRequest,
-    user: Annotated[User, Depends(require_csrf_editor)],
+    user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     _get_account(db, payload.account_id)
+    _consume_usage(db, user, "analysis")
     report_text, snapshot, config, prompt_text = await _generate_ai_report(
         db, payload.account_id, payload.start_date, payload.end_date
     )
@@ -1740,6 +1975,20 @@ def system_update_status(
     user: Annotated[User, Depends(require_admin)],
 ) -> dict[str, Any]:
     return read_update_status()
+
+
+@app.put("/api/system/update-registry")
+def system_update_registry(
+    payload: SystemRegistryUpdate,
+    user: Annotated[User, Depends(require_csrf_admin)],
+) -> dict[str, str]:
+    if payload.registry not in ALLOWED_REGISTRIES:
+        raise HTTPException(status_code=400, detail="不支持的镜像仓库")
+    try:
+        save_update_registry(payload.registry)
+    except UpdateRegistryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"registry": payload.registry}
 
 
 @app.post("/api/system/update", status_code=202)

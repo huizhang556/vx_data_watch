@@ -1,6 +1,14 @@
 # 版本功能
 
-本文件记录 VX Data Watch 各正式版本的主要功能。安装包和源码归档可在 [GitHub 标签页](https://github.com/huizhang556/vx_data_watch/tags) 查看。
+本文件记录 VX Data Watch 各正式版本的主要功能。版本以 [GitHub 主仓库](https://github.com/huizhang556/vx_data_watch/tags) 为准；中国大陆访问可使用 [Gitee 同步仓库](https://gitee.com/huizhang556/vx_data_watch)。
+
+## 0.5.0 - 2026-08-30
+
+- AI 速问增加 Anthropic Messages、Gemini 和 Grok/xAI 原生协议适配，并支持对应模型列表查询与流式响应。
+- 增加 AI 速问端到端接口测试和厂商原生协议模拟测试，覆盖会话、消息、附件、历史记录、额度和删除清理流程。
+- 历史图片附件支持缩略图预览和点击放大，文本附件继续支持下载。
+- 修复聊天附件发送时的附件路径和模型导入问题，普通用户 AI 速问额度按等级正常生效。
+- 新增七套主题：晨曦、暮夜、玫瑰柔和、薰衣草、雾蓝、薄荷和奶油；支持 CSS Variables、主题持久化和跟随系统。
 
 ## 0.4.3 - 2026-08-28
 

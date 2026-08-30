@@ -37,6 +37,11 @@ services:
       VX_VERIFICATION_CODE_MINUTES: ${VX_VERIFICATION_CODE_MINUTES:-10}
     volumes:
       - vx-data:/app/data
+      - type: bind
+        source: ./.env
+        target: /project/.env
+        bind:
+          create_host_path: false
     restart: unless-stopped
 
   updater:

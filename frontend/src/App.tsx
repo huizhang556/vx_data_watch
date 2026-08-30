@@ -13,21 +13,25 @@ import {
   Layout,
   Menu,
   Select,
+  Space,
   Spin,
   Typography,
   type MenuProps,
 } from "antd";
 import {
   BarChart3,
+  BookOpen,
   Bot,
   DatabaseBackup,
   Download,
   FileUp,
   Info,
   LogOut,
+  MessageCircle,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Palette,
   RefreshCw,
   Settings,
   Sun,
@@ -48,6 +52,7 @@ import { useTheme } from "./theme";
 import type { Account } from "./types";
 
 const AIPage = lazy(() => import("./pages/AIPage"));
+const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 const BackupPage = lazy(() => import("./pages/BackupPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ImportsPage = lazy(() => import("./pages/ImportsPage"));
@@ -57,6 +62,7 @@ const VideosPage = lazy(() => import("./pages/VideosPage"));
 const DownloadPage = lazy(() => import("./pages/DownloadPage"));
 const AboutPage = lazy(() => import("./pages/AboutPage"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const UsagePage = lazy(() => import("./pages/UsagePage"));
 
 const items = [
   {
@@ -68,6 +74,7 @@ const items = [
       { key: "/users/local", label: "本地用户" },
     ],
   },
+  { key: "/ai-chat", icon: <Bot size={19} />, label: "AI 速问" },
   {
     key: "/analysis",
     icon: <BarChart3 size={19} />,
@@ -99,6 +106,12 @@ const items = [
   { key: "/settings", icon: <Settings size={19} />, label: "系统设置" },
   { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
   { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
+  {
+    key: "/usage",
+    icon: <BookOpen size={19} />,
+    label: "使用说明",
+    children: [{ key: "/usage/levels", label: "等级说明" }],
+  },
   {
     key: "/about",
     icon: <Info size={19} />,
@@ -145,6 +158,19 @@ export default function App() {
     localStorage.setItem("vx_account_id", String(id));
   };
   const account = accounts.find((row) => row.id === accountId) || null;
+  const visibleItems =
+    user.role === "admin"
+      ? items
+      : items.filter((item) =>
+          [
+            "/ai-chat",
+            "/analysis",
+            "/download",
+            "/updates",
+            "/about",
+            "/usage",
+          ].includes(item.key),
+        );
   const context = useMemo(
     () => ({ accounts, account, setAccountId, reloadAccounts }),
     [accounts, account, reloadAccounts],
@@ -199,7 +225,7 @@ export default function App() {
             inlineCollapsed={siderCollapsed}
             openKeys={siderCollapsed ? [] : openKeys}
             selectedKeys={[location.pathname]}
-            items={items}
+            items={visibleItems}
             onOpenChange={(keys) => setOpenKeys(keys.slice(-1))}
             onClick={({ key }) => navigate(key)}
           />
@@ -229,13 +255,50 @@ export default function App() {
             <Button
               className="theme-toggle"
               type="text"
-              icon={theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-              title={theme === "dark" ? "切换到白天模式" : "切换到黑夜模式"}
-              aria-label={
-                theme === "dark" ? "切换到白天模式" : "切换到黑夜模式"
+              icon={
+                theme === "night" ? (
+                  <Sun size={18} />
+                ) : theme === "rose" ? (
+                  <Palette size={18} />
+                ) : (
+                  <Moon size={18} />
+                )
               }
+              title={
+                theme === "morning"
+                  ? "切换到黑夜模式"
+                  : theme === "night"
+                    ? "切换到柔和玫瑰模式"
+                    : "切换到白天模式"
+              }
+              aria-label={
+                theme === "morning"
+                  ? "切换到黑夜模式"
+                  : theme === "night"
+                    ? "切换到柔和玫瑰模式"
+                    : "切换到白天模式"
+              }
+              data-theme-mode={theme}
               onClick={toggleTheme}
             />
+            <Space.Compact className="quick-links">
+              <Button
+                type="text"
+                icon={<MessageCircle size={17} />}
+                onClick={() => navigate("/ai-chat")}
+                title="AI 聊天"
+              >
+                AI 聊天
+              </Button>
+              <Button
+                type="text"
+                icon={<Download size={17} />}
+                onClick={() => navigate("/download/content")}
+                title="下载内容"
+              >
+                下载内容
+              </Button>
+            </Space.Compact>
             <Select
               aria-label="当前视频号"
               className="account-select"
@@ -261,7 +324,11 @@ export default function App() {
                 <Avatar
                   size={36}
                   className="profile-avatar"
-                  src={user.avatar && user.avatar !== "default" ? user.avatar : undefined}
+                  src={
+                    user.avatar && user.avatar !== "default"
+                      ? user.avatar
+                      : undefined
+                  }
                 >
                   {user.username.slice(0, 1).toUpperCase()}
                 </Avatar>
@@ -289,6 +356,7 @@ export default function App() {
                 <Route path="/videos" element={<VideosPage />} />
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
+                <Route path="/ai-chat" element={<AIChatPage />} />
                 <Route path="/analysis/dashboard" element={<DashboardPage />} />
                 <Route path="/analysis/videos" element={<VideosPage />} />
                 <Route path="/analysis/imports" element={<ImportsPage />} />
@@ -341,6 +409,11 @@ export default function App() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/usage/levels" element={<UsagePage />} />
+                <Route
+                  path="/usage"
+                  element={<Navigate to="/usage/levels" replace />}
+                />
                 <Route
                   path="*"
                   element={<Navigate to="/dashboard" replace />}
@@ -349,7 +422,7 @@ export default function App() {
             </Suspense>
           </Layout.Content>
           <nav className="mobile-nav" aria-label="主导航">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <button
                 key={item.key}
                 className={location.pathname === item.key ? "active" : ""}

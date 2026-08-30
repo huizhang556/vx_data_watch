@@ -29,6 +29,15 @@ const periodOptions = [
   { label: '单日', value: 1 }, { label: '近 3 天', value: 3 }, { label: '近 7 天', value: 7 },
   { label: '近 15 天', value: 15 }, { label: '近 30 天', value: 30 },
 ]
+const officialPresets = [
+  { label: 'OpenAI', name: 'OpenAI', base_url: 'https://api.openai.com', model: 'gpt-4o-mini' },
+  { label: 'Anthropic（兼容接口）', name: 'Anthropic', base_url: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest' },
+  { label: 'Gemini（兼容接口）', name: 'Gemini', base_url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.0-flash' },
+  { label: 'Grok（兼容接口）', name: 'Grok', base_url: 'https://api.x.ai', model: 'grok-3-mini' },
+  { label: 'DeepSeek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  { label: '智谱', name: '智谱 AI', base_url: 'https://open.bigmodel.cn/api/paas', model: 'glm-4-flash' },
+  { label: '通义千问', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode', model: 'qwen-plus' },
+]
 
 export default function AIPage() {
   const { account } = useAccount()
@@ -235,7 +244,7 @@ export default function AIPage() {
   if (!account) return <Empty description="请先创建视频号账号" />
   return (
     <div className="page">
-      <div className="page-heading"><div><Typography.Title level={2}>AI 建议</Typography.Title><Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text></div>{user.role === 'admin' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>}</div>
+      <div className="page-heading"><div><Typography.Title level={2}>AI 建议</Typography.Title><Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text></div>{location.pathname === '/ai-chat' && user.role === 'admin' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>}</div>
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
       <section className="ai-control">
         <div><span className={`status-dot ${provider ? 'online' : ''}`} /><Typography.Text>{provider ? '接口已配置' : '等待配置'}</Typography.Text></div>
@@ -243,11 +252,11 @@ export default function AIPage() {
           <Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions.map((item) => ({ ...item, disabled: !rangeHasAllDates(endDate, item.value, availableDates) })), { label: '自定义', value: 0 }]} />
           <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
           <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(days ? value.subtract(days - 1, 'day') : (startDate.isAfter(value, 'day') ? value : startDate)) }} />
-          {user.role === 'admin' && <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onChange={(id) => {
+          <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onChange={(id) => {
             const next = providers.find((item) => item.id === id)
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))
-          }} />}
-          {user.role === 'admin' && <Button icon={<PlugZap size={18} />} disabled={!provider} loading={connectionLoading} onClick={() => void testSavedConnection()}>测试连接</Button>}
+          }} />
+          <Button icon={<PlugZap size={18} />} disabled={!provider} loading={connectionLoading} onClick={() => void testSavedConnection()}>测试连接</Button>
           <Button type="primary" icon={<Sparkles size={18} />} disabled={!provider || rangeChecking || Boolean(rangeWarning)} loading={analyzeLoading || rangeChecking} onClick={() => void analyze()}>生成分析</Button>
         </Space>
       </section>
@@ -276,13 +285,14 @@ export default function AIPage() {
       <Modal title="OpenAI 兼容接口" open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
         {error && <Alert type="error" showIcon message={error} />}
+        <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model }); setModels([preset.model]); setTested(false) } }} />
         <Space style={{ marginBottom: 12 }} wrap><Select aria-label="切换配置" value={form.getFieldValue('provider_id')} placeholder="选择已有配置" style={{ minWidth: 220 }} options={providerOptions} onChange={(id) => { const next = providers.find((item) => item.id === id); if (next) { form.setFieldsValue({ ...next, account_id: account.id, provider_id: next.id, api_key: undefined }); setTested(false); setModels([next.model]) } }} /><Button icon={<Plus size={16} />} onClick={() => { form.resetFields(); form.setFieldsValue({ account_id: account.id, protocol: 'chat_completions', timeout_seconds: 60 }); setTested(false); setModels([]) }}>新建配置</Button></Space>
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
           <Form.Item name="api_key" label="API Key（已有配置可留空保持不变）" rules={[({ getFieldValue }) => ({ validator: async (_rule, value) => { if (value || getFieldValue('provider_id')) return; throw new Error('新建配置必须填写 API Key') } })]}><Input.Password autoComplete="new-password" /></Form.Item>
           <div className="model-row"><Form.Item name="model" label="模型" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
-          <Form.Item name="protocol" label="协议"><Radio.Group optionType="button" options={[{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }]} /></Form.Item>
+          <Form.Item name="protocol" label="协议"><Radio.Group optionType="button" options={[{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Gemini', value: 'gemini' }, { label: 'Grok', value: 'grok' }]} /></Form.Item>
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>

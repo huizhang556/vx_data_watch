@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -52,6 +53,8 @@ async def _call_provider(
     api_key: str,
     snapshot: dict[str, Any],
 ) -> str:
+    if protocol in {"anthropic", "gemini", "grok"}:
+        return await _call_native_provider(base_url, model, protocol, timeout_seconds, api_key, [{"role": "user", "content": build_prompt(snapshot)}])
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     user_content = build_prompt(snapshot)
     if protocol == "responses":
@@ -93,6 +96,32 @@ async def _call_provider(
     return str(text)
 
 
+async def _call_native_provider(base_url: str, model: str, protocol: str, timeout_seconds: int, api_key: str, messages: list[dict[str, Any]]) -> str:
+    """Call vendor-native APIs while keeping the configured base URL as the root."""
+    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+        if protocol == "anthropic":
+            system = next((str(item["content"]) for item in messages if item.get("role") == "system"), None)
+            body = {"model": model, "max_tokens": 4096, "messages": [{"role": item["role"], "content": item["content"]} for item in messages if item.get("role") != "system"]}
+            if system:
+                body["system"] = system
+            response = await client.post(_endpoint(base_url, "/v1/messages"), headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}, json=body)
+            response.raise_for_status()
+            content = response.json().get("content", [])
+            text = "\n".join(str(item.get("text", "")) for item in content if item.get("type") == "text")
+        elif protocol == "gemini":
+            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": [{"text": str(item.get("content", ""))}]} for item in messages]
+            response = await client.post(_endpoint(base_url, f"/v1beta/models/{model}:generateContent"), params={"key": api_key}, json={"contents": contents})
+            response.raise_for_status()
+            text = "\n".join(str(part.get("text", "")) for part in response.json().get("candidates", [{}])[0].get("content", {}).get("parts", []))
+        else:
+            response = await client.post(_endpoint(base_url, "/v1/chat/completions"), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json={"model": model, "messages": messages})
+            response.raise_for_status()
+            text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not text:
+        raise RuntimeError("AI 接口返回了空内容")
+    return str(text)
+
+
 async def call_provider(config: AIProviderConfig, snapshot: dict[str, Any]) -> str:
     return await _call_provider(
         base_url=config.base_url,
@@ -129,14 +158,104 @@ async def test_provider(config: AIProviderConfig) -> str:
     )
 
 
+async def stream_chat_provider(
+    config: AIProviderConfig, messages: list[dict[str, Any]]
+) -> AsyncGenerator[str, None]:
+    """Yield assistant text from an OpenAI-compatible chat completion stream."""
+    if config.protocol in {"anthropic", "gemini", "grok"}:
+        async for part in _stream_native_provider(config, messages):
+            yield part
+        return
+    api_key = decrypt_secret(config.encrypted_api_key)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    body = {"model": config.model, "messages": messages, "stream": True}
+    if config.protocol == "responses":
+        body = {"model": config.model, "input": messages, "stream": True}
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
+        endpoint = "responses" if config.protocol == "responses" else "chat/completions"
+        for candidate in _base_candidates(config.base_url):
+          async with client.stream("POST", _endpoint(candidate, f"/{endpoint}"), headers=headers, json=body) as response:
+            if response.status_code == 404 and candidate != _base_candidates(config.base_url)[-1]:
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = (await response.aread()).decode("utf-8", errors="replace")[:500]
+                raise RuntimeError(f"AI 接口返回 {response.status_code}: {detail}") from exc
+            if config.protocol == "responses":
+                async for line in response.aiter_lines():
+                    if line.startswith("data:") and line[5:].strip() not in {"", "[DONE]"}:
+                        try:
+                            payload = json.loads(line[5:].strip())
+                            text = payload.get("delta") or payload.get("text") or ""
+                            if text:
+                                yield str(text)
+                        except json.JSONDecodeError:
+                            continue
+            else:
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    value = line[5:].strip()
+                    if value == "[DONE]":
+                        break
+                    try:
+                        payload = json.loads(value)
+                        text = payload.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        if text:
+                            yield str(text)
+                    except (json.JSONDecodeError, IndexError, AttributeError, TypeError):
+                        continue
+            break
+
+
+async def _stream_native_provider(config: AIProviderConfig, messages: list[dict[str, Any]]) -> AsyncGenerator[str, None]:
+    api_key = decrypt_secret(config.encrypted_api_key)
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
+        if config.protocol == "anthropic":
+            system = next((str(item["content"]) for item in messages if item.get("role") == "system"), None)
+            body: dict[str, Any] = {"model": config.model, "max_tokens": 4096, "stream": True, "messages": [item for item in messages if item.get("role") != "system"]}
+            if system:
+                body["system"] = system
+            stream_request = client.stream("POST", _endpoint(config.base_url, "/v1/messages"), headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}, json=body)
+        elif config.protocol == "gemini":
+            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": [{"text": str(item.get("content", ""))}]} for item in messages]
+            stream_request = client.stream("POST", _endpoint(config.base_url, f"/v1beta/models/{config.model}:streamGenerateContent"), params={"alt": "sse", "key": api_key}, json={"contents": contents})
+        else:
+            stream_request = client.stream("POST", _endpoint(config.base_url, "/v1/chat/completions"), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json={"model": config.model, "messages": messages, "stream": True})
+        async with stream_request as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                value = line[5:].strip()
+                if value in {"", "[DONE]"}:
+                    continue
+                try:
+                    payload = json.loads(value)
+                except json.JSONDecodeError:
+                    continue
+                if config.protocol == "anthropic":
+                    text = payload.get("delta", {}).get("text", "")
+                elif config.protocol == "gemini":
+                    text = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                else:
+                    text = payload.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if text:
+                    yield str(text)
+
+
 async def list_provider_models(
-    *, base_url: str, timeout_seconds: int, api_key: str
+    *, base_url: str, timeout_seconds: int, api_key: str, protocol: str = "chat_completions"
 ) -> list[str]:
-    headers = {"Authorization": f"Bearer {api_key}"}
+    headers = {"Authorization": f"Bearer {api_key}"} if protocol != "anthropic" else {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
     async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
         response = None
         for candidate in _base_candidates(base_url):
-            response = await client.get(_endpoint(candidate, "/models"), headers=headers)
+            if protocol == "gemini":
+                response = await client.get(_endpoint(candidate, "/v1beta/models"), params={"key": api_key}, headers={})
+            else:
+                response = await client.get(_endpoint(candidate, "/v1/models" if protocol == "anthropic" else "/models"), headers=headers)
             if response.status_code != 404:
                 break
         assert response is not None
@@ -146,6 +265,8 @@ async def list_provider_models(
         raise RuntimeError(f"模型接口返回 {response.status_code}: {response.text[:500]}") from exc
     payload = response.json()
     rows = payload.get("data", []) if isinstance(payload, dict) else []
+    if protocol == "gemini" and isinstance(payload, dict):
+        rows = [{"id": str(row.get("name", "")).removeprefix("models/")} for row in payload.get("models", []) if isinstance(row, dict)]
     models = sorted(
         {str(row["id"]) for row in rows if isinstance(row, dict) and row.get("id")},
         key=str.casefold,

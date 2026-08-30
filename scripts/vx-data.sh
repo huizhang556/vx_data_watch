@@ -6,7 +6,9 @@ PROJECT_DIR="/opt/vx-data-watch"
 DATA_VOLUME="vx-data"
 DEFAULT_BACKUP_DIR="/home/vx_backed"
 DEFAULT_IMAGE="docker.io/litehub/vx-data-watch:latest"
-DOWNLOAD_BASE="${VX_DOWNLOAD_BASE_URL:-https://raw.githubusercontent.com/huizhang556/vx_data_watch/main}"
+GITHUB_DOWNLOAD_BASE="https://raw.githubusercontent.com/huizhang556/vx_data_watch/main"
+GITEE_DOWNLOAD_BASE="https://gitee.com/huizhang556/vx_data_watch/raw/main"
+DOWNLOAD_BASE="${VX_DOWNLOAD_BASE_URL:-$GITHUB_DOWNLOAD_BASE}"
 RETRY_COUNT="${VX_RETRY_COUNT:-5}"
 ASSUME_YES="${VX_ASSUME_YES:-0}"
 DOCKERHUB_IMAGE="docker.io/litehub/vx-data-watch:latest"
@@ -29,6 +31,20 @@ retry() {
   done
 }
 download() { local url="$1" target="$2"; retry curl --fail --location --connect-timeout 15 --max-time 180 --retry 2 --output "${target}.tmp" "$url"; mv -f "${target}.tmp" "$target"; }
+select_download_source() {
+  [ -n "${VX_DOWNLOAD_BASE_URL:-}" ] && { DOWNLOAD_BASE="$VX_DOWNLOAD_BASE_URL"; return; }
+  local preferred="$GITHUB_DOWNLOAD_BASE" fallback="$GITEE_DOWNLOAD_BASE"
+  if [ "${DETECTED_COUNTRY:-}" = CN ]; then preferred="$GITEE_DOWNLOAD_BASE"; fallback="$GITHUB_DOWNLOAD_BASE"; fi
+  if curl -fsSL --connect-timeout 8 --max-time 15 -o /dev/null "$preferred/.env.example"; then
+    DOWNLOAD_BASE="$preferred"
+    log "代码源检测成功：$([ "$preferred" = "$GITEE_DOWNLOAD_BASE" ] && printf 'Gitee' || printf 'GitHub')"
+  elif curl -fsSL --connect-timeout 8 --max-time 15 -o /dev/null "$fallback/.env.example"; then
+    DOWNLOAD_BASE="$fallback"
+    warn "首选代码源不可访问，已切换到 $([ "$fallback" = "$GITEE_DOWNLOAD_BASE" ] && printf 'Gitee' || printf 'GitHub')。"
+  else
+    die 'GitHub 和 Gitee 代码源均不可访问，请检查网络、配置代理，或设置 VX_DOWNLOAD_BASE_URL 后重试。'
+  fi
+}
 
 check_os() {
   [ -r /etc/os-release ] || die '无法识别操作系统。'; . /etc/os-release
@@ -96,7 +112,7 @@ generate_env() {
   sed -i "s|^# VX_MASTER_KEY=.*|VX_MASTER_KEY=$key|" "$PROJECT_DIR/.env"; sed -i 's|^VX_HOST_PORT=.*|VX_HOST_PORT=10000|' "$PROJECT_DIR/.env"; sed -i 's|^VX_PORT=.*|VX_PORT=8000|' "$PROJECT_DIR/.env"; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$SELECTED_IMAGE|" "$PROJECT_DIR/.env"; if [ "$SELECTED_IMAGE" = "$ACR_IMAGE" ]; then sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com|' "$PROJECT_DIR/.env"; else sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=docker.io|' "$PROJECT_DIR/.env"; fi; chmod 600 "$PROJECT_DIR/.env"; log '.env 已生成，宿主机默认端口为 10000，容器内部端口固定为 8000。'
 }
 load_env() { [ -f "$PROJECT_DIR/.env" ] || die "缺少 $PROJECT_DIR/.env。"; set -a; . "$PROJECT_DIR/.env"; set +a; IMAGE="${VX_IMAGE:-$DEFAULT_IMAGE}"; }
-fetch_compose() { download "$DOWNLOAD_BASE/docker-compose.yaml" "$PROJECT_DIR/docker-compose.yaml"; }
+fetch_compose() { [ -n "${DETECTED_COUNTRY:-}" ] || DETECTED_COUNTRY="$(detect_country || true)"; select_download_source; download "$DOWNLOAD_BASE/docker-compose.yaml" "$PROJECT_DIR/docker-compose.yaml"; }
 compose() { (cd "$PROJECT_DIR" && docker compose -f docker-compose.yaml "$@"); }
 wait_healthy() { local i status; for i in $(seq 1 30); do status="$(compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)"; echo "$status" | grep -q '^app healthy' && return 0; sleep 2; done; compose ps; return 1; }
 archive_volume() {
