@@ -187,6 +187,14 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-session { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 9px 8px; border-radius: 6px; cursor: pointer; color: var(--vx-text); }
 .ai-chat-session > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-chat-session:hover, .ai-chat-session.active { background: var(--vx-accent-soft); color: var(--vx-accent-strong); }
+.ai-chat-tree-group { display: grid; gap: 2px; }
+.ai-chat-category-node { display: flex; align-items: center; gap: 4px; min-height: 38px; padding: 4px 5px; border-radius: 6px; cursor: pointer; color: var(--vx-text); }
+.ai-chat-category-node:hover, .ai-chat-category-node.active { background: var(--vx-accent-soft); color: var(--vx-accent-strong); }
+.ai-chat-tree-session { margin-left: 20px; padding-block: 7px; }
+.ai-chat-tree-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-chat-tree-actions { flex: 0 0 auto; }
+.ai-chat-code-block { position: relative; display: block; margin: 8px 0; padding: 28px 10px 10px; background: var(--vx-surface); border: 1px solid var(--vx-border); border-radius: 6px; overflow-x: auto; }
+.ai-chat-code-block > .ant-btn { position: absolute; top: 2px; right: 2px; }
 .ai-chat-main { min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .ai-chat-toolbar { padding: 14px 18px; border-bottom: 1px solid var(--vx-border); }
 .ai-chat-toolbar .ant-select { min-width: 240px; max-width: 100%; }

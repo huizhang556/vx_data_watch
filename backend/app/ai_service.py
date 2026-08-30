@@ -96,12 +96,44 @@ async def _call_provider(
     return str(text)
 
 
+def _content_items(content: Any) -> list[dict[str, Any]]:
+    return content if isinstance(content, list) else ([{"type": "text", "text": str(content)}] if content else [])
+
+
+def _anthropic_content(content: Any) -> str | list[dict[str, Any]]:
+    items = _content_items(content)
+    if not any(item.get("type") == "image_url" for item in items):
+        return str(content or "") if not isinstance(content, list) else items
+    converted: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("type") == "image_url":
+            url = str(item.get("image_url", {}).get("url", ""))
+            header, _, data = url.partition(",")
+            media_type = header.removeprefix("data:").removesuffix(";base64") or "image/png"
+            converted.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
+        elif item.get("type") == "text":
+            converted.append({"type": "text", "text": str(item.get("text", ""))})
+    return converted
+
+
+def _gemini_parts(content: Any) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = []
+    for item in _content_items(content):
+        if item.get("type") == "image_url":
+            url = str(item.get("image_url", {}).get("url", ""))
+            header, _, data = url.partition(",")
+            parts.append({"inline_data": {"mime_type": header.removeprefix("data:").removesuffix(";base64") or "image/png", "data": data}})
+        elif item.get("type") == "text":
+            parts.append({"text": str(item.get("text", ""))})
+    return parts or [{"text": ""}]
+
+
 async def _call_native_provider(base_url: str, model: str, protocol: str, timeout_seconds: int, api_key: str, messages: list[dict[str, Any]]) -> str:
     """Call vendor-native APIs while keeping the configured base URL as the root."""
     async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
         if protocol == "anthropic":
             system = next((str(item["content"]) for item in messages if item.get("role") == "system"), None)
-            body = {"model": model, "max_tokens": 4096, "messages": [{"role": item["role"], "content": item["content"]} for item in messages if item.get("role") != "system"]}
+            body = {"model": model, "max_tokens": 4096, "messages": [{"role": item["role"], "content": _anthropic_content(item.get("content"))} for item in messages if item.get("role") != "system"]}
             if system:
                 body["system"] = system
             response = await client.post(_endpoint(base_url, "/v1/messages"), headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}, json=body)
@@ -109,7 +141,7 @@ async def _call_native_provider(base_url: str, model: str, protocol: str, timeou
             content = response.json().get("content", [])
             text = "\n".join(str(item.get("text", "")) for item in content if item.get("type") == "text")
         elif protocol == "gemini":
-            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": [{"text": str(item.get("content", ""))}]} for item in messages]
+            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": _gemini_parts(item.get("content"))} for item in messages]
             response = await client.post(_endpoint(base_url, f"/v1beta/models/{model}:generateContent"), params={"key": api_key}, json={"contents": contents})
             response.raise_for_status()
             text = "\n".join(str(part.get("text", "")) for part in response.json().get("candidates", [{}])[0].get("content", {}).get("parts", []))
@@ -214,12 +246,12 @@ async def _stream_native_provider(config: AIProviderConfig, messages: list[dict[
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
         if config.protocol == "anthropic":
             system = next((str(item["content"]) for item in messages if item.get("role") == "system"), None)
-            body: dict[str, Any] = {"model": config.model, "max_tokens": 4096, "stream": True, "messages": [item for item in messages if item.get("role") != "system"]}
+            body: dict[str, Any] = {"model": config.model, "max_tokens": 4096, "stream": True, "messages": [{**item, "content": _anthropic_content(item.get("content"))} for item in messages if item.get("role") != "system"]}
             if system:
                 body["system"] = system
             stream_request = client.stream("POST", _endpoint(config.base_url, "/v1/messages"), headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}, json=body)
         elif config.protocol == "gemini":
-            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": [{"text": str(item.get("content", ""))}]} for item in messages]
+            contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": _gemini_parts(item.get("content"))} for item in messages]
             stream_request = client.stream("POST", _endpoint(config.base_url, f"/v1beta/models/{config.model}:streamGenerateContent"), params={"alt": "sse", "key": api_key}, json={"contents": contents})
         else:
             stream_request = client.stream("POST", _endpoint(config.base_url, "/v1/chat/completions"), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json={"model": config.model, "messages": messages, "stream": True})

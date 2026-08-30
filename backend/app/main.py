@@ -1317,6 +1317,26 @@ def _chat_owned_session(db: Session, session_id: int, user: User) -> AIChatSessi
     return row
 
 
+def _chat_message_content(db: Session, message: AIChatMessage) -> str | list[dict[str, Any]]:
+    """Rebuild a stored user message, including its attachments, for stateless AI APIs."""
+    attachments = db.scalars(select(AIChatAttachment).where(AIChatAttachment.message_id == message.id).order_by(AIChatAttachment.id)).all()
+    if not attachments:
+        return message.content
+    parts: list[dict[str, Any]] = []
+    if message.content:
+        parts.append({"type": "text", "text": message.content})
+    for attachment in attachments:
+        path = Path(attachment.storage_path).resolve()
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if attachment.content_type.startswith("image/"):
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{attachment.content_type};base64,{base64.b64encode(raw).decode()}"}})
+        else:
+            parts.append({"type": "text", "text": f"\n[附件 {attachment.filename}]\n{raw.decode('utf-8', errors='replace')}"})
+    return parts or message.content
+
+
 @app.get("/api/ai-chat/categories")
 def list_chat_categories(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
     return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.sort_order, AIChatCategory.id)).all()]
@@ -1475,7 +1495,7 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
     db.add(user_message); db.flush()
     for attachment in attachment_rows: attachment.message_id = user_message.id; db.add(attachment)
     db.commit()
-    messages = [{"role": item.role, "content": item.content} for item in previous[-20:]] + [{"role": "user", "content": content_parts}]
+    messages = [{"role": item.role, "content": _chat_message_content(db, item)} for item in previous[-20:]] + [{"role": "user", "content": content_parts}]
     async def event_stream():
         parts: list[str] = []
         try:
