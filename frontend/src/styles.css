@@ -364,6 +364,11 @@ body { color-scheme: light; }
 .topbar { background: rgba(255,255,255,.94); border-color: var(--vx-border); }
 .theme-toggle { color: var(--vx-muted); }
 .theme-toggle:hover { color: var(--vx-accent-strong) !important; background: var(--vx-accent-soft) !important; }
+.theme-picker-button { width: 36px; height: 36px; color: var(--vx-muted); }
+.topbar > .theme-toggle { display: none; }
+.theme-picker-button:hover { color: var(--vx-accent-strong) !important; background: var(--vx-accent-soft) !important; }
+.quick-links .ant-btn { font-size: 0; min-width: 36px; padding-inline: 9px; }
+.quick-links .ant-btn svg { width: 18px; height: 18px; }
 .profile-avatar { background: var(--vx-accent) !important; box-shadow: 0 0 0 3px var(--vx-accent-soft); }
 .mobile-nav { background: rgba(255,255,255,.98); border-color: var(--vx-border); }
 .mobile-nav button { color: var(--vx-muted); }

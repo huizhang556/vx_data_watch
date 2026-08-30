@@ -22,6 +22,8 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Cloud,
+  Coffee,
   DatabaseBackup,
   Download,
   FileUp,
@@ -35,6 +37,8 @@ import {
   RefreshCw,
   Settings,
   Sun,
+  Leaf,
+  Sparkles,
   UserRound,
   Video,
 } from "lucide-react";
@@ -48,7 +52,7 @@ import {
 import { api } from "./api";
 import { AccountContext } from "./account";
 import { useAuth } from "./auth";
-import { useTheme } from "./theme";
+import { THEME_LABELS, useTheme, type ThemeMode } from "./theme";
 import type { Account } from "./types";
 
 const AIPage = lazy(() => import("./pages/AIPage"));
@@ -126,7 +130,7 @@ const items = [
 
 export default function App() {
   const { user, logout } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, setTheme, toggleTheme } = useTheme();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountIdState] = useState<number>(
     () => Number(localStorage.getItem("vx_account_id")) || 0,
@@ -184,6 +188,22 @@ export default function App() {
     if (key === "profile") navigate("/profile");
     if (key === "logout") void logout();
   };
+  const themeIcons = {
+    system: <Sun size={16} />,
+    morning: <Sun size={16} />,
+    night: <Moon size={16} />,
+    rose: <Palette size={16} />,
+    lavender: <Sparkles size={16} />,
+    mist: <Cloud size={16} />,
+    mint: <Leaf size={16} />,
+    cream: <Coffee size={16} />,
+  };
+  const themeMenu: MenuProps["items"] = (["morning", "night", "rose", "lavender", "mist", "mint", "cream"] as ThemeMode[]).map((mode) => ({
+    key: mode,
+    icon: themeIcons[mode],
+    label: THEME_LABELS[mode],
+  }));
+  const handleThemeMenu: MenuProps["onClick"] = ({ key }) => setTheme(key as ThemeMode);
 
   return (
     <AccountContext.Provider value={context}>
@@ -281,6 +301,9 @@ export default function App() {
               data-theme-mode={theme}
               onClick={toggleTheme}
             />
+            <Dropdown className="theme-picker" menu={{ items: themeMenu, selectedKeys: [theme], onClick: handleThemeMenu }} trigger={["click"]} placement="bottomRight">
+              <Button className="theme-picker-button" type="text" icon={themeIcons[theme]} aria-label="选择主题" title="选择主题" />
+            </Dropdown>
             <Space.Compact className="quick-links">
               <Button
                 type="text"
