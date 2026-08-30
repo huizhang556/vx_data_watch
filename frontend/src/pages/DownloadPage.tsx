@@ -93,6 +93,8 @@ export default function DownloadPage({
   const [selected, setSelected] = useState<number[]>([]);
   const [taskLoading, setTaskLoading] = useState(false);
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [proxyChecking, setProxyChecking] = useState(false);
+  const [proxyError, setProxyError] = useState("");
   const [proxyVerified, setProxyVerified] = useState(false);
   const [cookieStatus, setCookieStatus] = useState<CookieStatus | null>(null);
   const [cookiesValid, setCookiesValid] = useState(false);
@@ -113,9 +115,12 @@ export default function DownloadPage({
   }, [isConfig]);
   useEffect(() => {
     if (!isConfig) return;
+    setProxyChecking(true);
+    setProxyError("");
     void api<ProxyStatus>("/api/download/proxy/status")
-      .then(setProxyStatus)
-      .catch(() => setProxyStatus(null));
+      .then((value) => { setProxyStatus(value); setProxyError(""); })
+      .catch((cause) => { setProxyStatus(null); setProxyError(cause instanceof Error ? cause.message : "无法完成服务器出口检测"); })
+      .finally(() => setProxyChecking(false));
   }, [isConfig]);
   useEffect(() => {
     if (isConfig) return;
@@ -616,6 +621,8 @@ export default function DownloadPage({
             </Space>
           </Card>
           <Card className="download-config-group" title="代理设置">
+            {proxyChecking && <Alert showIcon type="info" message="正在检测服务器出口 IP 和地区，请稍候..." style={{ marginBottom: 12 }} />}
+            {proxyError && <Alert showIcon type="error" message="服务器出口检测失败" description={`${proxyError}。你仍可以填写代理地址并点击“测试代理”，测试成功后再保存。`} style={{ marginBottom: 12 }} />}
             {proxyStatus && (
               <Alert
                 showIcon
