@@ -479,7 +479,7 @@ export default function SettingsPage({
         <section className="section-band">
           <div className="section-heading">
             <Typography.Title level={3}>视频号账号</Typography.Title>
-            {user.role !== "viewer" && (
+            {(section === "accounts" || user.role !== "viewer") && (
               <Button
                 type="primary"
                 icon={<Plus size={18} />}

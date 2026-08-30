@@ -1,6 +1,6 @@
 [project]
 name = "vx-data"
-version = "0.5.0"
+version = "0.5.1"
 description = "Local-first WeChat Channels analytics"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -20,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr = ["rapidocr-onnxruntime>=1.4,<2"]
+mysql = ["pymysql>=1.1,<2"]
+postgres = ["psycopg[binary]>=3.2,<4"]
 dev = [
   "pytest>=8,<9",
   "pytest-cov>=5,<7",

@@ -1,36 +1,29 @@
 # VX Data Watch
 
-VX Data Watch 是一个本地优先、适配桌面端和移动端浏览器的微信视频号数据分析应用。它可以持久化导入视频号后台导出的 7 日 CSV、逐视频表格或截图 OCR 结果，并按单日或日期区间展示指标趋势、视频贡献和 AI 优化建议。
+VX Data Watch 是一个本地优先的微信视频号数据分析与运营平台，适配桌面端和移动端浏览器。系统支持视频号数据导入、OCR 识别、趋势分析、视频下载、AI 分析建议和 AI 速问，并提供多用户权限、数据隔离、加密备份、多主题界面及一键运维能力，适合个人和团队部署使用。
 
-项目不需要微信扫码登录，也不会获取微信账号凭据。导入数据默认只保存在部署者自己的 SQLite 数据库中；只有用户主动请求 AI 分析时，所选区间的结构化统计数据才会发送到用户配置的 OpenAI 兼容接口。
-
-## 先看这里：选择部署方式
-
-- **一键运维脚本**：适合首次安装、终端更新、备份迁移和卸载；应用无法打开时，也可以通过 SSH 维护。
-- **Docker Compose（手动部署）**：服务器只需安装 Docker，直接使用已发布镜像，不需要安装 Python、Node.js 或 OCR 构建依赖。
-- **Ubuntu/Debian 源码部署**：适合需要阅读或修改源码的用户，需要自行安装 Python、Node.js、uv 以及 OCR 依赖。
-
-默认部署地区为海外服务器并使用 Docker Hub。中国大陆服务器在一键安装时会显示公网 IP 检测结果和镜像建议，用户确认后才可选择阿里云 ACR；检测失败时由用户手动选择。无论哪种方式，镜像地址都可以通过 `.env` 的 `VX_IMAGE` 明确指定。
-
-代码仓库以 [GitHub 主仓库](https://github.com/huizhang556/vx_data_watch) 为准，国内访问可使用 [Gitee 同步仓库](https://gitee.com/huizhang556/vx_data_watch)。镜像仓库为 Docker Hub `litehub/vx-data-watch`（海外默认）和阿里云 ACR `crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch`（中国大陆备用）。
+项目不需要微信扫码登录，也不会获取微信账号凭据。导入数据默认保存在部署者选择的 SQLite 或 PostgreSQL 数据库中；只有用户主动请求 AI 分析或 AI 速问时，相关数据才会发送到管理员配置并授权使用的模型接口。
 
 ## 主要功能
 
-- 导入视频号后台 CSV，按日期持久化、去重并保留修订记录。
-- 导入逐视频 CSV/XLSX，或通过截图 OCR 识别后人工确认。
-- 查询单日、近 3/7/15/30 日或自定义日期区间。
-- 展示播放、点赞、评论、分享、关注、转发、收藏等趋势和同期对比。
-- 提供折线图、饼图、柱状图和逐视频播放贡献统计。
-- 配置 OpenAI 兼容接口，获取模型列表、测试连接并生成分析报告。
-- 支持本地用户和角色、审计日志、加密 API Key 与加密备份。
-- Docker Compose 部署支持检测版本、选择版本、在线更新和自动重启。
+- **数据分析**：导入视频号后台 CSV、逐视频表格或截图 OCR；支持去重、修订记录、日期区间查询、趋势图表、视频贡献和 AI 分析建议。
+- **视频号账号**：每个用户可维护多个视频号账号，分析数据按账号隔离；管理员可统一管理所有账号。
+- **AI 速问**：提供独立的 AI 对话窗口，支持分类和会话树、置顶/排序、历史恢复、搜索、批量删除、Markdown/JSON 导出，以及文本和图片附件预览。
+- **AI 配置**：管理员可配置官方 API 或 OPENAI 兼容接口，查询模型、测试连通性并设置可供用户使用的模型；普通用户只能选择已启用的配置。
+- **模型协议**：支持 OpenAI Chat Completions/Responses，以及 Anthropic Messages、Gemini、Grok 等协议适配。
+- **视频下载**：支持下载配置、Cookies/代理检测、格式和质量选择、下载队列、暂停/继续、转码和完成文件保存。
+- **用户与权限**：支持管理员、超级会员、会员和普通用户等级；用户资料、视频号账号、AI 会话和使用次数按用户持久化并隔离。
+- **系统安全**：支持邮箱注册与密码重置、Cloudflare Turnstile、人机验证开关、审计日志、加密 API Key 和加密备份。
+- **主题界面**：提供晨曦、暮夜、玫瑰柔和、薰衣草、雾蓝、薄荷和奶油七套主题，支持手动选择、跟随系统并保存到浏览器本地。
+- **部署与运维**：支持一键安装/更新/备份迁移/卸载、Docker Compose 和 Ubuntu/Debian 源码部署；数据库可选择 SQLite 或 PostgreSQL，代码源支持 GitHub/Gitee，镜像源支持 Docker Hub/阿里云 ACR。
+- **在线更新**：管理员可检测版本、选择受信任镜像源并执行更新；更新前自动备份，失败时回滚，普通用户无更新权限。
 
 各版本的详细功能请查看 [版本功能记录](VERSIONS.md)。
 
 ## 技术栈
 
 - 后端：Python 3.12、FastAPI、SQLAlchemy 2、Alembic、Pydantic。
-- 数据库：SQLite。
+- 数据库：SQLite（默认）或 PostgreSQL（可选）。
 - 安全：Argon2id 密码哈希、AES-256-GCM 敏感配置加密。
 - OCR：RapidOCR、ONNX Runtime、OpenCV、Pillow。
 - 前端：React 19、TypeScript、Vite、Ant Design、Apache ECharts。
@@ -47,19 +40,21 @@ VX Data Watch 是一个本地优先、适配桌面端和移动端浏览器的微
 | CPU | 2 核 x86_64 | 4 核 x86_64 |
 | 内存 | 2 GB | 4 GB 或更多 |
 | 可用磁盘 | 5 GB | 10 GB 或更多，并定期备份 |
-| 网络 | 可访问 GitHub 和 Docker Hub | 稳定的公网连接 |
+| 网络 | 可访问 GitHub/Gitee 代码源和 Docker Hub/阿里云 ACR 至少各一个 | 稳定的公网连接 |
 | 浏览器 | 当前版本 Chrome、Edge 或 Firefox | 当前版本 Chrome 或 Edge |
 
 服务器还需开放一个宿主机 TCP 访问端口。Docker Compose 和一键脚本默认使用 `10000`，通过 `VX_HOST_PORT` 修改；容器内部端口始终固定为 `8000`。源码部署没有宿主机端口映射，应用直接使用 `VX_PORT`，默认也是 `8000`。公网部署应准备域名、HTTPS 证书和 Nginx/Caddy 等反向代理。
 
-## 部署前配置
+## 部署前配置（手动部署适用）
 
-Docker Compose、源码部署和一键脚本最终都使用 `.env` 配置文件；手动部署从 `.env.example` 创建，一键脚本会自动生成并填充必要的随机配置：
+本节仅适用于手动 Docker Compose 和源码部署。一键运维脚本不需要提前创建或编辑 `.env`，脚本会自动生成配置并填充随机密钥；请直接阅读下一节并执行安装命令：
 
 ```bash
 cp .env.example .env
 nano .env
 ```
+
+代码仓库以 GitHub 为主：`https://github.com/huizhang556/vx_data_watch`；无法访问时可使用 Gitee：`https://gitee.com/huizhang556/vx_data_watch`。镜像默认使用 Docker Hub：`docker.io/litehub/vx-data-watch`；中国大陆服务器可在明确选择后使用阿里云 ACR：`crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch`。
 
 ## 必须配置的内容
 
@@ -69,6 +64,8 @@ nano .env
 | --- | --- | --- |
 | `VX_IMAGE` | Docker Compose 部署时确认镜像源；海外默认 Docker Hub，中国大陆可按提示选择阿里云 ACR | `docker.io/litehub/vx-data-watch:latest` |
 | `VX_MASTER_KEY` | 用于加密密钥和备份；一键脚本会自动生成，手动部署可留空让程序生成 | `openssl rand -base64 32` 的输出 |
+
+选择 PostgreSQL 时，必须同时设置 `VX_DATABASE_MODE=postgres`、`VX_DATABASE_URL` 以及 PostgreSQL 用户、密码和数据库名；不设置时使用 SQLite。
 
 只有启用对应功能时才需要配置：
 
@@ -106,62 +103,37 @@ openssl rand -base64 32
 
 将输出填写到 `.env` 的 `VX_MASTER_KEY=` 后面。不要把 `.env`、主密钥、数据库、备份、真实 CSV 或截图提交到 Git。主密钥丢失后，已保存的 AI Key 和加密备份将无法解密。
 
-## 一键运维脚本（Ubuntu 24.04 / Debian 12）
+## 一键运维脚本（小白推荐安装方式）
 
-脚本固定将项目安装到 `/opt/vx-data-watch`，Docker Compose 宿主机默认端口为 `10000`，容器内部端口固定为 `8000`，镜像为 `litehub/vx-data-watch:latest`。使用前建议先下载并审阅脚本：
+脚本将项目安装到 `/opt/vx-data-watch`，宿主机默认端口为 `10000`，容器内部端口为 `8000`。无需提前准备 `.env` 或手动安装 Docker；脚本会在安装过程中询问必要选项。海外服务器使用 GitHub；中国大陆无法访问 GitHub 时使用 Gitee。
 
 ```bash
 sudo apt update && sudo apt install -y curl
+mkdir -p "$HOME/vx-data-install" && cd "$HOME/vx-data-install"
+# 海外：
 curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
-
-国内网络无法访问 GitHub 时，改用 Gitee 同步仓库：
-
-```bash
-curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
-```
-less vx-data.sh
+# 中国大陆改用：
+# curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
 chmod +x vx-data.sh
 sudo ./vx-data.sh install
 ```
 
-脚本下载地址按网络环境分为两组。海外服务器优先使用 GitHub：
+安装时脚本会检测网络和公网地区，提示选择镜像源、镜像加速和数据库。数据库默认 SQLite，也可以选择自动部署 PostgreSQL；缺少 Docker 或依赖时会先征得同意再安装。首次安装会自动生成随机密钥和 PostgreSQL 密码。安装完成后直接访问提示的 `http://服务器IP:10000`，不需要 Nginx；需要域名或 HTTPS 时再按文末指引自行配置。
 
-```text
-安装、更新、迁移备份共用脚本：https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
-```
-
-中国大陆服务器优先使用 Gitee：
-
-```text
-安装、更新、迁移备份共用脚本：https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
-```
-
-安装脚本启动时会检测公网 IP 所在地区，并将对应代码仓库作为默认源；首选源不可访问时会自动尝试另一源。安装完成后，更新和迁移备份直接执行 `/opt/vx-data-watch/vx-data.sh update` 或 `/opt/vx-data-watch/vx-data.sh migrate`，无需再次下载脚本。
-
-脚本检测的 `.env.example` 是仓库中体积很小、固定存在的公共文件，仅用于确认代码源可以正常访问，不包含用户密码、密钥或业务数据；它不是在读取服务器配置，也不会暴露隐私信息。
-
-安装时会检查 Docker、Compose、`curl`、`openssl` 和 `rsync`。缺少 Docker 或依赖时，脚本会先询问是否自动安装；拒绝后立即退出。脚本会尝试检测服务器公网 IP 所在国家，仅将结果作为建议：海外默认建议 Docker Hub，中国大陆可选择 Docker Hub 或阿里云 ACR，检测失败时由用户手动选择。中国大陆服务器还可在交互步骤选择 Docker 镜像加速地址。加速地址并非永久可靠，连续失败时请更换云服务器或手动配置代理。所有下载和镜像拉取都带有限次重试。
-
-常用命令：
+常用维护命令：
 
 ```bash
-sudo /opt/vx-data-watch/vx-data.sh update             # 先备份再更新 latest
-sudo /opt/vx-data-watch/vx-data.sh update 0.4.2       # 更新到指定版本
+sudo /opt/vx-data-watch/vx-data.sh update             # 备份后更新 latest
+sudo /opt/vx-data-watch/vx-data.sh update 0.5.1       # 更新到指定版本
 sudo /opt/vx-data-watch/vx-data.sh backup              # 备份到 /home/vx_backed
 sudo /opt/vx-data-watch/vx-data.sh backup /data/backup # 自定义备份目录
-sudo /opt/vx-data-watch/vx-data.sh migrate             # 导出后 rsync 到另一台服务器
+sudo /opt/vx-data-watch/vx-data.sh migrate             # rsync 迁移到另一台服务器
 sudo /opt/vx-data-watch/vx-data.sh uninstall           # 选择保留数据或完全卸载
 ```
 
-`migrate` 需要目标服务器已启用 SSH，使用密钥或密码完成认证；默认只迁移数据库、配置和分析数据，并支持断点续传，脚本会询问是否包含下载目录中的大文件。目标端得到的是数据卷归档，需要在目标服务器手动解压/恢复到 `vx-data` 卷。备份前会检查目标目录可写及可用空间，请预留不少于当前数据量再加 10 MB。
+更新会自动备份并在失败时回滚；备份和迁移会包含数据库，视频等大文件由用户选择是否携带。迁移需要目标服务器 SSH，所有网络操作带有限次重试。完全卸载会再次确认，并分别询问是否删除数据卷和镜像；删除数据不可恢复，请先备份。
 
-卸载分为“删除容器但保留数据”和“删除容器、数据卷及项目目录”，完全卸载前会再次确认，并单独询问保留当前镜像、删除当前镜像或删除全部相关镜像。删除数据卷不可恢复，请先执行备份。首次安装会自动生成随机 `VX_MASTER_KEY`，不要公开 `.env` 或备份文件。
-
-网页中的在线更新和加密备份仍可继续使用；一键脚本适用于服务器初次安装、终端更新、迁移和卸载，不会保存 SSH 凭据。
-
-脚本安装完成后不要求配置 Nginx。没有域名时直接使用提示的服务器 IP 和 `VX_HOST_PORT` 访问；需要域名或 HTTPS 时，再按文末的 Nginx 指引由用户自行配置。
-
-## Docker Compose 部署（手动）
+## Docker Compose 部署（主力推荐安装方式）
 
 这种方式直接下载官方镜像，不需要安装 Python、Node.js，也不需要在服务器构建镜像。
 
@@ -183,24 +155,29 @@ sudo systemctl enable --now docker
 sudo apt update
 sudo apt install -y git
 git clone https://github.com/huizhang556/vx_data_watch.git
+```
 
-中国大陆服务器无法访问 GitHub 时，可改用 Gitee 同步仓库：
+如果服务器无法访问 GitHub，请改用 Gitee 同步仓库：
 
 ```bash
 git clone https://gitee.com/huizhang556/vx_data_watch.git
 ```
+
+然后进入目录并创建配置文件：
+
+```bash
 cd vx_data_watch
 cp .env.example .env
 ```
 
-使用 `nano .env` 按“部署前配置”修改端口和安全参数。Docker 部署还支持以下变量：
+进入项目目录后，复制 `.env.example` 为 `.env`，通常只需按“部署前配置”修改对外端口和安全参数。以下 Docker 变量仅在需要更换镜像或自行构建时修改：
 
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
-| `VX_IMAGE` | 应用镜像及版本 | `docker.io/litehub/vx-data-watch:latest` |
-| `VX_UPDATE_REPOSITORY` | 在线更新允许使用的固定仓库 | `litehub/vx-data-watch` |
-| `VX_NODE_IMAGE` | 仅自行构建时使用的 Node 基础镜像 | `node:24-alpine` |
-| `VX_PYTHON_IMAGE` | 仅自行构建时使用的 Python 基础镜像 | `python:3.12-slim` |
+| `VX_IMAGE` | 应用镜像地址和版本 | `docker.io/litehub/vx-data-watch:latest` |
+| `VX_UPDATE_REPOSITORY` | 在线更新使用的镜像仓库 | `litehub/vx-data-watch` |
+| `VX_NODE_IMAGE` | 自行构建时的 Node 基础镜像 | `node:24-alpine` |
+| `VX_PYTHON_IMAGE` | 自行构建时的 Python 基础镜像 | `python:3.12-slim` |
 
 海外服务器默认使用 Docker Hub。中国大陆服务器只有在用户明确选择时才使用阿里云 ACR，例如：
 
@@ -208,9 +185,11 @@ cp .env.example .env
 VX_IMAGE=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch:latest
 ```
 
-使用 ACR 镜像时，请先按本地发布手册登录 ACR。终端一键更新会沿用 `.env` 中当前镜像的仓库地址；网页在线更新只允许在 Docker Hub 和已配置的阿里云 ACR 两个受信任仓库之间选择。
+使用 ACR 镜像时，请先登录 ACR。终端一键更新会沿用 `.env` 中当前镜像的仓库地址；网页在线更新只允许在 Docker Hub 和已配置的阿里云 ACR 之间选择。
 
 普通部署无需修改这些 Docker 变量。
+
+如果选择内置 PostgreSQL，请在 `.env` 中设置 `VX_DATABASE_MODE=postgres` 及对应数据库参数，并用 `docker compose --profile postgres ...` 执行后续命令；默认 SQLite 继续使用普通的 `docker compose ...` 命令。
 
 ### 3. 启动服务
 
@@ -246,7 +225,7 @@ docker compose -f docker-compose.yaml up -d --no-build
 
 停止服务不会删除数据。不要执行 `docker compose -f docker-compose.yaml down -v`，除非确定要永久删除数据库、主密钥和备份。
 
-数据库和备份保存在 Docker 命名卷 `vx-data` 中。网页“系统设置”可以创建并下载 `.vxbackup` 加密备份，也可以在终端创建备份：
+SQLite 数据库和备份保存在 Docker 命名卷 `vx-data` 中；使用内置 PostgreSQL 时另有 `vx-postgres` 数据卷。网页“系统设置”可以创建并下载 `.vxbackup` 加密备份，也可以在终端创建备份：
 
 ```bash
 docker compose -f docker-compose.yaml exec app python -m app.cli backup
@@ -279,13 +258,13 @@ rm -rf vx_data_watch
 
 ### 5. 在线更新
 
-管理员可在左侧“在线更新”中检查 Docker Hub 正式版本，选择高于当前版本且不高于最新版的版本进行更新。系统会先创建加密备份，再拉取镜像、替换应用容器并等待健康检查；失败时自动恢复旧容器，成功后页面自动重新连接。
+管理员可在左侧“在线更新”中检查当前配置的 Docker Hub 或阿里云 ACR 正式版本，选择高于当前版本且不高于最新版的版本进行更新。系统会先创建备份，再拉取镜像、替换应用容器并等待健康检查；失败时自动恢复旧容器，成功后页面自动重新连接。
 
 主 Web 容器不访问 Docker Socket。只有不开放网络端口的 `updater` Companion 可以访问 Docker Engine，并且它只接受固定仓库 `litehub/vx-data-watch` 和三段式正式版本号。
 
 Docker Compose 部署完成后不要求配置 Nginx。没有域名时直接使用服务器 IP 和 `VX_HOST_PORT` 访问；需要域名或 HTTPS 时，再按文末的 Nginx 指引配置。
 
-## Ubuntu/Debian 源码部署
+## Ubuntu/Debian 源码部署（开发者推荐）
 
 源码方式适合无法使用 Docker 或需要阅读、修改代码的用户。生产服务器仍优先推荐 Docker Compose。
 
@@ -322,6 +301,8 @@ cd vx_data_watch
 cp .env.example .env
 ```
 
+无法访问 GitHub 时，将仓库地址替换为 `https://gitee.com/huizhang556/vx_data_watch.git`。
+
 也可以下载指定版本的 GitHub 自动源码归档，不需要项目维护者重复上传压缩包：
 
 ```bash
@@ -340,7 +321,11 @@ cp .env.example .env
 | 变量 | 用途 | 默认值 |
 | --- | --- | --- |
 | `VX_DATA_DIR` | 数据、自动主密钥和备份目录 | `./data` |
-| `VX_DATABASE_URL` | SQLite 数据库连接地址 | `sqlite:///./data/vx_data.db` |
+| `VX_DATABASE_URL` | 数据库连接地址；默认 SQLite，PostgreSQL 使用 `postgresql+psycopg://...` | `sqlite:///./data/vx_data.db` |
+
+源码部署默认使用 SQLite；若使用 PostgreSQL，请准备可访问的 PostgreSQL 服务并填写连接地址，依赖会随项目安装。内置 PostgreSQL 容器仅适用于一键脚本和 Docker Compose 部署。已有 `.env` 的升级不会自动切换数据库。
+
+手动使用内置 PostgreSQL 时，在 `.env` 中填写 `VX_DATABASE_MODE=postgres`、`VX_POSTGRES_USER`、`VX_POSTGRES_PASSWORD`、`VX_POSTGRES_DB` 和 `VX_DATABASE_URL`，并使用 `docker compose --profile postgres up -d` 启动。SQLite 数据卷为 `vx-data`，PostgreSQL 数据卷为 `vx-postgres`；不要在未确认备份的情况下执行 `down --volumes`。PostgreSQL 备份文件为 `.postgres.sql.gz`，恢复前先停止应用，再执行 `gunzip -c 文件.sql.gz | docker compose --profile postgres exec -T postgres psql -U "$VX_POSTGRES_USER" -d "$VX_POSTGRES_DB"`。
 
 ### 3. 首次启动
 
@@ -509,18 +494,6 @@ sudo systemctl restart vx-data-watch       # 源码部署
 ```
 
 Docker Compose 的端口映射默认是 `127.0.0.1:10000:8000`；如果修改了 `VX_HOST_PORT`，将 Nginx 的 `proxy_pass` 端口同步改为新的宿主机端口。一键脚本安装的项目同样按此规则配置。
-
-## 使用流程
-
-1. 首次访问时创建管理员账号。
-2. 在“系统设置”中创建要分析的视频号账号。
-3. 在“数据导入”中导入后台 7 日 CSV。
-4. 按需导入逐视频表格，或上传同一天的截图进行 OCR。
-5. OCR 结果必须人工检查，确认日期、标题和数值后再入库。
-6. 在“数据概览”和“视频贡献”中选择单日或区间查看统计。
-7. 如需 AI 建议，在“AI 建议”中填写自己的兼容接口，先测试再保存。
-
-重叠 CSV 日期不会产生重复记录；平台修订旧日期时，系统保存旧版本并使用新值。当前导出 CSV 没有独立收藏字段，缺失指标显示为“暂无数据”，不会当作 0。
 
 ## 许可证
 

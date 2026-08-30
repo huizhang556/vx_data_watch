@@ -55,6 +55,9 @@ import { useAuth } from "./auth";
 import { THEME_LABELS, useTheme, type ThemeMode } from "./theme";
 import type { Account } from "./types";
 
+type UpdateCheck = { current_version: string; latest_version?: string; has_update: boolean };
+const versionCompare = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true });
+
 const AIPage = lazy(() => import("./pages/AIPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 const BackupPage = lazy(() => import("./pages/BackupPage"));
@@ -79,6 +82,7 @@ const items = [
     ],
   },
   { key: "/ai-chat", icon: <Bot size={19} />, label: "AI 速问" },
+  { key: "/accounts", icon: <Video size={19} />, label: "视频号账号" },
   {
     key: "/analysis",
     icon: <BarChart3 size={19} />,
@@ -139,8 +143,20 @@ export default function App() {
     () => localStorage.getItem("vx_sider_collapsed") === "true",
   );
   const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const checkUpdates = useCallback(async () => {
+    if (user.role !== "admin") return;
+    try {
+      const result = await api<{ current_version: string; latest_version?: string; versions?: { version: string }[] }>("/api/system/versions");
+      const latest = result.latest_version || result.versions?.[0]?.version;
+      setUpdateCheck({ current_version: result.current_version, latest_version: latest, has_update: Boolean(latest && versionCompare(latest, result.current_version) > 0) });
+    } catch {
+      setUpdateCheck(null);
+    }
+  }, [user.role]);
+  useEffect(() => { void checkUpdates(); }, [checkUpdates]);
 
   const reloadAccounts = useCallback(async () => {
     const rows = await api<Account[]>("/api/accounts");
@@ -168,9 +184,9 @@ export default function App() {
       : items.filter((item) =>
           [
             "/ai-chat",
+            "/accounts",
             "/analysis",
             "/download",
-            "/updates",
             "/about",
             "/usage",
           ].includes(item.key),
@@ -257,6 +273,11 @@ export default function App() {
                 <Typography.Text type="secondary">{user.role}</Typography.Text>
               </div>
             )}
+            {user.role === "admin" && !siderCollapsed && <div className="sider-admin-actions">
+              <Button size="small" icon={<RefreshCw size={14} />} onClick={() => void checkUpdates()}>版本检测</Button>
+              <Button size="small" type="text" className={updateCheck?.has_update ? "update-ready" : "update-current"} onClick={() => navigate("/updates")} disabled={!updateCheck?.has_update}>一键更新: {updateCheck?.has_update ? "enable" : "disable"}</Button>
+              {updateCheck?.has_update ? <Typography.Text className="update-ready">发现新版本 v{updateCheck.latest_version}</Typography.Text> : updateCheck && <Typography.Text className="update-current">当前为最新版本 v{updateCheck.current_version}</Typography.Text>}
+            </div>}
             <Button
               type="text"
               icon={<LogOut size={18} />}
@@ -380,6 +401,7 @@ export default function App() {
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
+                <Route path="/accounts" element={<SettingsPage section="accounts" />} />
                 <Route path="/analysis/dashboard" element={<DashboardPage />} />
                 <Route path="/analysis/videos" element={<VideosPage />} />
                 <Route path="/analysis/imports" element={<ImportsPage />} />
@@ -430,7 +452,7 @@ export default function App() {
                 />
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/updates" element={<UpdatesPage />} />
+                <Route path="/updates" element={user.role === "admin" ? <UpdatesPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/usage/levels" element={<UsagePage />} />
                 <Route

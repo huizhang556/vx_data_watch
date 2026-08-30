@@ -26,13 +26,13 @@ export default function OnlineUpdateSection() {
   const selectedRepository = repositoryFor(registry, versionInfo)
   const loadVersions = async (selectedRegistry = registry) => {
     const requestId = ++requestIdRef.current
-    setVersionLoading(true); setVersionError(''); setTargetVersion(undefined)
+    setVersionLoading(true)
     try {
       const result = await api<SystemVersionInfo>(`/api/system/versions?registry=${encodeURIComponent(selectedRegistry)}`)
       if (requestId !== requestIdRef.current) return
-      setVersionInfo(result); setRegistry(result.registry || selectedRegistry); setConfiguredRegistry(result.configured_registry || result.registry || selectedRegistry); setTargetVersion(result.versions[0]?.version)
+      setVersionError(''); setVersionInfo(result); setRegistry(result.registry || selectedRegistry); setConfiguredRegistry(result.configured_registry || result.registry || selectedRegistry); setTargetVersion(result.versions[0]?.version)
     } catch (cause) {
-      if (requestId === requestIdRef.current) setVersionError(`${repositoryFor(selectedRegistry)} 不可用：${cause instanceof Error ? cause.message : '无法获取版本信息'}`)
+      if (requestId === requestIdRef.current) { setRegistry(configuredRegistry); setVersionError(`${repositoryFor(selectedRegistry)} 不可用：${cause instanceof Error ? cause.message : '无法获取版本信息'}`) }
     } finally { if (requestId === requestIdRef.current) setVersionLoading(false) }
   }
   const saveRegistry = async () => {
@@ -56,7 +56,7 @@ export default function OnlineUpdateSection() {
   }
   const updateActive = !!updateStatus && ['queued', 'pulling', 'restarting', 'verifying', 'rolling_back'].includes(updateStatus.state)
   const statusType = updateStatus?.state === 'failed' ? 'error' : updateStatus?.state === 'success' ? 'success' : 'info'
-  const retryVersionCheck = () => { void loadVersions(registry) }
+  const retryVersionCheck = () => { void loadVersions(configuredRegistry) }
   return <section className="section-band">
     <div className="section-heading"><div><Typography.Title level={3}>在线更新</Typography.Title><Typography.Text type="secondary">选择镜像源，检测正式版本并重启应用</Typography.Text></div><Button icon={<RefreshCw size={18} />} loading={versionLoading} onClick={() => void loadVersions()}>检测更新</Button></div>
     {versionError && <Alert type="error" showIcon message="版本检测失败" description={versionError} />}

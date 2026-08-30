@@ -72,6 +72,7 @@ from .models import (
     AIAnalysisReport,
     AIProviderConfig,
     AIQueryHistory,
+    AIQuickConfig,
     AIChatCategory,
     AIChatSession,
     AIChatMessage,
@@ -102,6 +103,7 @@ from .schemas import (
     AIProviderDraft,
     AIProviderInput,
     AIProviderSelect,
+    AIQuickConfigInput,
     AIChatCategoryInput,
     AIChatSessionInput,
     AIChatSessionUpdate,
@@ -244,9 +246,11 @@ def _read_upload(file: UploadFile) -> bytes:
     return content
 
 
-def _get_account(db: Session, account_id: int) -> ChannelsAccount:
+def _get_account(db: Session, account_id: int, user: User | None = None) -> ChannelsAccount:
     account = db.get(ChannelsAccount, account_id)
     if not account:
+        raise HTTPException(status_code=404, detail="视频号账号不存在")
+    if user is not None and user.role != Role.admin and account.user_id != user.id:
         raise HTTPException(status_code=404, detail="视频号账号不存在")
     return account
 
@@ -254,6 +258,19 @@ def _get_account(db: Session, account_id: int) -> ChannelsAccount:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/system/database-capabilities")
+def database_capabilities(user: Annotated[User, Depends(require_admin)]) -> dict[str, Any]:
+    """Expose the database backends reserved by the deployment, without credentials."""
+    url = get_settings().database_url
+    scheme = url.split(":", 1)[0]
+    return {
+        "current_backend": "postgresql" if scheme.startswith("postgres") else "sqlite" if scheme == "sqlite" else scheme,
+        "supported_backends": ["sqlite", "postgresql"],
+        "migration_supported": True,
+        "migration_status": "not_started",
+    }
 
 
 DOWNLOAD_SETTINGS_KEY = "download"
@@ -846,7 +863,10 @@ def delete_user(user_id: int, user: Annotated[User, Depends(require_csrf_admin)]
 def list_accounts(
     user: CurrentUser, db: Annotated[Session, Depends(get_db)]
 ) -> list[dict[str, Any]]:
-    rows = db.scalars(select(ChannelsAccount).order_by(ChannelsAccount.created_at)).all()
+    query = select(ChannelsAccount).order_by(ChannelsAccount.created_at)
+    if user.role != Role.admin:
+        query = query.where(ChannelsAccount.user_id == user.id)
+    rows = db.scalars(query).all()
     return [
         {
             "id": row.id,
@@ -861,12 +881,12 @@ def list_accounts(
 @app.post("/api/accounts", status_code=201)
 def create_account(
     payload: AccountCreate,
-    user: Annotated[User, Depends(require_csrf_editor)],
+    user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     if db.scalar(select(ChannelsAccount).where(ChannelsAccount.name == payload.name.strip())):
         raise HTTPException(status_code=409, detail="账号名称已存在")
-    account = ChannelsAccount(name=payload.name.strip(), description=payload.description)
+    account = ChannelsAccount(name=payload.name.strip(), description=payload.description, user_id=None if user.role == Role.admin else user.id)
     db.add(account)
     db.flush()
     write_audit(db, "account.create", user, "account", account.id, {"name": account.name})
@@ -931,7 +951,7 @@ def preview_account_csv(
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     content = _read_upload(file)
     try:
         rows = parse_account_csv(content)
@@ -964,7 +984,7 @@ def commit_account_csv(
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     content = _read_upload(file)
     try:
         rows = parse_account_csv(content)
@@ -1042,7 +1062,7 @@ def preview_video_sheet(
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     content = _read_upload(file)
     try:
         rows = parse_video_sheet(content, file.filename or "")
@@ -1096,7 +1116,7 @@ def commit_video_metrics(
     user: Annotated[User, Depends(require_csrf_editor)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id)
+    _get_account(db, payload.account_id, user)
     rows = payload.rows
     if payload.metric_date:
         rows = [row.model_copy(update={"metric_date": payload.metric_date}) for row in rows]
@@ -1218,7 +1238,7 @@ def day_analytics(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     return date_summary(db, account_id, metric_date)
 
 
@@ -1228,7 +1248,7 @@ def available_analytics_dates(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     today = date.today()
     rows = db.scalars(
         select(DailyAccountMetric.metric_date)
@@ -1247,7 +1267,7 @@ def range_analytics(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     if end_date < start_date or (end_date - start_date).days > 366:
         raise HTTPException(status_code=422, detail="日期范围无效或超过 366 天")
     return range_summary(db, account_id, start_date, end_date)
@@ -1261,7 +1281,7 @@ def video_range_analytics(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     if end_date < start_date or (end_date - start_date).days > 366:
         raise HTTPException(status_code=422, detail="日期范围无效或超过 366 天")
     return range_video_summary(db, account_id, start_date, end_date)
@@ -1281,8 +1301,8 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
     }
 
 
-def _provider_candidates(db: Session, account_id: int) -> list[AIProviderConfig]:
-    _get_account(db, account_id)
+def _provider_candidates(db: Session, account_id: int, user: User | None = None) -> list[AIProviderConfig]:
+    _get_account(db, account_id, user)
     return list(
         db.scalars(
             select(AIProviderConfig)
@@ -1295,15 +1315,15 @@ def _provider_candidates(db: Session, account_id: int) -> list[AIProviderConfig]
     )
 
 
-def _active_provider(db: Session, account_id: int) -> AIProviderConfig | None:
-    rows = _provider_candidates(db, account_id)
+def _active_provider(db: Session, account_id: int, user: User | None = None) -> AIProviderConfig | None:
+    rows = _provider_candidates(db, account_id, user)
     return next((row for row in rows if row.account_id == account_id and row.is_active), None) or next(
         (row for row in rows if row.account_id is None and row.is_active), None
     )
 
 
 def _chat_category_payload(row: AIChatCategory) -> dict[str, Any]:
-    return {"id": row.id, "name": row.name, "sort_order": row.sort_order, "created_at": row.created_at, "updated_at": row.updated_at}
+    return {"id": row.id, "name": row.name, "sort_order": row.sort_order, "pinned": row.pinned, "provider_id": row.provider_id, "created_at": row.created_at, "updated_at": row.updated_at}
 
 
 def _chat_session_payload(row: AIChatSession) -> dict[str, Any]:
@@ -1339,13 +1359,13 @@ def _chat_message_content(db: Session, message: AIChatMessage) -> str | list[dic
 
 @app.get("/api/ai-chat/categories")
 def list_chat_categories(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
-    return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.sort_order, AIChatCategory.id)).all()]
+    return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.pinned.desc(), AIChatCategory.sort_order, AIChatCategory.id)).all()]
 
 
 @app.post("/api/ai-chat/categories", status_code=201)
 def create_chat_category(payload: AIChatCategoryInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     max_order = db.scalar(select(func.max(AIChatCategory.sort_order)).where(AIChatCategory.user_id == user.id)) or -1
-    row = AIChatCategory(user_id=user.id, name=payload.name.strip(), sort_order=payload.sort_order if payload.sort_order is not None else max_order + 1)
+    row = AIChatCategory(user_id=user.id, name=payload.name.strip(), sort_order=payload.sort_order if payload.sort_order is not None else max_order + 1, provider_id=payload.provider_id, pinned=bool(payload.pinned))
     db.add(row); db.commit(); db.refresh(row)
     return _chat_category_payload(row)
 
@@ -1356,6 +1376,8 @@ def update_chat_category(category_id: int, payload: AIChatCategoryInput, user: C
     if not row: raise HTTPException(status_code=404, detail="分类不存在")
     row.name = payload.name.strip()
     if payload.sort_order is not None: row.sort_order = payload.sort_order
+    if payload.pinned is not None: row.pinned = payload.pinned
+    if payload.provider_id is not None: row.provider_id = payload.provider_id
     db.commit(); return _chat_category_payload(row)
 
 
@@ -1376,7 +1398,8 @@ def list_chat_sessions(user: CurrentUser, db: Annotated[Session, Depends(get_db)
 def create_chat_session(payload: AIChatSessionInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     if payload.category_id and not db.scalar(select(AIChatCategory).where(AIChatCategory.id == payload.category_id, AIChatCategory.user_id == user.id)):
         raise HTTPException(status_code=404, detail="分类不存在")
-    row = AIChatSession(user_id=user.id, category_id=payload.category_id, title=payload.title.strip(), provider_id=payload.provider_id)
+    category = db.scalar(select(AIChatCategory).where(AIChatCategory.id == payload.category_id, AIChatCategory.user_id == user.id)) if payload.category_id else None
+    row = AIChatSession(user_id=user.id, category_id=payload.category_id, title=payload.title.strip(), provider_id=payload.provider_id or (category.provider_id if category else None))
     db.add(row); db.commit(); db.refresh(row); return _chat_session_payload(row)
 
 
@@ -1514,14 +1537,14 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
 def list_ai_providers(
     account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
 ) -> list[dict[str, Any]]:
-    return [_provider_payload(row) for row in _provider_candidates(db, account_id)]
+    return [_provider_payload(row) for row in _provider_candidates(db, account_id, user)]
 
 
 @app.get("/api/ai/provider")
 def get_ai_provider(
     account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
 ) -> dict[str, Any] | None:
-    config = _active_provider(db, account_id)
+    config = _active_provider(db, account_id, user)
     return _provider_payload(config) if config else None
 
 
@@ -1584,10 +1607,10 @@ def save_ai_provider(
 @app.post("/api/ai/provider/select")
 def select_ai_provider(
     payload: AIProviderSelect,
-    user: Annotated[User, Depends(require_csrf_admin)],
+    user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id)
+    _get_account(db, payload.account_id, user)
     config = db.scalar(
         select(AIProviderConfig).where(
             AIProviderConfig.id == payload.provider_id,
@@ -1608,6 +1631,52 @@ def select_ai_provider(
     write_audit(db, "ai.provider.select", user, "ai_provider", config.id)
     db.commit()
     return _provider_payload(config)
+
+
+def _quick_config_payload(row: AIQuickConfig) -> dict[str, Any]:
+    return {"id": row.id, "name": row.name, "provider_id": row.provider_id, "model": row.model, "created_at": row.created_at, "updated_at": row.updated_at}
+
+
+def _owned_provider(db: Session, provider_id: int, user: User) -> AIProviderConfig:
+    row = db.scalar(select(AIProviderConfig).outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id).where(AIProviderConfig.id == provider_id, ((ChannelsAccount.user_id == user.id) | AIProviderConfig.account_id.is_(None)), AIProviderConfig.is_active.is_(True)))
+    if not row:
+        raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
+    return row
+
+
+@app.get("/api/ai/quick-configs")
+def list_quick_configs(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    rows = db.scalars(select(AIQuickConfig).where(AIQuickConfig.user_id == user.id).order_by(AIQuickConfig.created_at, AIQuickConfig.id)).all()
+    return [{**_quick_config_payload(row), "associated_count": db.scalar(select(func.count(AIQueryHistory.id)).where(AIQueryHistory.provider_id == row.provider_id)) or 0} for row in rows]
+
+
+@app.post("/api/ai/quick-configs", status_code=201)
+def create_quick_config(payload: AIQuickConfigInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if db.scalar(select(func.count(AIQuickConfig.id)).where(AIQuickConfig.user_id == user.id)) >= 5:
+        raise HTTPException(status_code=409, detail="每个用户最多保存 5 个快捷配置")
+    provider = _owned_provider(db, payload.provider_id, user)
+    if payload.model not in {provider.model}:
+        raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
+    row = AIQuickConfig(user_id=user.id, provider_id=provider.id, name=payload.name.strip(), model=payload.model)
+    db.add(row); db.commit(); db.refresh(row)
+    return _quick_config_payload(row)
+
+
+@app.patch("/api/ai/quick-configs/{config_id}")
+def update_quick_config(config_id: int, payload: AIQuickConfigInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    row = db.scalar(select(AIQuickConfig).where(AIQuickConfig.id == config_id, AIQuickConfig.user_id == user.id))
+    if not row: raise HTTPException(status_code=404, detail="快捷配置不存在")
+    provider = _owned_provider(db, payload.provider_id, user)
+    if payload.model != provider.model: raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
+    row.name = payload.name.strip(); row.provider_id = provider.id; row.model = payload.model
+    db.commit(); return _quick_config_payload(row)
+
+
+@app.delete("/api/ai/quick-configs/{config_id}", status_code=204)
+def delete_quick_config(config_id: int, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> Response:
+    row = db.scalar(select(AIQuickConfig).where(AIQuickConfig.id == config_id, AIQuickConfig.user_id == user.id))
+    if not row: raise HTTPException(status_code=404, detail="快捷配置不存在")
+    db.delete(row); db.commit(); return Response(status_code=204)
 
 
 @app.delete("/api/ai/provider/{provider_id}", status_code=204)
@@ -1759,7 +1828,7 @@ async def analyze_with_ai(
     user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id)
+    _get_account(db, payload.account_id, user)
     _consume_usage(db, user, "analysis")
     report_text, snapshot, config, prompt_text = await _generate_ai_report(
         db, payload.account_id, payload.start_date, payload.end_date
@@ -1836,6 +1905,7 @@ def list_ai_reports(
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> list[dict[str, Any]]:
+    _get_account(db, account_id, user)
     rows = db.scalars(
         select(AIQueryHistory)
         .where(AIQueryHistory.account_id == account_id)
@@ -1863,11 +1933,11 @@ def _get_ai_history(db: Session, history_id: int) -> AIQueryHistory:
 @app.post("/api/ai/reports/{history_id}/analyze")
 async def analyze_ai_history(
     history_id: int,
-    user: Annotated[User, Depends(require_csrf_editor)],
+    user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     history = _get_ai_history(db, history_id)
-    _get_account(db, history.account_id)
+    _get_account(db, history.account_id, user)
     report = db.scalar(
         select(AIAnalysisReport).where(AIAnalysisReport.history_id == history.id)
     )
@@ -1900,10 +1970,11 @@ async def analyze_ai_history(
 @app.delete("/api/ai/reports/{history_id}", status_code=204)
 def delete_ai_history(
     history_id: int,
-    user: Annotated[User, Depends(require_csrf_editor)],
+    user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
     history = _get_ai_history(db, history_id)
+    _get_account(db, history.account_id, user)
     write_audit(db, "ai.query.delete", user, "ai_query", history.id)
     db.execute(
         AIAnalysisReport.__table__.delete().where(AIAnalysisReport.history_id == history.id)

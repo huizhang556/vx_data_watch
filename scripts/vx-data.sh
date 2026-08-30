@@ -4,6 +4,7 @@ set -Eeuo pipefail
 # VX Data Watch one-click operations. Supported: Ubuntu 24.04 and Debian 12.
 PROJECT_DIR="/opt/vx-data-watch"
 DATA_VOLUME="vx-data"
+POSTGRES_VOLUME="vx-postgres"
 DEFAULT_BACKUP_DIR="/home/vx_backed"
 DEFAULT_IMAGE="docker.io/litehub/vx-data-watch:latest"
 GITHUB_DOWNLOAD_BASE="https://raw.githubusercontent.com/huizhang556/vx_data_watch/main"
@@ -105,15 +106,37 @@ select_registry() {
   read -r -p '请选择应用镜像源 [1-2，默认 1]：' choice || true
   [ "${choice:-1}" = 2 ] && SELECTED_IMAGE="$ACR_IMAGE"
 }
+select_database() {
+  local choice
+  log '请选择数据库：1) SQLite（默认，适合单机部署）  2) PostgreSQL（内置容器，适合多人/长期运行）'
+  read -r -p '请选择 [1-2，默认 1]：' choice || true
+  if [ "${choice:-1}" = 2 ]; then
+    DB_MODE=postgres
+    POSTGRES_USER="vx_user"
+    POSTGRES_DB="vx_data"
+    POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+    log '已选择 PostgreSQL，将自动创建独立数据库容器和数据卷。'
+  else
+    DB_MODE=sqlite
+    log '已选择 SQLite。'
+  fi
+}
 generate_env() {
   mkdir -p "$PROJECT_DIR"; [ -f "$PROJECT_DIR/.env" ] && { log '检测到已有 .env，保留现有配置。'; return; }
   download "$DOWNLOAD_BASE/.env.example" "$PROJECT_DIR/.env.example"; cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
   local key; key="$(openssl rand -base64 32 | tr -d '\n' | tr '/+' '_-')"
-  sed -i "s|^# VX_MASTER_KEY=.*|VX_MASTER_KEY=$key|" "$PROJECT_DIR/.env"; sed -i 's|^VX_HOST_PORT=.*|VX_HOST_PORT=10000|' "$PROJECT_DIR/.env"; sed -i 's|^VX_PORT=.*|VX_PORT=8000|' "$PROJECT_DIR/.env"; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$SELECTED_IMAGE|" "$PROJECT_DIR/.env"; if [ "$SELECTED_IMAGE" = "$ACR_IMAGE" ]; then sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com|' "$PROJECT_DIR/.env"; else sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=docker.io|' "$PROJECT_DIR/.env"; fi; chmod 600 "$PROJECT_DIR/.env"; log '.env 已生成，宿主机默认端口为 10000，容器内部端口固定为 8000。'
+  sed -i "s|^# VX_MASTER_KEY=.*|VX_MASTER_KEY=$key|" "$PROJECT_DIR/.env"; sed -i 's|^VX_HOST_PORT=.*|VX_HOST_PORT=10000|' "$PROJECT_DIR/.env"; sed -i 's|^VX_PORT=.*|VX_PORT=8000|' "$PROJECT_DIR/.env"; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$SELECTED_IMAGE|" "$PROJECT_DIR/.env"; if [ "$SELECTED_IMAGE" = "$ACR_IMAGE" ]; then sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com|' "$PROJECT_DIR/.env"; else sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=docker.io|' "$PROJECT_DIR/.env"; fi
+  if [ "${DB_MODE:-sqlite}" = postgres ]; then
+    sed -i 's|^# VX_DATABASE_MODE=.*|VX_DATABASE_MODE=postgres|' "$PROJECT_DIR/.env"
+    sed -i "s|^# VX_POSTGRES_USER=.*|VX_POSTGRES_USER=$POSTGRES_USER|; s|^# VX_POSTGRES_PASSWORD=.*|VX_POSTGRES_PASSWORD=$POSTGRES_PASSWORD|; s|^# VX_POSTGRES_DB=.*|VX_POSTGRES_DB=$POSTGRES_DB|; s|^# VX_DATABASE_URL=.*|VX_DATABASE_URL=postgresql+psycopg://$POSTGRES_USER:$POSTGRES_PASSWORD@postgres:5432/$POSTGRES_DB|" "$PROJECT_DIR/.env"
+  else
+    printf '\nVX_DATABASE_MODE=sqlite\n' >> "$PROJECT_DIR/.env"
+  fi
+  chmod 600 "$PROJECT_DIR/.env"; log '.env 已生成，宿主机默认端口为 10000，容器内部端口固定为 8000。'
 }
 load_env() { [ -f "$PROJECT_DIR/.env" ] || die "缺少 $PROJECT_DIR/.env。"; set -a; . "$PROJECT_DIR/.env"; set +a; IMAGE="${VX_IMAGE:-$DEFAULT_IMAGE}"; }
 fetch_compose() { [ -n "${DETECTED_COUNTRY:-}" ] || DETECTED_COUNTRY="$(detect_country || true)"; select_download_source; download "$DOWNLOAD_BASE/docker-compose.yaml" "$PROJECT_DIR/docker-compose.yaml"; }
-compose() { (cd "$PROJECT_DIR" && docker compose -f docker-compose.yaml "$@"); }
+compose() { if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then (cd "$PROJECT_DIR" && docker compose --profile postgres -f docker-compose.yaml "$@"); else (cd "$PROJECT_DIR" && docker compose -f docker-compose.yaml "$@"); fi; }
 wait_healthy() { local i status; for i in $(seq 1 30); do status="$(compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)"; echo "$status" | grep -q '^app healthy' && return 0; sleep 2; done; compose ps; return 1; }
 archive_volume() {
   local target="$1" archive="$2" include_media="${3:-yes}"; mkdir -p "$target"; local available required
@@ -124,15 +147,16 @@ archive_volume() {
   [ "$include_media" = yes ] || excludes="--exclude=downloads --exclude='*.mp4' --exclude='*.webm' --exclude='*.mp3' --exclude='*.wav'"
   docker run --rm -v "$DATA_VOLUME:/data:ro" -v "$target:/backup" alpine:3.20 sh -c "tar czf /backup/$(basename "$archive") $excludes -C /data ."; chmod 600 "$archive"
 }
-backup_cmd() { need_root; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; load_env; local target="${1:-$DEFAULT_BACKUP_DIR}" archive="$target/vx-data-watch-$(date +%Y%m%d-%H%M%S).tar.gz"; [ -w "$(dirname "$target")" ] || die "备份目录父目录不可写：$target"; log "正在备份 Docker 数据卷到 $archive。"; archive_volume "$target" "$archive"; log '本机备份完成。'; }
+postgres_dump() { local target="$1"; compose exec -T postgres pg_dump -U "${VX_POSTGRES_USER:-vx_user}" -d "${VX_POSTGRES_DB:-vx_data}" | gzip > "$target"; chmod 600 "$target"; }
+backup_cmd() { need_root; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; load_env; local target="${1:-$DEFAULT_BACKUP_DIR}" archive="$target/vx-data-watch-$(date +%Y%m%d-%H%M%S).tar.gz"; [ -w "$(dirname "$target")" ] || die "备份目录父目录不可写：$target"; log "正在备份 Docker 数据卷到 $archive。"; archive_volume "$target" "$archive"; if [[ "${VX_DATABASE_URL:-}" == postgres* ]]; then log '正在导出 PostgreSQL 数据库。'; postgres_dump "${archive%.tar.gz}.postgres.sql.gz" || die 'PostgreSQL 导出失败。'; fi; log '本机备份完成。'; }
 migrate_cmd() {
-  need_root; ensure_dependencies; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; local user host port path include_media temp
+  need_root; ensure_dependencies; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; load_env; local user host port path include_media temp
   read -r -p '目标服务器用户名：' user; read -r -p '目标服务器 IP 或域名：' host; read -r -p 'SSH 端口（默认 22）：' port; port="${port:-22}"; read -r -p '目标数据存放路径：' path; [ -n "$user" ] && [ -n "$host" ] && [ -n "$path" ] || die '迁移参数不完整。'
-  temp="$(mktemp -d)"; trap 'rm -rf "$temp"' RETURN; read -r -p '是否额外迁移下载目录中的视频/音频等大文件？[y/N]：' include_media || true; local archive_mode=no; [[ "$include_media" =~ ^[Yy]$ ]] && archive_mode=yes; archive_volume "$temp" "$temp/vx-data-watch-migration.tar.gz" "$archive_mode"
+  temp="$(mktemp -d)"; trap 'rm -rf "$temp"' RETURN; read -r -p '是否额外迁移下载目录中的视频/音频等大文件？[y/N]：' include_media || true; local archive_mode=no; [[ "$include_media" =~ ^[Yy]$ ]] && archive_mode=yes; archive_volume "$temp" "$temp/vx-data-watch-migration.tar.gz" "$archive_mode"; if [[ "${VX_DATABASE_URL:-}" == postgres* ]]; then log '正在导出 PostgreSQL 数据库用于异地迁移。'; postgres_dump "$temp/vx-data-watch-migration.postgres.sql.gz" || die 'PostgreSQL 导出失败。'; fi
   run_ssh() { ssh -o ConnectTimeout=15 -p "$port" "$user@$host" "$@"; }; retry run_ssh "mkdir -p '$path'"; local excludes=(); [[ "$include_media" =~ ^[Yy]$ ]] || excludes+=(--exclude='downloads/' --exclude='*.mp4' --exclude='*.webm' --exclude='*.mp3' --exclude='*.wav')
-  retry rsync -aH --partial --append-verify --info=progress2 "${excludes[@]}" -e "ssh -p $port -o ConnectTimeout=15" "$temp/" "$user@$host:$path/"; log '异地迁移完成。目标端已获得数据卷归档，请按文档恢复。'
+  retry rsync -aH --partial --append-verify --info=progress2 "${excludes[@]}" -e "ssh -p $port -o ConnectTimeout=15" "$temp/" "$user@$host:$path/"; log '异地迁移完成。目标端已获得数据卷归档；使用 PostgreSQL 时还包含数据库转储文件，请按文档恢复。'
 }
-install_cmd() { need_root; check_os; install_docker; mkdir -p "$PROJECT_DIR"; [ -f "$PROJECT_DIR/.env" ] || select_registry; select_mirror; fetch_compose; download "$DOWNLOAD_BASE/scripts/vx-data.sh" "$PROJECT_DIR/vx-data.sh"; chmod 700 "$PROJECT_DIR/vx-data.sh"; generate_env; load_env; retry docker pull "$IMAGE" || die '镜像拉取失败，请检查网络、代理或镜像加速配置。'; compose up -d --no-build; wait_healthy || die '服务启动后健康检查失败，请执行 docker compose logs app 查看日志。'; log "安装完成：请访问 http://服务器IP:${VX_HOST_PORT:-10000}（宿主机端口；容器内部端口为 8000）。"; }
+install_cmd() { need_root; check_os; install_docker; mkdir -p "$PROJECT_DIR"; [ -f "$PROJECT_DIR/.env" ] || { select_registry; select_database; }; select_mirror; fetch_compose; download "$DOWNLOAD_BASE/scripts/vx-data.sh" "$PROJECT_DIR/vx-data.sh"; chmod 700 "$PROJECT_DIR/vx-data.sh"; generate_env; load_env; retry docker pull "$IMAGE" || die '镜像拉取失败，请检查网络、代理或镜像加速配置。'; if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then compose up -d postgres; for i in $(seq 1 30); do compose exec -T postgres pg_isready -U "${VX_POSTGRES_USER:-vx_user}" -d "${VX_POSTGRES_DB:-vx_data}" >/dev/null 2>&1 && break; sleep 2; done; fi; compose up -d --no-build; wait_healthy || die '服务启动后健康检查失败，请执行 docker compose logs app 查看日志。'; log "安装完成：请访问 http://服务器IP:${VX_HOST_PORT:-10000}（宿主机端口；容器内部端口为 8000）。"; }
 update_cmd() {
   need_root; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; load_env; local version="${1:-latest}" old_image="$IMAGE" image_repo="${IMAGE%:*}" new_image="${image_repo}:${version#v}"; backup_cmd; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$new_image|" "$PROJECT_DIR/.env"
   if ! retry docker pull "$new_image"; then sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$old_image|" "$PROJECT_DIR/.env"; die '新镜像拉取失败，已恢复原镜像配置。'; fi

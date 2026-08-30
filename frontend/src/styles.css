@@ -45,14 +45,19 @@ button, input, textarea, select { letter-spacing: 0; }
 .desktop-sider + .ant-layout { margin-left: 224px; min-width: 0; }
 .app-shell.sider-collapsed .desktop-sider + .ant-layout { margin-left: 72px; }
 .brand { height: 68px; display: flex; align-items: center; gap: 11px; padding: 0 20px; font-weight: 800; letter-spacing: .02em; }
-.sider-toggle { position: absolute; z-index: 2; top: 50%; right: 0; width: 20px !important; min-width: 20px !important; height: 38px; padding: 0 !important; transform: translate(50%, -50%); background: #fff; border: 1px solid #d8e0dc; border-radius: 3px; box-shadow: 0 2px 7px rgba(30, 53, 45, .08); }
+.sider-toggle { position: fixed; z-index: 30; top: 50vh; left: 224px; right: auto; width: 20px !important; min-width: 20px !important; height: 38px; padding: 0 !important; transform: translate(-50%, -50%); background: #fff; border: 1px solid #d8e0dc; border-radius: 6px; box-shadow: 0 2px 7px rgba(30, 53, 45, .08); }
 .sider-toggle:hover { background: #f0f6f3 !important; }
-.sider-collapsed .sider-toggle { right: 0; }
+.sider-collapsed .sider-toggle { left: 72px; }
 .desktop-sider .ant-menu { border-inline-end: none !important; padding: 8px; }
 .ant-menu-submenu-popup { min-width: 168px; }
 .ant-menu-submenu-popup .ant-menu-item { color: #18211e; }
 .profile-dropdown .ant-dropdown-menu { min-width: 168px; }
 .sider-user { position: absolute; inset: auto 14px 18px; border-top: 1px solid #e6ebe8; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; }
+.sider-user > .ant-btn { display: none; }
+.sider-admin-actions { display: flex; gap: 6px; margin-left: auto; }
+.sider-admin-actions .ant-btn { font-size: 12px; padding-inline: 8px; }
+.sider-admin-actions .update-ready { color: #d48806 !important; font-weight: 700; }
+.sider-admin-actions .update-current { color: #389e0d !important; font-weight: 700; }
 .sider-collapsed .sider-user { justify-content: center; }
 .topbar { position: sticky; top: 0; z-index: 10; height: 68px; padding: 0 28px; display: flex; justify-content: flex-end; align-items: center; gap: 12px; background: rgba(255,255,255,.82); border-bottom: 1px solid var(--vx-border); backdrop-filter: blur(14px); }
 .theme-toggle { width: 36px; height: 36px; color: #52635d; }
@@ -106,6 +111,7 @@ button, input, textarea, select { letter-spacing: 0; }
 .download-content { display: grid; gap: 16px; }
 .download-content-group { border-color: #dfe6e2; }
 .download-content-group .ant-card-head-title { font-weight: 700; }
+.download-content > .download-content-group:last-child { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 -6px 20px rgba(24, 43, 37, .12); }
 .browser-launch { width: 100%; }
 .download-link-row, .download-path-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 12px; }
 .download-path-row input { min-width: 0; }
@@ -175,8 +181,18 @@ button, input, textarea, select { letter-spacing: 0; }
 .update-actions { display: grid; grid-template-columns: minmax(220px, 300px) minmax(180px, 320px) auto; gap: 10px; align-items: start; justify-content: start; }
 .update-action-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .registry-picker { display: grid; gap: 4px; min-width: 260px; }
+.ai-config-only .ai-control,
+.ai-config-only .report-browser,
+.ai-config-only .section-band { display: none; }
+.quick-config-list { display: grid; gap: 8px; }
+.quick-config-row { display: grid; grid-template-columns: minmax(220px, 1fr) 120px auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--vx-border); border-radius: 8px; background: var(--vx-surface-soft); }
+.quick-config-row time { color: var(--vx-muted); font-size: 12px; }
+.quick-config-management { display: grid; gap: 8px; }
+.quick-config-management-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 120px auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--vx-border); border-radius: 8px; background: var(--vx-surface-soft); }
+.quick-config-section + .quick-config-section { display: none; }
 .registry-picker small { color: var(--vx-muted); overflow-wrap: anywhere; font-size: 12px; }
 .update-status { margin-top: 2px; }
+.update-error-actions { display: none; }
 .ai-chat-layout { min-height: 620px; display: grid; grid-template-columns: 260px minmax(0, 1fr); background: var(--vx-surface); border: 1px solid var(--vx-border); border-radius: 10px; overflow: hidden; }
 .ai-chat-sidebar { padding: 16px; background: var(--vx-surface-soft); border-right: 1px solid var(--vx-border); }
 .ai-chat-sidebar-actions, .ai-chat-category-bar, .ai-chat-toolbar { display: flex; align-items: center; gap: 8px; }
@@ -293,6 +309,53 @@ button, input, textarea, select { letter-spacing: 0; }
   .update-action-buttons .ant-btn { flex: 1; }
   .update-actions .ant-select, .update-actions .ant-btn, .registry-picker { width: 100%; }
 }
+
+/* Shared semantic theme layer. Keep feature pages independent from palette-specific hex values. */
+:root,
+[data-theme] {
+  --vx-link: var(--vx-accent-strong);
+  --vx-on-accent: #ffffff;
+  --vx-hover: var(--vx-accent-soft);
+  --vx-info-bg: color-mix(in srgb, #4e879d 12%, var(--vx-surface));
+  --vx-info-border: color-mix(in srgb, #4e879d 45%, var(--vx-border));
+  --vx-code-bg: var(--vx-surface-soft);
+}
+[data-theme='dark'] { --vx-on-accent: #071713; --vx-info-bg: #182c38; --vx-info-border: #315d72; }
+
+html, body, #root { background: var(--vx-bg); color: var(--vx-text); }
+a, .link-button, .auth-links button { color: var(--vx-link); }
+a:hover, .link-button:hover, .auth-links button:hover { color: var(--vx-accent-strong); }
+.auth-page { background-color: var(--vx-bg); background-image: none; }
+.auth-panel { background: color-mix(in srgb, var(--vx-surface) 96%, transparent); border-color: var(--vx-border-strong); box-shadow: var(--vx-shadow); }
+.auth-panel .ant-input-affix-wrapper, .auth-panel .ant-input { background: var(--vx-surface) !important; border-color: var(--vx-border-strong) !important; color: var(--vx-text); }
+.brand-mark { background: var(--vx-accent); color: var(--vx-on-accent); }
+.desktop-sider, .topbar, .mobile-nav { background: var(--vx-surface); border-color: var(--vx-border); }
+.sider-user, .section-band, .chart-grid { border-color: var(--vx-border); }
+.sider-toggle { background: var(--vx-surface); border-color: var(--vx-border-strong); color: var(--vx-text); }
+.sider-toggle:hover, .theme-toggle:hover, .quick-links .ant-btn:hover { background: var(--vx-hover) !important; color: var(--vx-accent-strong) !important; }
+.profile-avatar { background: var(--vx-accent) !important; color: var(--vx-on-accent) !important; }
+.candidate-card, .report, .report-browser, .history-list article, .account-list article, .video-item,
+.download-config-group, .download-content-group { background: var(--vx-surface); border-color: var(--vx-border); }
+.candidate-fields label, .selected-file, .account-list span, .report time, .history-list time, .version-summary span { color: var(--vx-muted); }
+.report-browser > header, .report header, .preview-summary { background: var(--vx-surface-soft); border-color: var(--vx-border); }
+.markdown-report code, .ai-chat-code-block { background: var(--vx-code-bg); color: var(--vx-text); border-color: var(--vx-border); }
+.download-status.downloading, .status-dot.online { color: var(--vx-accent); }
+.download-status.completed, .trend-down { color: var(--vx-success); }
+.download-status.failed, .trend-up { color: var(--vx-danger); }
+.trend-flat, .trend-na { color: var(--vx-muted); }
+[data-theme] .ant-btn-primary { color: var(--vx-on-accent); background: var(--vx-accent); border-color: var(--vx-accent); }
+[data-theme] .ant-btn-primary:not(:disabled):hover { color: var(--vx-on-accent) !important; background: var(--vx-accent-strong) !important; border-color: var(--vx-accent-strong) !important; }
+[data-theme] .ant-btn-default, [data-theme] .ant-btn-text, [data-theme] .ant-btn-link { color: var(--vx-text); }
+[data-theme] .ant-btn-default { background: var(--vx-surface); border-color: var(--vx-border-strong); }
+[data-theme] .ant-btn-default:not(:disabled):hover, [data-theme] .ant-btn-text:not(:disabled):hover { color: var(--vx-accent-strong) !important; background: var(--vx-hover) !important; border-color: var(--vx-accent) !important; }
+.ant-input::placeholder, .ant-input-affix-wrapper input::placeholder { color: var(--vx-muted); }
+[data-theme] .ant-table-tbody > tr:hover > td { background: var(--vx-hover) !important; }
+[data-theme] .ant-alert-info { background: var(--vx-info-bg); border-color: var(--vx-info-border); }
+[data-theme] .ant-switch { background: var(--vx-border-strong); }
+[data-theme] .ant-switch-checked { background: var(--vx-accent) !important; }
+[data-theme] .ant-checkbox-checked .ant-checkbox-inner { background: var(--vx-accent); border-color: var(--vx-accent); }
+[data-theme] .ant-form-item-explain-error { color: var(--vx-danger); }
+[data-theme] .ant-tag { color: var(--vx-text); background: var(--vx-surface-soft); border-color: var(--vx-border); }
 
 /* Final theme tokens and component states. Keep this block last so Ant Design
    defaults cannot silently lower contrast in either theme. */

@@ -2,6 +2,23 @@
 
 本文件记录 VX Data Watch 各正式版本的主要功能。版本以 [GitHub 主仓库](https://github.com/huizhang556/vx_data_watch/tags) 为准；中国大陆访问可使用 [Gitee 同步仓库](https://gitee.com/huizhang556/vx_data_watch)。
 
+## 0.5.1 - 2026-08-31
+
+### 数据库与运维
+
+- 一键安装新增 SQLite/PostgreSQL 选择，PostgreSQL 自动创建内置数据库容器、数据卷和随机凭据。
+- 更新、本机备份和异地迁移按数据库类型处理；PostgreSQL 额外生成 `pg_dump` 转储文件。
+- PostgreSQL 加密备份支持通过 `pg_dump` 创建、通过 `psql` 恢复。
+- Docker Compose 增加 PostgreSQL profile 和独立的 `vx-postgres` 数据卷。
+- Docker 镜像内置 PostgreSQL 客户端工具，支持备份和恢复操作。
+
+### 主题与文档
+
+- 统一七套主题的语义 CSS Variables，覆盖背景、卡片、文字、边框、按钮、链接及状态色。
+- 优化登录、表单、表格、弹窗、AI 速问、下载和在线更新区域在不同主题下的对比度与悬停状态。
+- 重写 README 的项目简介、主要功能、双数据库、双代码源、双镜像源和一键运维说明。
+- 修正 Gitee 脚本直链和 Docker Compose 部署示例的代码块与操作顺序。
+
 ## 0.5.0 - 2026-08-31
 
 ### 发布补充

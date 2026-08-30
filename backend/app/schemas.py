@@ -215,9 +215,17 @@ class AIProviderSelect(BaseModel):
     provider_id: int
 
 
+class AIQuickConfigInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    provider_id: int
+    model: str = Field(min_length=1, max_length=200)
+
+
 class AIChatCategoryInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int | None = Field(default=None, ge=0)
+    pinned: bool | None = None
+    provider_id: int | None = None
 
 
 class AIChatSessionInput(BaseModel):

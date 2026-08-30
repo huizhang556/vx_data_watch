@@ -1,6 +1,6 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.5.0
+ARG APP_VERSION=0.5.1
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
 FROM ${NODE_IMAGE} AS frontend-build
@@ -27,14 +27,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl ffmpeg \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl ffmpeg postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./
 COPY backend/ ./backend/
 COPY alembic.ini ./
 COPY --from=frontend-build /build/frontend/dist ./frontend/dist
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install ".[ocr]" \
+    python -m pip install ".[ocr,postgres]" \
     && useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/data \
     && chown -R appuser:appuser /app

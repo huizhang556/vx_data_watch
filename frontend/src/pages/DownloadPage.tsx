@@ -27,6 +27,12 @@ import {
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
+const friendlyProxyError = (cause: unknown) => {
+  const text = cause instanceof Error ? cause.message : String(cause || "");
+  if (/html|502|503|504|timeout|timed out|fetch/i.test(text)) return "服务器出口检测暂时失败，请检查网络后重试。";
+  return text || "服务器出口检测失败，请稍后重试。";
+};
+
 type LocalDirectoryHandle = { name: string; getFileHandle: (name: string, options?: { create?: boolean }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> };
 let selectedDownloadDirectory: LocalDirectoryHandle | null = null;
 
@@ -119,7 +125,7 @@ export default function DownloadPage({
     setProxyError("");
     void api<ProxyStatus>("/api/download/proxy/status")
       .then((value) => { setProxyStatus(value); setProxyError(""); })
-      .catch((cause) => { setProxyStatus(null); setProxyError(cause instanceof Error ? cause.message : "无法完成服务器出口检测"); })
+      .catch((cause) => { setProxyStatus(null); setProxyError(friendlyProxyError(cause)); })
       .finally(() => setProxyChecking(false));
   }, [isConfig]);
   useEffect(() => {

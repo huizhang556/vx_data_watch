@@ -14,7 +14,7 @@ services:
       - "${VX_BIND_ADDRESS:-127.0.0.1}:${VX_HOST_PORT:-10000}:8000"
     environment:
       VX_DATA_DIR: /app/data
-      VX_DATABASE_URL: sqlite:////app/data/vx_data.db
+      VX_DATABASE_URL: ${VX_DATABASE_URL:-sqlite:////app/data/vx_data.db}
       VX_COOKIE_SECURE: ${VX_COOKIE_SECURE:-false}
       VX_SESSION_DAYS: ${VX_SESSION_DAYS:-14}
       VX_MAX_UPLOAD_MB: ${VX_MAX_UPLOAD_MB:-20}
@@ -42,6 +42,23 @@ services:
         target: /project/.env
         bind:
           create_host_path: false
+    restart: unless-stopped
+
+  postgres:
+    image: ${VX_POSTGRES_IMAGE:-postgres:16-alpine}
+    profiles: ["postgres"]
+    container_name: vx-data-watch-postgres
+    environment:
+      POSTGRES_USER: ${VX_POSTGRES_USER:-vx_user}
+      POSTGRES_PASSWORD: ${VX_POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${VX_POSTGRES_DB:-vx_data}
+    volumes:
+      - vx-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   updater:
@@ -82,3 +99,5 @@ services:
 volumes:
   vx-data:
     name: vx-data
+  vx-postgres:
+    name: vx-postgres

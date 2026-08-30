@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Typography, message } from 'antd'
+import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
 import { Bot, Eye, History, PlugZap, Plus, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
@@ -13,6 +13,7 @@ import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
 interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; protocol: string; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
+interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
 interface ProviderForm { account_id: number; provider_id?: number; name: string; base_url: string; model: string; protocol: string; timeout_seconds: number; api_key?: string }
@@ -39,7 +40,7 @@ const officialPresets = [
   { label: '通义千问', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode', model: 'qwen-plus' },
 ]
 
-export default function AIPage() {
+export default function AIPage({ configOnly = false }: { configOnly?: boolean }) {
   const { account } = useAccount()
   const availableDates = useAvailableDates(account?.id)
   const { user } = useAuth()
@@ -47,9 +48,11 @@ export default function AIPage() {
   const navigate = useNavigate()
   const [provider, setProvider] = useState<Provider | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
+  const [quickConfigs, setQuickConfigs] = useState<QuickConfig[]>([])
   const [histories, setHistories] = useState<QueryHistory[]>([])
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
+  const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
   const [tested, setTested] = useState(false)
   const [modelLoading, setModelLoading] = useState(false)
@@ -78,8 +81,10 @@ export default function AIPage() {
     else { form.resetFields(); form.setFieldsValue({ account_id: accountId, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]) }
   }
   const loadHistories = () => account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
+  const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
   useEffect(() => { if (account) void loadProviders(account.id) }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadHistories() }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void loadQuickConfigs() }, [])
   useEffect(() => {
     if (!account) return
     const start = startDate.format('YYYY-MM-DD')
@@ -202,6 +207,27 @@ export default function AIPage() {
     label: <div className="provider-option"><span>{item.name}</span><Popconfirm title="删除接口配置" description="删除后不能恢复，历史分析记录使用过的配置无法删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={(event) => { event?.stopPropagation(); void deleteProvider(item) }}><Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label={`删除配置 ${item.name}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} /></Popconfirm></div>,
   }))
 
+  const saveQuickConfig = () => {
+    if (!provider) return
+    let name = `${provider.name} - ${provider.model}`
+    Modal.confirm({ title: '添加快捷配置', content: <Input autoFocus defaultValue={name} onChange={(event) => { name = event.target.value }} />, onOk: async () => {
+      const row = await api<QuickConfig>('/api/ai/quick-configs', { method: 'POST', body: JSON.stringify({ name, provider_id: provider.id, model: provider.model }) })
+      setQuickConfigs((items) => [...items, row]); message.success('快捷配置已保存')
+    } })
+  }
+  const applyQuickConfig = async (item: QuickConfig) => {
+    if (!account) return
+    const active = await api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: item.provider_id }) })
+    setProvider(active); message.success(`已应用 ${item.name}`)
+  }
+  const renameQuickConfig = (item: QuickConfig) => {
+    let name = item.name
+    Modal.confirm({ title: '编辑快捷配置', content: <Input autoFocus defaultValue={name} onChange={(event) => { name = event.target.value }} />, onOk: async () => {
+      const row = await api<QuickConfig>(`/api/ai/quick-configs/${item.id}`, { method: 'PATCH', body: JSON.stringify({ name, provider_id: item.provider_id, model: item.model }) })
+      setQuickConfigs((items) => items.map((current) => current.id === row.id ? row : current))
+    } })
+  }
+
   const reportTrendChart = useMemo(() => ({
     animation: false,
     color: reportMetrics.map((item) => item.color),
@@ -243,8 +269,8 @@ export default function AIPage() {
 
   if (!account) return <Empty description="请先创建视频号账号" />
   return (
-    <div className="page">
-      <div className="page-heading"><div><Typography.Title level={2}>AI 建议</Typography.Title><Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text></div>{location.pathname === '/ai-chat' && user.role === 'admin' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>}</div>
+    <div className={`page ${configOnly ? 'ai-config-only' : ''}`}>
+      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title><Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text></div>{location.pathname === '/ai-chat' && user.role === 'admin' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>}</div>
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
       <section className="ai-control">
         <div><span className={`status-dot ${provider ? 'online' : ''}`} /><Typography.Text>{provider ? '接口已配置' : '等待配置'}</Typography.Text></div>
@@ -271,6 +297,14 @@ export default function AIPage() {
         <article className="markdown-report"><ReactMarkdown remarkPlugins={[remarkGfm]}>{result.report_text}</ReactMarkdown></article>
       </section>}
 
+      <section className="section-band quick-config-section">
+        <div className="section-heading"><Typography.Title level={3}>快速配置管理</Typography.Title><Typography.Text type="secondary">每个用户最多保存 5 个配置</Typography.Text></div>
+        {quickConfigs.length > 0 && <div className="quick-config-management">{quickConfigs.map((item, index) => <div className="quick-config-management-row" key={`manage-${item.id}`}><strong>{index + 1}. {item.name}</strong><span>{providers.find((p) => p.id === item.provider_id)?.name || '接口'} / {item.model}</span><span>关联分析 {item.associated_count ?? 0} 条</span><Space><Button size="small" onClick={() => renameQuickConfig(item)}>编辑</Button><Button size="small" type="primary" onClick={() => void applyQuickConfig(item)}>应用</Button></Space></div>)}</div>}
+      </section>
+      <section className="section-band quick-config-section">
+        <div className="section-heading"><Typography.Title level={3}>快速配置</Typography.Title><Button size="small" icon={<Plus size={15} />} disabled={!provider || quickConfigs.length >= 5} onClick={saveQuickConfig}>添加快捷配置</Button></div>
+        {!quickConfigs.length ? <Typography.Text type="secondary">暂无快捷配置</Typography.Text> : <div className="quick-config-list">{quickConfigs.map((item, index) => <div className="quick-config-row" key={item.id}><strong>{index + 1}. {providers.find((p) => p.id === item.provider_id)?.name || '模型接口'} - {item.model}</strong><time>{dayjs(item.created_at).format('YYYY-MM-DD')}</time><Space><Button size="small" onClick={() => void applyQuickConfig(item)}>快速配置</Button><Button size="small" danger icon={<Trash2 size={14} />} onClick={() => void api(`/api/ai/quick-configs/${item.id}`, { method: 'DELETE' }).then(() => setQuickConfigs((rows) => rows.filter((row) => row.id !== item.id)))}>删除</Button></Space></div>)}</div>}
+      </section>
       <section className="section-band">
         <div className="section-heading"><Typography.Title level={3}>查询记录</Typography.Title><History size={20} /></div>
         {viewingId !== null && <Alert type="info" showIcon message="正在查看分析" description="正在读取已缓存的分析报告；如果是旧记录，系统可能需要重新生成，请稍候。" />}
@@ -285,7 +319,11 @@ export default function AIPage() {
       <Modal title="OpenAI 兼容接口" open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
         {error && <Alert type="error" showIcon message={error} />}
-        <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model }); setModels([preset.model]); setTested(false) } }} />
+        <Tabs activeKey={configMode} onChange={(key) => setConfigMode(key as 'official' | 'compatible')} items={[
+          { key: 'official', label: '官方接口', children: <Typography.Text type="secondary">选择官方厂商预置并填写对应 API Key。</Typography.Text> },
+          { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
+        ]} />
+        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model }); setModels([preset.model]); setTested(false) } }} />}
         <Space style={{ marginBottom: 12 }} wrap><Select aria-label="切换配置" value={form.getFieldValue('provider_id')} placeholder="选择已有配置" style={{ minWidth: 220 }} options={providerOptions} onChange={(id) => { const next = providers.find((item) => item.id === id); if (next) { form.setFieldsValue({ ...next, account_id: account.id, provider_id: next.id, api_key: undefined }); setTested(false); setModels([next.model]) } }} /><Button icon={<Plus size={16} />} onClick={() => { form.resetFields(); form.setFieldsValue({ account_id: account.id, protocol: 'chat_completions', timeout_seconds: 60 }); setTested(false); setModels([]) }}>新建配置</Button></Space>
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>

@@ -35,7 +35,7 @@ import AIPage from "./AIPage";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-type Category = { id: number; name: string; sort_order?: number };
+type Category = { id: number; name: string; sort_order?: number; pinned?: boolean; provider_id?: number | null };
 type Session = {
   id: number;
   category_id?: number | null;
@@ -146,7 +146,7 @@ export default function AIChatPage() {
         if (!name.trim()) return;
         const row = await api<Category>("/api/ai-chat/categories", {
           method: "POST",
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, provider_id: providerId }),
         });
         setCategories((items) => [...items, row]);
       },
@@ -196,6 +196,13 @@ export default function AIChatPage() {
         setCategoryId(undefined);
       },
     });
+  };
+  const editCategoryProvider = (category: Category) => {
+    let selected = category.provider_id;
+    Modal.confirm({ title: "分类默认模型", content: <Select style={{ width: "100%" }} defaultValue={selected} allowClear options={providers.map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` }))} onChange={(value) => { selected = value; }} />, onOk: async () => {
+      const row = await api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, provider_id: selected }) });
+      setCategories((items) => items.map((item) => item.id === row.id ? row : item));
+    } });
   };
   const reorderCategory = async (targetId: number) => {
     if (dragCategoryId === null || dragCategoryId === targetId) return;
@@ -514,7 +521,8 @@ export default function AIChatPage() {
                 <Space size={0} className="ai-chat-tree-actions">
                   <Button type="text" size="small" icon={<Plus size={14} />} aria-label="添加对话" title="添加对话" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); void createSession(); }} />
                   <Button type="text" size="small" icon={<Edit3 size={14} />} aria-label="编辑分类" title="编辑分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); editCategory(); }} />
-                  <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" />
+                  <Button type="text" size="small" icon={<Settings2 size={14} />} aria-label="设置分类模型" title="设置分类模型" onClick={(event) => { event.stopPropagation(); editCategoryProvider(category); }} />
+                  <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item))) }} />
                   <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(); }} />
                 </Space>
               </div>
@@ -761,7 +769,7 @@ export default function AIChatPage() {
         activeKey={tab}
         onChange={setTab}
         items={[
-          { key: "config", label: "AI 配置", children: <AIPage /> },
+          { key: "config", label: "AI 配置", children: <AIPage configOnly /> },
           { key: "chat", label: "AI 聊天", children: chatView },
         ].filter((item) => user.role === "admin" || item.key !== "config")}
       />
