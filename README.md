@@ -67,6 +67,8 @@ nano .env
 
 选择 PostgreSQL 时，必须同时设置 `VX_DATABASE_MODE=postgres`、`VX_DATABASE_URL` 以及 PostgreSQL 用户、密码和数据库名；不设置时使用 SQLite。
 
+应用启动时会自动执行 Alembic 数据库迁移。迁移会沿单一版本链升级，不会覆盖业务数据；在线更新和一键更新会先备份，再启动新容器并等待健康检查，迁移或启动失败时自动恢复旧版本。升级前仍建议确认备份可用，不要手动删除 `alembic_version` 表或迁移文件。
+
 只有启用对应功能时才需要配置：
 
 - 邮箱注册或密码重置：将 `VX_REGISTRATION_ENABLED=true`，并填写 SMTP 服务器、用户名、密码和发件人。

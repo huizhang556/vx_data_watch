@@ -12,6 +12,13 @@
 - Docker Compose 增加 PostgreSQL profile 和独立的 `vx-postgres` 数据卷。
 - Docker 镜像内置 PostgreSQL 客户端工具，支持备份和恢复操作。
 
+### 数据库迁移稳定性修复
+
+- 整理 `0.5.1` 新增迁移的父子关系，移除重复 revision ID 和循环依赖，确保 SQLite 与 PostgreSQL 都能按单一迁移链升级。
+- 为视频号账号归属和聊天分类配置的外键增加明确约束名称，修复 SQLite 批量表变更时 `Constraint must have a name` 导致应用反复重启的问题。
+- 更新启动流程验证 Alembic head 和数据库迁移结果；迁移失败时容器会保持失败状态并输出明确日志，避免错误地报告服务已就绪。
+- 补充在线更新版本检测测试，确保当前版本不会被错误列为可更新版本，并覆盖更新排队和并发更新保护。
+
 ### 主题与文档
 
 - 统一七套主题的语义 CSS Variables，覆盖背景、卡片、文字、边框、按钮、链接及状态色。
