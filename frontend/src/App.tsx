@@ -275,8 +275,10 @@ export default function App() {
             )}
             {user.role === "admin" && !siderCollapsed && <div className="sider-admin-actions">
               <Button size="small" icon={<RefreshCw size={14} />} onClick={() => void checkUpdates()}>版本检测</Button>
-              <Button size="small" type="text" className={updateCheck?.has_update ? "update-ready" : "update-current"} onClick={() => navigate("/updates")} disabled={!updateCheck?.has_update}>一键更新: {updateCheck?.has_update ? "enable" : "disable"}</Button>
-              {updateCheck?.has_update ? <Typography.Text className="update-ready">发现新版本 v{updateCheck.latest_version}</Typography.Text> : updateCheck && <Typography.Text className="update-current">当前为最新版本 v{updateCheck.current_version}</Typography.Text>}
+              {updateCheck && <Typography.Text className={updateCheck.has_update ? "update-ready" : "update-current"}>
+                {updateCheck.has_update ? `v${updateCheck.latest_version}（可更新）` : `v${updateCheck.current_version}（最新版）`}
+              </Typography.Text>}
+              <Button size="small" type="primary" className="sider-update-button" onClick={() => navigate("/updates")} disabled={!updateCheck?.has_update}>一键更新</Button>
             </div>}
             <Button
               type="text"
@@ -325,7 +327,7 @@ export default function App() {
             <Dropdown className="theme-picker" menu={{ items: themeMenu, selectedKeys: [theme], onClick: handleThemeMenu }} trigger={["click"]} placement="bottomRight">
               <Button className="theme-picker-button" type="text" icon={themeIcons[theme]} aria-label="选择主题" title="选择主题" />
             </Dropdown>
-            <Space.Compact className="quick-links">
+            <Space className="quick-links" size={4}>
               <Button
                 type="text"
                 icon={<MessageCircle size={17} />}
@@ -342,7 +344,7 @@ export default function App() {
               >
                 下载内容
               </Button>
-            </Space.Compact>
+            </Space>
             <Select
               aria-label="当前视频号"
               className="account-select"

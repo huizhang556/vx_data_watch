@@ -52,6 +52,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [histories, setHistories] = useState<QueryHistory[]>([])
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
+  const [configAction, setConfigAction] = useState<'new' | 'edit'>('new')
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
   const [tested, setTested] = useState(false)
@@ -139,6 +140,24 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       await loadProviders(account!.id); setConfigOpen(false); message.success('接口配置已保存')
     } catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
+  }
+
+  const startNewProvider = () => {
+    form.resetFields()
+    form.setFieldsValue({ account_id: account!.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 })
+    setModels([])
+    setTested(false)
+    setError('')
+    setConfigAction('new')
+  }
+
+  const editProvider = (item: Provider) => {
+    form.setFieldsValue({ ...item, account_id: account!.id, provider_id: item.id, api_key: undefined })
+    setModels(item.model ? [item.model] : [])
+    setTested(false)
+    setError('')
+    setConfigAction('edit')
+    setConfigOpen(true)
   }
 
   const testSavedConnection = async () => {
@@ -270,8 +289,16 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   if (!account) return <Empty description="请先创建视频号账号" />
   return (
     <div className={`page ${configOnly ? 'ai-config-only' : ''}`}>
-      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title><Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text></div>{location.pathname === '/ai-chat' && user.role === 'admin' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>}</div>
+      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title>{!configOnly && <Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text>}</div>{user.role === 'admin' && (configOnly ? <Button type="primary" icon={<Plus size={18} />} onClick={() => { startNewProvider(); setConfigOpen(true) }}>新增配置</Button> : location.pathname === '/ai-chat' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigAction(provider ? 'edit' : 'new'); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>)}</div>
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
+      {configOnly && <section className="ai-provider-registry">
+        <div className="section-heading"><Typography.Title level={3}>已配置接口</Typography.Title><Typography.Text type="secondary">可随时编辑或删除已保存的模型接口</Typography.Text></div>
+        {!providers.length ? <Empty description="暂无已配置接口，请先新增配置" /> : <div className="ai-provider-registry-list">{providers.map((item) => <article className={`ai-provider-registry-row ${item.is_active ? 'active' : ''}`} key={item.id}>
+          <div className="ai-provider-registry-main"><strong>{item.name}</strong><span>{item.model || '未设置模型'}</span><small>{item.base_url}</small></div>
+          <div className="ai-provider-registry-meta"><span>{item.protocol}</span><span className={item.is_active ? 'provider-active' : ''}>{item.is_active ? '当前使用' : '未启用'}</span></div>
+          <Button size="small" icon={<Settings2 size={15} />} onClick={() => editProvider(item)}>编辑</Button>
+        </article>)}</div>}
+      </section>}
       <section className="ai-control">
         <div><span className={`status-dot ${provider ? 'online' : ''}`} /><Typography.Text>{provider ? '接口已配置' : '等待配置'}</Typography.Text></div>
         <Space wrap>
@@ -286,7 +313,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <Button type="primary" icon={<Sparkles size={18} />} disabled={!provider || rangeChecking || Boolean(rangeWarning)} loading={analyzeLoading || rangeChecking} onClick={() => void analyze()}>生成分析</Button>
         </Space>
       </section>
-      {rangeWarning && <Alert type="warning" showIcon message="当前数据量不足" description={rangeWarning} />}
+      {!configOnly && rangeWarning && <Alert type="warning" showIcon message="当前数据量不足" description={rangeWarning} />}
 
       {analyzeLoading ? <section className="report-browser report-loading"><Bot size={28} /><Typography.Text>正在生成分析报告...</Typography.Text></section> : result && <section className="report-browser">
         <header><div><Bot size={20} /><strong>查询范围：{result.start_date} 至 {result.end_date}</strong></div><time>查询时间：{dayjs(result.created_at).format('YYYY-MM-DD HH:mm')}</time></header>
@@ -298,12 +325,8 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       </section>}
 
       <section className="section-band quick-config-section">
-        <div className="section-heading"><Typography.Title level={3}>快速配置管理</Typography.Title><Typography.Text type="secondary">每个用户最多保存 5 个配置</Typography.Text></div>
-        {quickConfigs.length > 0 && <div className="quick-config-management">{quickConfigs.map((item, index) => <div className="quick-config-management-row" key={`manage-${item.id}`}><strong>{index + 1}. {item.name}</strong><span>{providers.find((p) => p.id === item.provider_id)?.name || '接口'} / {item.model}</span><span>关联分析 {item.associated_count ?? 0} 条</span><Space><Button size="small" onClick={() => renameQuickConfig(item)}>编辑</Button><Button size="small" type="primary" onClick={() => void applyQuickConfig(item)}>应用</Button></Space></div>)}</div>}
-      </section>
-      <section className="section-band quick-config-section">
-        <div className="section-heading"><Typography.Title level={3}>快速配置</Typography.Title><Button size="small" icon={<Plus size={15} />} disabled={!provider || quickConfigs.length >= 5} onClick={saveQuickConfig}>添加快捷配置</Button></div>
-        {!quickConfigs.length ? <Typography.Text type="secondary">暂无快捷配置</Typography.Text> : <div className="quick-config-list">{quickConfigs.map((item, index) => <div className="quick-config-row" key={item.id}><strong>{index + 1}. {providers.find((p) => p.id === item.provider_id)?.name || '模型接口'} - {item.model}</strong><time>{dayjs(item.created_at).format('YYYY-MM-DD')}</time><Space><Button size="small" onClick={() => void applyQuickConfig(item)}>快速配置</Button><Button size="small" danger icon={<Trash2 size={14} />} onClick={() => void api(`/api/ai/quick-configs/${item.id}`, { method: 'DELETE' }).then(() => setQuickConfigs((rows) => rows.filter((row) => row.id !== item.id)))}>删除</Button></Space></div>)}</div>}
+        <div className="section-heading"><Typography.Title level={3}>快速配置</Typography.Title><Space><Typography.Text type="secondary">每个用户最多保存 5 个配置</Typography.Text><Button size="small" icon={<Plus size={15} />} disabled={!provider || quickConfigs.length >= 5} onClick={saveQuickConfig}>添加快捷配置</Button></Space></div>
+        {!quickConfigs.length ? <Typography.Text type="secondary">暂无快捷配置</Typography.Text> : <div className="quick-config-management">{quickConfigs.map((item, index) => <div className="quick-config-management-row" key={`manage-${item.id}`}><strong>{index + 1}. {item.name}</strong><span>{providers.find((p) => p.id === item.provider_id)?.name || '接口'} / {item.model}</span><span>{dayjs(item.created_at).format('YYYY-MM-DD')} · 关联分析 {item.associated_count ?? 0} 条</span><Space><Button size="small" onClick={() => renameQuickConfig(item)}>编辑</Button><Button size="small" type="primary" onClick={() => void applyQuickConfig(item)}>应用</Button><Button size="small" danger icon={<Trash2 size={14} />} onClick={() => void api(`/api/ai/quick-configs/${item.id}`, { method: 'DELETE' }).then(() => setQuickConfigs((rows) => rows.filter((row) => row.id !== item.id)))}>删除</Button></Space></div>)}</div>}
       </section>
       <section className="section-band">
         <div className="section-heading"><Typography.Title level={3}>查询记录</Typography.Title><History size={20} /></div>
@@ -316,7 +339,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
         </Space></article>)}</div>}
       </section>
 
-      <Modal title="OpenAI 兼容接口" open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
+      <Modal title={<div className="config-modal-title"><span>{configMode === 'official' ? '官方接口' : 'OPENAI兼容'}</span><span className={`config-modal-mode ${configAction}`}>{configAction === 'new' ? '新增配置' : '编辑旧配置'}</span>{configAction === 'edit' && <Button type="link" size="small" onClick={startNewProvider}>新增配置</Button>}</div>} open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
         {error && <Alert type="error" showIcon message={error} />}
         <Tabs activeKey={configMode} onChange={(key) => setConfigMode(key as 'official' | 'compatible')} items={[
@@ -324,7 +347,6 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
         ]} />
         {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model }); setModels([preset.model]); setTested(false) } }} />}
-        <Space style={{ marginBottom: 12 }} wrap><Select aria-label="切换配置" value={form.getFieldValue('provider_id')} placeholder="选择已有配置" style={{ minWidth: 220 }} options={providerOptions} onChange={(id) => { const next = providers.find((item) => item.id === id); if (next) { form.setFieldsValue({ ...next, account_id: account.id, provider_id: next.id, api_key: undefined }); setTested(false); setModels([next.model]) } }} /><Button icon={<Plus size={16} />} onClick={() => { form.resetFields(); form.setFieldsValue({ account_id: account.id, protocol: 'chat_completions', timeout_seconds: 60 }); setTested(false); setModels([]) }}>新建配置</Button></Space>
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>

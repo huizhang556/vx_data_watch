@@ -1303,6 +1303,10 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
 
 def _provider_candidates(db: Session, account_id: int, user: User | None = None) -> list[AIProviderConfig]:
     _get_account(db, account_id, user)
+    # New configurations are global. Keep legacy account-scoped rows readable
+    # for administrators so they can promote them by editing once.
+    if user is not None and user.role.value != "admin":
+        return list(db.scalars(select(AIProviderConfig).where(AIProviderConfig.account_id.is_(None)).order_by(AIProviderConfig.id)).all())
     return list(
         db.scalars(
             select(AIProviderConfig)
@@ -1317,8 +1321,8 @@ def _provider_candidates(db: Session, account_id: int, user: User | None = None)
 
 def _active_provider(db: Session, account_id: int, user: User | None = None) -> AIProviderConfig | None:
     rows = _provider_candidates(db, account_id, user)
-    return next((row for row in rows if row.account_id == account_id and row.is_active), None) or next(
-        (row for row in rows if row.account_id is None and row.is_active), None
+    return next((row for row in rows if row.account_id is None and row.is_active), None) or next(
+        (row for row in rows if row.account_id == account_id and row.is_active), None
     )
 
 
@@ -1480,6 +1484,8 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
     row = _chat_owned_session(db, session_id, user)
     config = db.get(AIProviderConfig, payload.provider_id or row.provider_id) if (payload.provider_id or row.provider_id) else db.scalar(select(AIProviderConfig).where(AIProviderConfig.is_active.is_(True)).order_by(AIProviderConfig.id))
     if not config: raise HTTPException(status_code=409, detail="请先配置并选择 AI 接口")
+    if user.role.value != "admin" and config.account_id is not None:
+        raise HTTPException(status_code=403, detail="该 AI 接口不是管理员发布的全局配置")
     if config.account_id is not None and not db.get(ChannelsAccount, config.account_id): raise HTTPException(status_code=404, detail="AI 配置不存在")
     if not payload.content.strip() and not payload.attachments:
         raise HTTPException(status_code=422, detail="消息内容和附件不能同时为空")
@@ -1537,7 +1543,12 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
 def list_ai_providers(
     account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
 ) -> list[dict[str, Any]]:
-    return [_provider_payload(row) for row in _provider_candidates(db, account_id, user)]
+    if user.role.value == "admin":
+        _get_account(db, account_id, user)
+        rows = db.scalars(select(AIProviderConfig).order_by(AIProviderConfig.account_id.is_(None).desc(), AIProviderConfig.id)).all()
+    else:
+        rows = _provider_candidates(db, account_id, user)
+    return [_provider_payload(row) for row in rows]
 
 
 @app.get("/api/ai/provider")
@@ -1560,8 +1571,6 @@ def save_ai_provider(
         config = db.scalar(
             select(AIProviderConfig).where(
                 AIProviderConfig.id == payload.provider_id,
-                (AIProviderConfig.account_id == payload.account_id)
-                | (AIProviderConfig.account_id.is_(None)),
             )
         )
         if not config:
@@ -1573,11 +1582,13 @@ def save_ai_provider(
             encrypted_api_key=encrypt_secret(payload.api_key),
             base_url=payload.base_url,
             model=payload.model,
-            account_id=payload.account_id,
+            account_id=None,
         )
         db.add(config)
-    elif config.account_id is None:
-        config.account_id = payload.account_id
+    else:
+        # Editing a legacy account-scoped row promotes it to the administrator's
+        # global registry instead of keeping a hidden per-account copy.
+        config.account_id = None
     config.name = payload.name
     config.base_url = payload.base_url
     config.model = payload.model
@@ -1585,7 +1596,7 @@ def save_ai_provider(
     config.timeout_seconds = payload.timeout_seconds
     db.execute(
         AIProviderConfig.__table__.update()
-        .where(AIProviderConfig.account_id == payload.account_id)
+        .where(AIProviderConfig.account_id.is_(None))
         .values(is_active=False)
     )
     config.is_active = True
@@ -1620,11 +1631,11 @@ def select_ai_provider(
     )
     if not config:
         raise HTTPException(status_code=404, detail="接口配置不存在")
-    if config.account_id is None:
-        config.account_id = payload.account_id
+    if config.account_id is not None and user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="仅可选择管理员发布的全局接口配置")
     db.execute(
         AIProviderConfig.__table__.update()
-        .where(AIProviderConfig.account_id == payload.account_id)
+        .where(AIProviderConfig.account_id.is_(None))
         .values(is_active=False)
     )
     config.is_active = True
@@ -1690,7 +1701,7 @@ def delete_ai_provider(
     config = db.scalar(
         select(AIProviderConfig).where(
             AIProviderConfig.id == provider_id,
-            AIProviderConfig.account_id == account_id,
+            (AIProviderConfig.account_id == account_id) | AIProviderConfig.account_id.is_(None),
         )
     )
     if not config:
@@ -1717,8 +1728,6 @@ async def test_and_save_ai_provider(
         existing = db.scalar(
             select(AIProviderConfig).where(
                 AIProviderConfig.id == payload.provider_id,
-                (AIProviderConfig.account_id == payload.account_id)
-                | (AIProviderConfig.account_id.is_(None)),
             )
         )
     if not existing:
@@ -1768,8 +1777,6 @@ def _draft_api_key(payload: AIProviderDraft, db: Session) -> str:
         existing = db.scalar(
             select(AIProviderConfig).where(
                 AIProviderConfig.id == payload.provider_id,
-                (AIProviderConfig.account_id == payload.account_id)
-                | (AIProviderConfig.account_id.is_(None)),
             )
         )
     if not existing:

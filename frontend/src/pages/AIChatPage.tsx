@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Button,
   Empty,
@@ -7,7 +7,6 @@ import {
   Select,
   Space,
   Tabs,
-  Typography,
   Upload,
   message,
 } from "antd";
@@ -16,11 +15,9 @@ import {
   Edit3,
   FileText,
   ImagePlus,
-  MessageSquarePlus,
   Pin,
   Search,
   Send,
-  Settings2,
   Trash2,
   X,
   ChevronDown,
@@ -95,7 +92,25 @@ export default function AIChatPage() {
   const [search, setSearch] = useState("");
   const [selectedSessions, setSelectedSessions] = useState<number[]>([]);
   const [dragCategoryId, setDragCategoryId] = useState<number | null>(null);
+  const [chatSidebarWidth, setChatSidebarWidth] = useState(260);
+  const chatLayoutRef = useRef<HTMLDivElement>(null);
+  const resizingChatRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (!resizingChatRef.current || !chatLayoutRef.current) return;
+      const bounds = chatLayoutRef.current.getBoundingClientRect();
+      setChatSidebarWidth(Math.max(220, Math.min(480, event.clientX - bounds.left)));
+    };
+    const stop = () => { resizingChatRef.current = false; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+  }, []);
 
   const load = async () => {
     const [cats, chats, configs] = await Promise.all([
@@ -179,6 +194,21 @@ export default function AIChatPage() {
       },
     });
   };
+  const reorderCategory = async (targetId: number) => {
+    if (dragCategoryId === null || dragCategoryId === targetId) return;
+    const from = categories.findIndex((item) => item.id === dragCategoryId);
+    const to = categories.findIndex((item) => item.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...categories];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setCategories(next);
+    await Promise.all(next.map((item, index) => api<Category>(`/api/ai-chat/categories/${item.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: item.name, sort_order: index }),
+    })));
+    setDragCategoryId(null);
+  };
   const deleteCategory = () => {
     const category = categories.find((item) => item.id === categoryId);
     if (!category) return;
@@ -196,32 +226,6 @@ export default function AIChatPage() {
         setCategoryId(undefined);
       },
     });
-  };
-  const editCategoryProvider = (category: Category) => {
-    let selected = category.provider_id;
-    Modal.confirm({ title: "分类默认模型", content: <Select style={{ width: "100%" }} defaultValue={selected} allowClear options={providers.map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` }))} onChange={(value) => { selected = value; }} />, onOk: async () => {
-      const row = await api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, provider_id: selected }) });
-      setCategories((items) => items.map((item) => item.id === row.id ? row : item));
-    } });
-  };
-  const reorderCategory = async (targetId: number) => {
-    if (dragCategoryId === null || dragCategoryId === targetId) return;
-    const from = categories.findIndex((item) => item.id === dragCategoryId);
-    const to = categories.findIndex((item) => item.id === targetId);
-    if (from < 0 || to < 0) return;
-    const next = [...categories];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
-    setCategories(next);
-    await Promise.all(
-      next.map((item, index) =>
-        api<Category>(`/api/ai-chat/categories/${item.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ name: item.name, sort_order: index }),
-        }),
-      ),
-    );
-    setDragCategoryId(null);
   };
   const renameSession = (session: Session) => {
     let title = session.title;
@@ -437,23 +441,8 @@ export default function AIChatPage() {
       item.title.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const chatView = (
-    <div className="ai-chat-layout">
+    <div className="ai-chat-layout" ref={chatLayoutRef} style={{ "--ai-chat-sidebar-width": `${chatSidebarWidth}px` } as CSSProperties}>
       <aside className="ai-chat-sidebar">
-        <div className="ai-chat-sidebar-actions">
-          <Button
-            type="primary"
-            icon={<MessageSquarePlus size={16} />}
-            onClick={() => void createSession()}
-          >
-            新建对话
-          </Button>
-          <Button
-            icon={<Settings2 size={16} />}
-            onClick={() => setTab("config")}
-          >
-            配置
-          </Button>
-        </div>
         <Input
           prefix={<Search size={15} />}
           value={search}
@@ -461,37 +450,7 @@ export default function AIChatPage() {
           placeholder="搜索对话"
           allowClear
         />
-        <div className="ai-chat-category-bar">
-          <Select
-            allowClear
-            value={categoryId}
-            onChange={setCategoryId}
-            placeholder="全部分类"
-            options={categories.map((item) => ({
-              value: item.id,
-              label: item.name,
-            }))}
-          />
-          <Button
-            type="text"
-            icon={<Edit3 size={15} />}
-            onClick={createCategory}
-          />
-          <Button
-            type="text"
-            disabled={!categoryId}
-            icon={<Edit3 size={14} />}
-            onClick={editCategory}
-          />
-          <Button
-            type="text"
-            danger
-            disabled={!categoryId}
-            icon={<Trash2 size={14} />}
-            onClick={deleteCategory}
-          />
-        </div>
-        <Space size={4} style={{ marginBottom: 8 }}>
+        <Space className="ai-chat-bulk-actions" size={4} style={{ marginBottom: 8 }}>
           <Button
             size="small"
             disabled={!visibleSessions.length}
@@ -509,19 +468,25 @@ export default function AIChatPage() {
           >
             删除选中
           </Button>
+          <Button
+            type="text"
+            aria-label="添加分类"
+            title="添加分类"
+            icon={<Plus size={16} />}
+            onClick={createCategory}
+          />
         </Space>
         <div className="ai-chat-sessions">
           {categories.map((category) => {
             const categorySessions = visibleSessions.filter((item) => item.category_id === category.id);
             const expanded = expandedCategoryId === category.id;
             return <div className="ai-chat-tree-group" key={category.id}>
-              <div className={`ai-chat-category-node ${categoryId === category.id ? "active" : ""}`} onClick={() => { setCategoryId(category.id); setExpandedCategoryId(expanded ? undefined : category.id); }}>
+              <div className={`ai-chat-category-node ${categoryId === category.id ? "active" : ""}`} draggable onDragStart={() => setDragCategoryId(category.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => void reorderCategory(category.id)} onClick={() => { setCategoryId(category.id); setExpandedCategoryId(expanded ? undefined : category.id); }}>
                 <Button type="text" size="small" icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />} aria-label={expanded ? "收起分类" : "展开分类"} />
                 <span className="ai-chat-tree-name">{category.name}</span>
                 <Space size={0} className="ai-chat-tree-actions">
                   <Button type="text" size="small" icon={<Plus size={14} />} aria-label="添加对话" title="添加对话" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); void createSession(); }} />
                   <Button type="text" size="small" icon={<Edit3 size={14} />} aria-label="编辑分类" title="编辑分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); editCategory(); }} />
-                  <Button type="text" size="small" icon={<Settings2 size={14} />} aria-label="设置分类模型" title="设置分类模型" onClick={(event) => { event.stopPropagation(); editCategoryProvider(category); }} />
                   <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item))) }} />
                   <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(); }} />
                 </Space>
@@ -535,6 +500,16 @@ export default function AIChatPage() {
           })}
         </div>
       </aside>
+      <div
+        className="ai-chat-resizer"
+        role="separator"
+        aria-label="调整会话栏宽度"
+        aria-orientation="vertical"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          resizingChatRef.current = true;
+        }}
+      />
       <main className="ai-chat-main">
         <div className="ai-chat-toolbar">
           <Select
@@ -555,20 +530,22 @@ export default function AIChatPage() {
           >
             应用模型
           </Button>
-          <Button
-            icon={<Download size={15} />}
-            disabled={!activeSession}
-            onClick={() => void exportSession("markdown")}
-          >
-            导出 Markdown
-          </Button>
-          <Button
-            icon={<Download size={15} />}
-            disabled={!activeSession}
-            onClick={() => void exportSession("json")}
-          >
-            导出 JSON
-          </Button>
+          <Space className="ai-chat-export-actions" size={8}>
+            <Button
+              icon={<Download size={15} />}
+              disabled={!activeSession}
+              onClick={() => void exportSession("markdown")}
+            >
+              导出 Markdown
+            </Button>
+            <Button
+              icon={<Download size={15} />}
+              disabled={!activeSession}
+              onClick={() => void exportSession("json")}
+            >
+              导出 JSON
+            </Button>
+          </Space>
         </div>
         {!activeSession ? (
           <Empty description="请选择或新建一个对话" />
@@ -744,27 +721,6 @@ export default function AIChatPage() {
   );
   return (
     <div className="page ai-chat-page">
-      <div className="page-heading">
-        <div>
-          <Typography.Title level={2}>AI 速问</Typography.Title>
-          <Typography.Text type="secondary">
-            在线对话、历史记录和多模型配置
-          </Typography.Text>
-        </div>
-      </div>
-      <div className="ai-chat-category-order" aria-label="拖动分类调整顺序">
-        {categories.map((category) => (
-          <span
-            key={category.id}
-            draggable
-            onDragStart={() => setDragCategoryId(category.id)}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={() => void reorderCategory(category.id)}
-          >
-            {category.name}
-          </span>
-        ))}
-      </div>
       <Tabs
         activeKey={tab}
         onChange={setTab}

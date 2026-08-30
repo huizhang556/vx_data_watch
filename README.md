@@ -107,11 +107,11 @@ openssl rand -base64 32
 
 ## 一键运维脚本（小白推荐安装方式）
 
-脚本将项目安装到 `/opt/vx-data-watch`，宿主机默认端口为 `10000`，容器内部端口为 `8000`。无需提前准备 `.env` 或手动安装 Docker；脚本会在安装过程中询问必要选项。海外服务器使用 GitHub；中国大陆无法访问 GitHub 时使用 Gitee。
+脚本将项目正式安装到 `/opt/vx-data-watch`，下载脚本所在目录只是临时工作目录，不是项目安装目录。宿主机默认端口为 `10000`，容器内部端口为 `8000`。无需提前准备 `.env` 或手动安装 Docker；脚本会在安装过程中询问必要选项。海外服务器使用 GitHub；中国大陆无法访问 GitHub 时使用 Gitee。
 
 ```bash
 sudo apt update && sudo apt install -y curl
-mkdir -p "$HOME/vx-data-install" && cd "$HOME/vx-data-install"
+mkdir -p /tmp/vx-data-install && cd /tmp/vx-data-install
 # 海外：
 curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
 # 中国大陆改用：
