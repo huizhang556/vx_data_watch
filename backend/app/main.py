@@ -2201,7 +2201,7 @@ def audit_logs(
 
 @app.get("/api/system/versions")
 async def system_versions(
-    user: Annotated[User, Depends(require_admin)],
+    user: CurrentUser,
     registry: str | None = Query(default=None),
 ) -> dict[str, Any]:
     selected_registry = registry or settings.update_registry

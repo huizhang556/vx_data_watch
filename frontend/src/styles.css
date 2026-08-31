@@ -59,14 +59,15 @@ button, input, textarea, select { letter-spacing: 0; }
 .desktop-sider + .ant-layout { margin-left: 224px; min-width: 0; }
 .app-shell.sider-collapsed .desktop-sider + .ant-layout { margin-left: 72px; }
 .brand { height: 68px; display: flex; align-items: center; gap: 11px; padding: 0 20px; font-weight: 800; letter-spacing: .02em; }
-.sider-toggle { position: absolute; z-index: 30; top: 50%; right: -10px; left: auto; width: 20px !important; min-width: 20px !important; height: 38px; padding: 0 !important; transform: translateY(-50%); background: #fff; border: 1px solid #d8e0dc; border-radius: 6px; box-shadow: 0 2px 7px rgba(30, 53, 45, .08); }
-.sider-toggle:hover { background: #f0f6f3 !important; }
+.sider-toggle { position: absolute; z-index: 30; top: auto; right: auto; bottom: 104px; left: 10px; width: 38px !important; min-width: 38px !important; height: 34px; padding: 0 !important; background: var(--vx-surface); border: 1px solid var(--vx-border); border-radius: 6px; box-shadow: 0 2px 7px rgba(30, 53, 45, .08); }
+.sider-toggle:hover { color: var(--vx-accent) !important; background: var(--vx-hover) !important; border-color: var(--vx-border-strong) !important; }
 .desktop-sider > .ant-layout-sider-children { position: relative; height: 100%; }
 .desktop-sider .ant-menu { border-inline-end: none !important; padding: 8px; }
 .ant-menu-submenu-popup { min-width: 168px; }
 .ant-menu-submenu-popup .ant-menu-item { color: #18211e; }
 .profile-dropdown .ant-dropdown-menu { min-width: 168px; }
 .sider-user { position: absolute; inset: auto 14px 18px; border-top: 1px solid #e6ebe8; padding-top: 14px; display: block; }
+.sider-version { display: block; margin-top: 6px; font-size: 12px; white-space: nowrap; }
 .sider-user > .ant-btn { display: none; }
 .sider-admin-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 5px; margin-top: 10px; min-width: 0; }
 .sider-admin-actions .ant-btn { font-size: 12px; padding-inline: 6px; white-space: nowrap; }
@@ -273,6 +274,13 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-resizer::after { content: ''; position: absolute; inset: 0 1px; background: transparent; transition: background .15s ease; }
 .ai-chat-resizer:hover::after, .ai-chat-resizer:active::after { background: var(--vx-accent); }
 .ai-chat-toolbar { display: flex; align-items: center; gap: 8px; }
+.ai-chat-message-search { position: relative; min-width: 180px; flex: 1 1 260px; max-width: 420px; }
+.ai-chat-message-search-results { position: absolute; z-index: 12; top: calc(100% + 4px); left: 0; right: 0; max-height: 280px; overflow-y: auto; padding: 4px; background: var(--vx-surface); border: 1px solid var(--vx-border); border-radius: 6px; box-shadow: var(--vx-shadow); }
+.ai-chat-message-search-result { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; text-align: left; color: var(--vx-text); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.ai-chat-message-search-result:hover { background: var(--vx-hover); }
+.ai-chat-message-search-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-chat-message-search-result time { flex: 0 0 auto; color: var(--vx-muted); font-size: 12px; white-space: nowrap; }
+.ai-chat-message-search-empty { display: block; padding: 10px; color: var(--vx-muted); font-size: 13px; }
 .ai-chat-bulk-actions { display: flex; width: 100%; align-items: center; }
 .ai-chat-bulk-actions .ant-space-item:last-child { margin-left: auto; }
 .ai-chat-sessions { display: grid; gap: 5px; }
@@ -312,6 +320,7 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-toolbar .ant-select { min-width: 240px; max-width: 100%; }
 .ai-chat-export-actions { margin-left: auto; }
 .ai-chat-messages { min-height: 420px; max-height: 58vh; overflow-y: auto; padding: 22px; display: grid; align-content: start; gap: 16px; }
+.ai-chat-message.search-highlight .ai-chat-message-content { outline: 2px solid var(--vx-accent); outline-offset: 3px; }
 .ai-chat-message { display: flex; gap: 10px; max-width: 88%; }
 .ai-chat-message.user { margin-left: auto; flex-direction: row-reverse; }
 .ai-chat-message-role { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--vx-accent-soft); color: var(--vx-accent-strong); font-size: 12px; font-weight: 700; }

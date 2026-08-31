@@ -24,6 +24,7 @@ import {
   ChevronRight,
   Copy,
   Plus,
+  ArrowDownToLine,
 } from "lucide-react";
 import { api, query } from "../api";
 import { useAuth } from "../auth";
@@ -44,6 +45,7 @@ type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   content: string;
+  created_at?: string;
   attachments?: { id: number; filename: string; content_type: string }[];
 };
 type Provider = {
@@ -92,6 +94,9 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
   const [search, setSearch] = useState("");
+  const [messageSearch, setMessageSearch] = useState("");
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const [selectedSessions, setSelectedSessions] = useState<number[]>([]);
   const [dragCategoryId, setDragCategoryId] = useState<number | null>(null);
   const [chatSidebarWidth, setChatSidebarWidth] = useState(320);
@@ -102,6 +107,20 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const creatingCategoryRef = useRef(false);
   const creatingSessionRef = useRef(false);
   const lastNodeClickRef = useRef<{ key: string; at: number } | null>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (!container) return;
+    const updateScrollState = () => {
+      const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+      setShowScrollToBottom(distance > 8);
+    };
+    updateScrollState();
+    container.addEventListener("scroll", updateScrollState, { passive: true });
+    return () => container.removeEventListener("scroll", updateScrollState);
+  }, [messages, activeSession]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -513,6 +532,16 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       item.title.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const searchActive = search.trim().length > 0;
+  const messageSearchTerm = messageSearch.trim().toLowerCase();
+  const messageMatches = messageSearchTerm
+    ? messages.filter((item) => item.content.toLowerCase().includes(messageSearchTerm))
+    : [];
+  const formatMessageTime = (value?: string) => value ? new Date(value).toLocaleString() : "时间未知";
+  const jumpToMessage = (item: ChatMessage) => {
+    messageRefs.current[item.id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(item.id);
+    window.setTimeout(() => setHighlightedMessageId((current) => current === item.id ? null : current), 1800);
+  };
   const categoryNames = new Map(categories.map((item) => [item.id, item.name]));
   const acceptNodeClick = (key: string) => {
     const now = Date.now();
@@ -544,6 +573,25 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           >
             全选
           </Button>
+          <div className="ai-chat-message-search">
+            <Input
+              prefix={<Search size={15} />}
+              value={messageSearch}
+              onChange={(event) => setMessageSearch(event.target.value)}
+              placeholder="搜索对话内容"
+              allowClear
+            />
+            {messageSearchTerm && (
+              <div className="ai-chat-message-search-results" role="listbox" aria-label="消息搜索结果">
+                {messageMatches.length ? messageMatches.map((item) => (
+                  <button key={item.id} type="button" role="option" className="ai-chat-message-search-result" onClick={() => jumpToMessage(item)}>
+                    <span>{item.content.replace(/\s+/g, " ").slice(0, 100)}</span>
+                    <time>{formatMessageTime(item.created_at)}</time>
+                  </button>
+                )) : <span className="ai-chat-message-search-empty">未找到匹配消息</span>}
+              </div>
+            )}
+          </div>
           <Button
             size="small"
             danger
@@ -667,9 +715,9 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           <Empty description="请选择或新建一个对话" />
         ) : (
           <>
-            <div className="ai-chat-messages">
+            <div className="ai-chat-messages" ref={messagesRef}>
               {messages.map((item) => (
-                <div key={item.id} className={`ai-chat-message ${item.role}`}>
+                <div key={item.id} ref={(element) => { messageRefs.current[item.id] = element; }} className={`ai-chat-message ${item.role} ${highlightedMessageId === item.id ? "search-highlight" : ""}`}>
                   <div className="ai-chat-message-role">
                     {item.role === "user" ? "你" : "AI"}
                   </div>
@@ -716,8 +764,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                         <Button type="text" danger size="small" icon={<Trash2 size={12} />} aria-label="删除消息" title="删除消息" onClick={() => deleteMessage(item)} />
                       </div>
                     )}
-                  </div>
-                </div>
+              </div>
+            </div>
               ))}
             </div>
             <div className="ai-chat-composer">
@@ -800,6 +848,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                 placeholder="输入消息，Enter 发送，Shift+Enter 换行"
               />
               <Space>
+                {showScrollToBottom && <Button type="text" icon={<ArrowDownToLine size={16} />} aria-label="置底" title="置底" onClick={() => messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" })} />}
                 <Button
                   type="text"
                   danger

@@ -30,8 +30,8 @@ import {
   Info,
   LogOut,
   MessageCircle,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronsLeft,
+  ChevronsRight,
   Palette,
   RefreshCw,
   Settings,
@@ -146,7 +146,6 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const checkUpdates = useCallback(async () => {
-    if (user.role !== "admin") return;
     try {
       const result = await api<{ current_version: string; latest_version?: string; versions?: { version: string }[] }>("/api/system/versions");
       const latest = result.latest_version || result.versions?.[0]?.version;
@@ -247,9 +246,9 @@ export default function App() {
             type="text"
             icon={
               siderCollapsed ? (
-                <PanelLeftOpen size={18} />
+                <ChevronsRight size={18} />
               ) : (
-                <PanelLeftClose size={18} />
+                <ChevronsLeft size={18} />
               )
             }
             title={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
@@ -278,6 +277,11 @@ export default function App() {
                 <br />
                 <Typography.Text type="secondary">{user.role}</Typography.Text>
               </div>
+            )}
+            {!siderCollapsed && user.role !== "admin" && updateCheck && (
+              <Typography.Text className={`sider-version ${updateCheck.has_update ? "update-ready" : "update-current"}`}>
+                当前版本：v{updateCheck.current_version}{updateCheck.has_update ? "（有可用更新）" : "（最新版）"}
+              </Typography.Text>
             )}
             {user.role === "admin" && !siderCollapsed && <div className="sider-admin-actions">
               <Button size="small" icon={<RefreshCw size={14} />} onClick={() => void checkUpdates()}>版本检测</Button>
