@@ -108,6 +108,7 @@ from .schemas import (
     AIChatSessionInput,
     AIChatSessionUpdate,
     AIChatMessageInput,
+    AIChatMessageUpdate,
     LoginRequest,
     PasswordChange,
     PasswordResetConfirm,
@@ -250,8 +251,13 @@ def _get_account(db: Session, account_id: int, user: User | None = None) -> Chan
     account = db.get(ChannelsAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="视频号账号不存在")
-    if user is not None and user.role != Role.admin and account.user_id != user.id:
-        raise HTTPException(status_code=404, detail="视频号账号不存在")
+    if user is not None:
+        # Administrator-owned accounts are global (user_id is NULL), while
+        # accounts created by regular users remain private to that user.
+        if user.role == Role.admin and account.user_id is not None:
+            raise HTTPException(status_code=404, detail="视频号账号不存在")
+        if user.role != Role.admin and account.user_id != user.id:
+            raise HTTPException(status_code=404, detail="视频号账号不存在")
     return account
 
 
@@ -320,7 +326,7 @@ def update_download_settings(
     if row:
         row.value = encrypted
     else:
-        db.add(AppSetting(key=DOWNLOAD_SETTINGS_KEY, value=encrypted))
+        db.add(AppSetting(key=setting_key, value=encrypted))
     db.commit()
     return _download_settings(db, user.id)
 
@@ -864,7 +870,9 @@ def list_accounts(
     user: CurrentUser, db: Annotated[Session, Depends(get_db)]
 ) -> list[dict[str, Any]]:
     query = select(ChannelsAccount).order_by(ChannelsAccount.created_at)
-    if user.role != Role.admin:
+    if user.role == Role.admin:
+        query = query.where(ChannelsAccount.user_id.is_(None))
+    else:
         query = query.where(ChannelsAccount.user_id == user.id)
     rows = db.scalars(query).all()
     return [
@@ -1288,12 +1296,22 @@ def video_range_analytics(
 
 
 def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
+    try:
+        models = json.loads(config.models_json) if config.models_json else []
+    except (TypeError, json.JSONDecodeError):
+        models = []
+    if not isinstance(models, list):
+        models = []
+    models = [str(item) for item in models if str(item).strip()]
+    if config.model and config.model not in models:
+        models.insert(0, config.model)
     return {
         "id": config.id,
         "account_id": config.account_id,
         "name": config.name,
         "base_url": config.base_url,
         "model": config.model,
+        "models": models,
         "protocol": config.protocol,
         "interface_type": config.interface_type,
         "timeout_seconds": config.timeout_seconds,
@@ -1307,7 +1325,12 @@ def _provider_candidates(db: Session, account_id: int, user: User | None = None)
     # New configurations are global. Keep legacy account-scoped rows readable
     # for administrators so they can promote them by editing once.
     if user is not None and user.role.value != "admin":
-        return list(db.scalars(select(AIProviderConfig).where(AIProviderConfig.account_id.is_(None)).order_by(AIProviderConfig.id)).all())
+        return list(db.scalars(
+            select(AIProviderConfig)
+            .outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id)
+            .where((AIProviderConfig.account_id.is_(None)) | ChannelsAccount.user_id.is_(None))
+            .order_by(AIProviderConfig.id)
+        ).all())
     return list(
         db.scalars(
             select(AIProviderConfig)
@@ -1431,6 +1454,75 @@ def list_chat_messages(session_id: int, user: CurrentUser, db: Annotated[Session
     return [{"id": row.id, "role": row.role, "content": row.content, "created_at": row.created_at, "attachments": [{"id": item.id, "filename": item.filename, "content_type": item.content_type, "size_bytes": item.size_bytes} for item in db.scalars(select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)).all()]} for row in rows]
 
 
+def _chat_message_owned(db: Session, message_id: int, user: User) -> AIChatMessage:
+    row = db.scalar(
+        select(AIChatMessage)
+        .join(AIChatSession, AIChatMessage.session_id == AIChatSession.id)
+        .where(AIChatMessage.id == message_id, AIChatSession.user_id == user.id)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    return row
+
+
+@app.patch("/api/ai-chat/messages/{message_id}")
+def update_chat_message(
+    message_id: int,
+    payload: AIChatMessageUpdate,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    row = _chat_message_owned(db, message_id, user)
+    if row.role != "user":
+        raise HTTPException(status_code=403, detail="只能编辑用户消息")
+    if not payload.content.strip() and not db.scalar(
+        select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)
+    ):
+        raise HTTPException(status_code=422, detail="消息内容和附件不能同时为空")
+    row.content = payload.content.strip()
+    db.commit()
+    return {"id": row.id, "role": row.role, "content": row.content}
+
+
+@app.delete("/api/ai-chat/messages/{message_id}", status_code=204)
+def delete_chat_message(
+    message_id: int,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    row = _chat_message_owned(db, message_id, user)
+    if row.role != "user":
+        raise HTTPException(status_code=403, detail="只能删除用户消息")
+    attachment_rows = db.scalars(
+        select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)
+    ).all()
+    for attachment in attachment_rows:
+        Path(attachment.storage_path).unlink(missing_ok=True)
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.delete("/api/ai-chat/sessions/{session_id}/messages", status_code=204)
+def clear_chat_messages(
+    session_id: int,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    _chat_owned_session(db, session_id, user)
+    rows = db.scalars(
+        select(AIChatMessage).where(AIChatMessage.session_id == session_id)
+    ).all()
+    for row in rows:
+        for attachment in db.scalars(
+            select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)
+        ).all():
+            Path(attachment.storage_path).unlink(missing_ok=True)
+        db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
 @app.get("/api/ai-chat/attachments/{attachment_id}")
 def get_chat_attachment(attachment_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
     attachment = db.scalar(select(AIChatAttachment).where(AIChatAttachment.id == attachment_id))
@@ -1550,7 +1642,12 @@ def list_ai_providers(
 ) -> list[dict[str, Any]]:
     if user.role.value == "admin":
         _get_account(db, account_id, user)
-        rows = db.scalars(select(AIProviderConfig).order_by(AIProviderConfig.account_id.is_(None).desc(), AIProviderConfig.id)).all()
+        rows = db.scalars(
+            select(AIProviderConfig)
+            .outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id)
+            .where((AIProviderConfig.account_id.is_(None)) | ChannelsAccount.user_id.is_(None))
+            .order_by(AIProviderConfig.account_id.is_(None).desc(), AIProviderConfig.id)
+        ).all()
     else:
         rows = _provider_candidates(db, account_id, user)
     return [_provider_payload(row) for row in rows]
@@ -1600,7 +1697,7 @@ def save_ai_provider(
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id)
+    _get_account(db, payload.account_id, user)
     config = None
     if payload.provider_id:
         config = db.scalar(
@@ -1627,6 +1724,10 @@ def save_ai_provider(
     config.name = payload.name
     config.base_url = payload.base_url
     config.model = payload.model
+    config.models_json = json.dumps(
+        list(dict.fromkeys([item.strip() for item in payload.models if item.strip()])),
+        ensure_ascii=False,
+    ) if payload.models else config.models_json
     config.protocol = payload.protocol
     config.interface_type = payload.interface_type
     config.timeout_seconds = payload.timeout_seconds
@@ -1684,8 +1785,12 @@ def _quick_config_payload(row: AIQuickConfig) -> dict[str, Any]:
     return {"id": row.id, "name": row.name, "provider_id": row.provider_id, "model": row.model, "created_at": row.created_at, "updated_at": row.updated_at}
 
 
+def _provider_models(config: AIProviderConfig) -> set[str]:
+    return set(_provider_payload(config)["models"])
+
+
 def _owned_provider(db: Session, provider_id: int, user: User) -> AIProviderConfig:
-    row = db.scalar(select(AIProviderConfig).outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id).where(AIProviderConfig.id == provider_id, ((ChannelsAccount.user_id == user.id) | AIProviderConfig.account_id.is_(None)), AIProviderConfig.is_active.is_(True)))
+    row = db.scalar(select(AIProviderConfig).outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id).where(AIProviderConfig.id == provider_id, ((ChannelsAccount.user_id == user.id) | ChannelsAccount.user_id.is_(None) | AIProviderConfig.account_id.is_(None))))
     if not row:
         raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
     return row
@@ -1702,7 +1807,7 @@ def create_quick_config(payload: AIQuickConfigInput, user: CsrfUser, db: Annotat
     if db.scalar(select(func.count(AIQuickConfig.id)).where(AIQuickConfig.user_id == user.id)) >= 5:
         raise HTTPException(status_code=409, detail="每个用户最多保存 5 个快捷配置")
     provider = _owned_provider(db, payload.provider_id, user)
-    if payload.model not in {provider.model}:
+    if payload.model not in _provider_models(provider):
         raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
     row = AIQuickConfig(user_id=user.id, provider_id=provider.id, name=payload.name.strip(), model=payload.model)
     db.add(row); db.commit(); db.refresh(row)
@@ -1714,7 +1819,7 @@ def update_quick_config(config_id: int, payload: AIQuickConfigInput, user: CsrfU
     row = db.scalar(select(AIQuickConfig).where(AIQuickConfig.id == config_id, AIQuickConfig.user_id == user.id))
     if not row: raise HTTPException(status_code=404, detail="快捷配置不存在")
     provider = _owned_provider(db, payload.provider_id, user)
-    if payload.model != provider.model: raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
+    if payload.model not in _provider_models(provider): raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
     row.name = payload.name.strip(); row.provider_id = provider.id; row.model = payload.model
     db.commit(); return _quick_config_payload(row)
 
@@ -1733,7 +1838,7 @@ def delete_ai_provider(
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Response:
-    _get_account(db, account_id)
+    _get_account(db, account_id, user)
     config = db.scalar(
         select(AIProviderConfig).where(
             AIProviderConfig.id == provider_id,
@@ -1839,6 +1944,11 @@ async def get_ai_models(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if payload.provider_id:
+        config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == payload.provider_id))
+        if config:
+            config.models_json = json.dumps(models, ensure_ascii=False)
+            db.commit()
     return {"models": models}
 
 

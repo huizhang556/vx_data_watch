@@ -183,6 +183,7 @@ class AIProviderInput(BaseModel):
     interface_type: Literal["official", "compatible"] = "compatible"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
+    models: list[str] = Field(default_factory=list, max_length=500)
 
     @field_validator("base_url")
     @classmethod
@@ -246,6 +247,10 @@ class AIChatMessageInput(BaseModel):
     content: str = Field(default="", max_length=100_000)
     provider_id: int | None = None
     attachments: list[dict[str, str]] = Field(default_factory=list, max_length=8)
+
+
+class AIChatMessageUpdate(BaseModel):
+    content: str = Field(max_length=100_000)
 
 
 class AIAnalyzeRequest(BaseModel):

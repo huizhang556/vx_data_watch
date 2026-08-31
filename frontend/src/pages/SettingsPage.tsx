@@ -278,12 +278,14 @@ export default function SettingsPage({
       <div className="page-heading">
         <div>
           <Typography.Title level={2}>
-            {section === "settings" ? "系统设置" : "用户管理"}
+            {section === "settings" ? "系统设置" : section === "accounts" && user.role !== "admin" ? "视频号管理" : "用户管理"}
           </Typography.Title>
           <Typography.Text type="secondary">
             {section === "settings"
               ? "账号、数据安全与备份"
-              : "管理视频号账号和本地用户"}
+              : section === "accounts" && user.role !== "admin"
+                ? "管理当前用户的视频号账号"
+                : "管理视频号账号和本地用户"}
           </Typography.Text>
         </div>
       </div>

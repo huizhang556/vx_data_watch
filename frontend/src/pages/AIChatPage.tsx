@@ -15,6 +15,7 @@ import {
   FileText,
   ImagePlus,
   Pin,
+  PinOff,
   Search,
   Send,
   Trash2,
@@ -98,6 +99,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const resizingChatRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const messageRequestRef = useRef(0);
+  const creatingCategoryRef = useRef(false);
+  const creatingSessionRef = useRef(false);
   const lastNodeClickRef = useRef<{ key: string; at: number } | null>(null);
 
   useEffect(() => {
@@ -170,16 +173,6 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     }
     const provider = providers.find((item) => item.id === providerId);
     setModelOptions(provider?.models?.length ? provider.models : provider?.model ? [provider.model] : []);
-    void api<{ models: string[] }>(`/api/ai/providers/${providerId}/models?${query({ account_id: account.id })}`)
-      .then((result) => {
-        if (result.models.length) {
-          setModelOptions(result.models);
-          setModel((current) => result.models.includes(current) ? current : result.models[0]);
-        }
-      })
-      .catch(() => {
-        // The configured default model remains available when listing is unavailable.
-      });
   }, [providerId, account, providers]);
   const createCategory = () => {
     let name = timestampName("新分类");
@@ -196,17 +189,22 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
         />
       ),
       onOk: async () => {
-        if (!name.trim()) return;
-        const row = await api<Category>("/api/ai-chat/categories", {
-          method: "POST",
-          body: JSON.stringify({ name, provider_id: providerId }),
-        });
-        setCategories((items) => [...items, row]);
+        if (!name.trim() || creatingCategoryRef.current) return;
+        creatingCategoryRef.current = true;
+        try {
+          const row = await api<Category>("/api/ai-chat/categories", {
+            method: "POST",
+            body: JSON.stringify({ name, provider_id: providerId }),
+          });
+          setCategories((items) => [...items, row]);
+        } finally {
+          creatingCategoryRef.current = false;
+        }
       },
     });
   };
-  const editCategory = () => {
-    const category = categories.find((item) => item.id === categoryId);
+  const editCategory = (targetCategoryId = categoryId) => {
+    const category = categories.find((item) => item.id === targetCategoryId);
     if (!category) return;
     let name = category.name;
     Modal.confirm({
@@ -247,8 +245,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     })));
     setDragCategoryId(null);
   };
-  const deleteCategory = () => {
-    const category = categories.find((item) => item.id === categoryId);
+  const deleteCategory = (targetCategoryId = categoryId) => {
+    const category = categories.find((item) => item.id === targetCategoryId);
     if (!category) return;
     Modal.confirm({
       title: "删除分类",
@@ -282,21 +280,27 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       },
     });
   };
-  const createSession = async () => {
-    if (!categoryId) {
+  const createSession = async (targetCategoryId = categoryId) => {
+    if (creatingSessionRef.current) return;
+    if (!targetCategoryId) {
       message.warning("请先创建或选择一个分类");
       return;
     }
-    const row = await api<Session>("/api/ai-chat/sessions", {
+    creatingSessionRef.current = true;
+    try {
+      const row = await api<Session>("/api/ai-chat/sessions", {
       method: "POST",
       body: JSON.stringify({
         title: timestampName("新对话"),
-        category_id: categoryId,
+        category_id: targetCategoryId,
         provider_id: providerId,
       }),
-    });
-    setSessions((items) => [row, ...items]);
-    await openSession(row);
+      });
+      setSessions((items) => [row, ...items]);
+      await openSession(row);
+    } finally {
+      creatingSessionRef.current = false;
+    }
   };
   const updateSession = async (
     session: Session,
@@ -319,6 +323,36 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       setActiveSession(null);
       setMessages([]);
     }
+  };
+  const editMessage = (item: ChatMessage) => {
+    let content = item.content;
+    Modal.confirm({
+      title: "编辑消息",
+      content: <Input.TextArea autoFocus defaultValue={content} autoSize={{ minRows: 3, maxRows: 8 }} onChange={(event) => { content = event.target.value; }} />,
+      onOk: async () => {
+        const row = await api<{ id: number; content: string }>(`/api/ai-chat/messages/${item.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ content }),
+        });
+        setMessages((items) => items.map((messageItem) => messageItem.id === row.id ? { ...messageItem, content: row.content } : messageItem));
+      },
+    });
+  };
+  const deleteMessage = (item: ChatMessage) => {
+    Modal.confirm({
+      title: "删除消息",
+      content: "确认删除这条用户消息吗？",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await api(`/api/ai-chat/messages/${item.id}`, { method: "DELETE" });
+        setMessages((items) => items.filter((messageItem) => messageItem.id !== item.id));
+      },
+    });
+  };
+  const clearMessages = async () => {
+    if (!activeSession || !messages.length) return;
+    await api(`/api/ai-chat/sessions/${activeSession.id}/messages`, { method: "DELETE" });
+    setMessages([]);
   };
   const exportSession = async (format: "markdown" | "json") => {
     if (!activeSession) return;
@@ -536,10 +570,10 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
               onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
               onClick={() => { if (acceptNodeClick(`search-${session.id}`)) void openSession(session); }}
             >
-              <span className="ai-chat-tree-name">{session.pinned && <Pin size={13} />} {session.title}</span>
+              <span className="ai-chat-tree-name">{session.title}</span>
               <Space size={0} className="ai-chat-tree-actions">
                 <Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} />
-                <Button type="text" size="small" icon={<Pin size={13} />} aria-label="置顶对话" title="置顶对话" onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} />
+                <Button type="text" size="small" icon={session.pinned ? <PinOff size={13} /> : <Pin size={13} />} aria-label={session.pinned ? "取消置顶对话" : "置顶对话"} title={session.pinned ? "取消置顶对话" : "置顶对话"} onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} />
                 <Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); void removeSession(session); }} />
               </Space>
               <span className="ai-chat-search-category">{categoryNames.get(session.category_id ?? -1) || "未分类"}</span>
@@ -554,16 +588,16 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                 <Button type="text" size="small" icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />} aria-label={expanded ? "收起分类" : "展开分类"} />
                 <span className="ai-chat-tree-name">{category.name}</span>
                 <Space size={0} className="ai-chat-tree-actions">
-                  <Button type="text" size="small" icon={<Plus size={14} />} aria-label="添加对话" title="添加对话" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); void createSession(); }} />
-                  <Button type="text" size="small" icon={<Edit3 size={14} />} aria-label="编辑分类" title="编辑分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); editCategory(); }} />
-                  <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (a.sort_order ?? 0) - (b.sort_order ?? 0)))) }} />
-                  <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(); }} />
+                  <Button type="text" size="small" icon={<Plus size={14} />} aria-label="添加对话" title="添加对话" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); void createSession(category.id); }} />
+                  <Button type="text" size="small" icon={<Edit3 size={14} />} aria-label="编辑分类" title="编辑分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); editCategory(category.id); }} />
+                  <Button type="text" size="small" icon={category.pinned ? <PinOff size={14} /> : <Pin size={14} />} aria-label={category.pinned ? "取消置顶分类" : "置顶分类"} title={category.pinned ? "取消置顶分类" : "置顶分类"} onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.pinned ? b.id - a.id : (a.sort_order ?? 0) - (b.sort_order ?? 0))))) }} />
+                  <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(category.id); }} />
                 </Space>
               </div>
               {expanded && categorySessions.map((session) => <div key={session.id} className={`ai-chat-session ai-chat-tree-session ${activeSession?.id === session.id ? "active" : ""}`} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => { if (acceptNodeClick(`session-${session.id}`)) void openSession(session); }}>
                 <input type="checkbox" checked={selectedSessions.includes(session.id)} onChange={(event) => { event.stopPropagation(); setSelectedSessions((items) => event.target.checked ? [...items, session.id] : items.filter((id) => id !== session.id)); }} onClick={(event) => event.stopPropagation()} />
-                <span className="ai-chat-tree-name">{session.pinned && <Pin size={13} />} {session.title}</span>
-                <Space size={0} className="ai-chat-tree-actions"><Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} /><Button type="text" size="small" icon={<Pin size={13} />} aria-label="置顶对话" title="置顶对话" onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} /><Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); void removeSession(session); }} /></Space>
+                <span className="ai-chat-tree-name">{session.title}</span>
+                <Space size={0} className="ai-chat-tree-actions"><Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} /><Button type="text" size="small" icon={session.pinned ? <PinOff size={13} /> : <Pin size={13} />} aria-label={session.pinned ? "取消置顶对话" : "置顶对话"} title={session.pinned ? "取消置顶对话" : "置顶对话"} onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} /><Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); void removeSession(session); }} /></Space>
               </div>)}
             </div>;
           })}
@@ -675,6 +709,13 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                         </a>
                       ),
                     )}
+                    {item.role === "user" && (
+                      <div className="ai-chat-message-actions">
+                        <Button type="text" size="small" icon={<Edit3 size={12} />} aria-label="编辑消息" title="编辑消息" onClick={() => editMessage(item)} />
+                        <Button type="text" size="small" icon={<Copy size={12} />} aria-label="复制消息" title="复制消息" onClick={() => void navigator.clipboard.writeText(item.content).then(() => message.success("消息已复制"), () => message.error("消息复制失败"))} />
+                        <Button type="text" danger size="small" icon={<Trash2 size={12} />} aria-label="删除消息" title="删除消息" onClick={() => deleteMessage(item)} />
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -759,6 +800,15 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                 placeholder="输入消息，Enter 发送，Shift+Enter 换行"
               />
               <Space>
+                <Button
+                  type="text"
+                  danger
+                  icon={<Trash2 size={16} />}
+                  aria-label="清空对话"
+                  title="清空对话"
+                  disabled={!messages.length || busy}
+                  onClick={() => void clearMessages()}
+                />
                 <Upload
                   accept="image/*,.txt,.md,.csv,.json"
                   multiple

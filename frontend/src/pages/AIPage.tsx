@@ -12,7 +12,7 @@ import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../
 import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
-interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
+interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; models?: string[]; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
 interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
@@ -57,12 +57,6 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [quickProviderId, setQuickProviderId] = useState<number>()
   const [quickModel, setQuickModel] = useState('')
   const [quickModels, setQuickModels] = useState<string[]>([])
-  useEffect(() => {
-    if (!quickConfigOpen || !quickProviderId || !account) return
-    void api<{ models: string[] }>(`/api/ai/providers/${quickProviderId}/models?${query({ account_id: account.id })}`).then((result) => {
-      if (result.models.length) { setQuickModels(result.models); setQuickModel((current) => result.models.includes(current) ? current : result.models[0]) }
-    }).catch(() => undefined)
-  }, [quickConfigOpen, quickProviderId, account])
   const [configAction, setConfigAction] = useState<'new' | 'edit'>('new')
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
@@ -95,7 +89,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     ])
     setProviders(rows)
     setProvider(active)
-    if (active) { form.setFieldsValue({ ...active, account_id: accountId, provider_id: active.id, api_key: undefined }); setModels([active.model]) }
+    if (active) { form.setFieldsValue({ ...active, account_id: accountId, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]) }
     else { form.resetFields(); form.setFieldsValue({ account_id: accountId, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]) }
   }
   const loadHistories = () => account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
@@ -153,7 +147,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setSaveLoading(true); setError('')
     try {
       const values = await form.validateFields()
-      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
+      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
       await loadProviders(account!.id); setConfigOpen(false); message.success('接口配置已保存')
     } catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
@@ -171,7 +165,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
 
   const editProvider = (item: Provider) => {
     form.setFieldsValue({ ...item, account_id: account!.id, provider_id: item.id, api_key: undefined })
-    setModels(item.model ? [item.model] : [])
+    setModels(item.models?.length ? item.models : item.model ? [item.model] : [])
     setTested(false)
     setError('')
     setConfigAction('edit')
@@ -253,9 +247,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setQuickModels([selected.model])
     setQuickConfigName(`${selected.name} - ${selected.model}`)
     setQuickConfigOpen(true)
-    void api<{ models: string[] }>(`/api/ai/providers/${selected.id}/models?${query({ account_id: account.id })}`)
-      .then((result) => { if (result.models.length) { setQuickModels(result.models); setQuickModel((current) => result.models.includes(current) ? current : result.models[0]) } })
-      .catch(() => undefined)
+    setQuickModels(selected.models?.length ? selected.models : selected.model ? [selected.model] : [])
   }
   const submitQuickConfig = async () => {
     if (!quickProviderId || !quickModel || !quickConfigName.trim()) return
@@ -385,9 +377,9 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>
       </Modal>
-      <Modal title="添加快捷配置" open={quickConfigOpen} onCancel={() => setQuickConfigOpen(false)} onOk={() => void submitQuickConfig()} okText="保存">
+      <Modal title="添加快捷配置" open={quickConfigOpen} onCancel={() => setQuickConfigOpen(false)} onOk={() => void submitQuickConfig().catch((cause) => message.error(cause instanceof Error ? cause.message : '快捷配置保存失败'))} okText="保存">
         <Input value={quickConfigName} onChange={(event) => setQuickConfigName(event.target.value)} placeholder="快捷配置名称" />
-        <Select style={{ width: '100%', marginTop: 12 }} value={quickProviderId} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { const item = providers.find((row) => row.id === value); setQuickProviderId(value); setQuickModel(item?.model || ''); setQuickModels(item?.model ? [item.model] : []) }} placeholder="选择接口配置" />
+        <Select style={{ width: '100%', marginTop: 12 }} value={quickProviderId} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { const item = providers.find((row) => row.id === value); const available = item?.models?.length ? item.models : item?.model ? [item.model] : []; setQuickProviderId(value); setQuickModel(available[0] || ''); setQuickModels(available) }} placeholder="选择接口配置" />
         <Select style={{ width: '100%', marginTop: 12 }} value={quickModel || undefined} options={quickModels.map((item) => ({ value: item, label: item }))} onChange={setQuickModel} placeholder="选择模型" />
       </Modal>
     </div>

@@ -88,7 +88,9 @@ select_registry() {
   public_ip="$(detect_ip)"
   country="$(detect_country || true)"
   DETECTED_COUNTRY="$country"
+  local default_choice=1
   if [ "$country" = CN ]; then
+    default_choice=2
     recommendation='阿里云 ACR（中国大陆服务器优先建议）'
     log "检测结果：公网 IP ${public_ip:-未知}，国家代码 CN（中国大陆）。"
     log "明确建议：$recommendation；也可以选择 Docker Hub。"
@@ -103,8 +105,9 @@ select_registry() {
     log '明确建议：默认选择 Docker Hub；如果服务器位于中国大陆或 Docker Hub 不稳定，再选择阿里云 ACR。'
     log '1) Docker Hub（默认）  2) 阿里云 ACR'
   fi
-  read -r -p '请选择应用镜像源 [1-2，默认 1]：' choice || true
-  [ "${choice:-1}" = 2 ] && SELECTED_IMAGE="$ACR_IMAGE"
+  read -r -p "请选择应用镜像源 [1-2，默认 ${default_choice}]：" choice || true
+  choice="${choice:-$default_choice}"
+  [ "$choice" = 2 ] && SELECTED_IMAGE="$ACR_IMAGE" || SELECTED_IMAGE="$DOCKERHUB_IMAGE"
 }
 select_database() {
   local choice
@@ -171,6 +174,41 @@ uninstall_cmd() {
     *) log '已取消卸载。' ;;
   esac
 }
+install_cmd_v2() {
+  need_root
+  log "开始安装 VX Data Watch，项目目录：$PROJECT_DIR"
+  check_os
+  log "正在检查 Docker 和系统依赖..."
+  install_docker
+  mkdir -p "$PROJECT_DIR"
+  if [ -f "$PROJECT_DIR/.env" ]; then
+    log "检测到已有 $PROJECT_DIR/.env，将沿用现有配置。"
+  else
+    log "首次安装配置：即将选择镜像源和数据库。"
+    select_registry
+    select_database
+  fi
+  select_mirror
+  fetch_compose
+  download "$DOWNLOAD_BASE/scripts/vx-data.sh" "$PROJECT_DIR/vx-data.sh"
+  chmod 700 "$PROJECT_DIR/vx-data.sh"
+  generate_env
+  load_env
+  log "正在拉取应用镜像：$IMAGE"
+  retry docker pull "$IMAGE" || die '镜像拉取失败，请检查网络、代理或镜像加速配置。'
+  if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then
+    compose up -d postgres
+    for i in $(seq 1 30); do
+      compose exec -T postgres pg_isready -U "${VX_POSTGRES_USER:-vx_user}" -d "${VX_POSTGRES_DB:-vx_data}" >/dev/null 2>&1 && break
+      sleep 2
+    done
+  fi
+  log "正在启动应用容器..."
+  compose up -d --no-build
+  wait_healthy || die '服务启动后健康检查失败，请执行 docker compose logs app 查看日志。'
+  log "安装完成：请访问 http://服务器IP:${VX_HOST_PORT:-10000}（容器内部端口为 8000）。"
+}
+
 usage() { cat <<'EOF'
 用法：sudo ./scripts/vx-data.sh <install|update|backup|migrate|uninstall> [参数]
 
@@ -184,5 +222,5 @@ uninstall           选择保留数据或完全删除，并单独选择是否删
 环境变量：VX_DOWNLOAD_BASE_URL、VX_RETRY_COUNT、VX_SKIP_MIRROR_PROMPT=1、VX_FORCE_MIRROR_PROMPT=1、VX_ASSUME_YES=1
 EOF
 }
-main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd "$@" ;; update) update_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
+main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; update) update_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
 main "$@"

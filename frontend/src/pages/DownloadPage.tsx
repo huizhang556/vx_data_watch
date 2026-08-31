@@ -9,6 +9,7 @@ import {
   Space,
   Spin,
   Table,
+  Tabs,
   Typography,
   message,
 } from "antd";
@@ -105,6 +106,7 @@ export default function DownloadPage({
   const [cookieStatus, setCookieStatus] = useState<CookieStatus | null>(null);
   const [cookiesValid, setCookiesValid] = useState(false);
   const [localDirectoryName, setLocalDirectoryName] = useState("");
+  const [queueTab, setQueueTab] = useState<"queue" | "completed">("queue");
   useEffect(() => {
     if (!isConfig) return;
     void api<Settings>("/api/download/settings")
@@ -342,12 +344,39 @@ export default function DownloadPage({
     {
       title: "进度",
       dataIndex: "progress",
-      width: 150,
-      render: (progress: number) => (
-        <Progress percent={Math.round(progress)} size="small" />
+      width: 250,
+      render: (progress: number, task: Task) => (
+        <Space size={6} className="download-progress-cell">
+          {task.status === "downloading" && (
+            <Button size="small" type="text" icon={<Pause size={14} />} aria-label="暂停此任务" title="暂停此任务" onClick={(event) => { event.stopPropagation(); void taskAction(task, "pause"); }} />
+          )}
+          {task.status === "paused" && (
+            <Button size="small" type="text" icon={<Play size={14} />} aria-label="继续此任务" title="继续此任务" onClick={(event) => { event.stopPropagation(); void taskAction(task, "resume"); }} />
+          )}
+          {["queued", "downloading"].includes(task.status) && (
+            <Button size="small" type="text" icon={<XCircle size={14} />} aria-label="取消此任务" title="取消此任务" onClick={(event) => { event.stopPropagation(); void taskAction(task, "cancel"); }} />
+          )}
+          {["completed", "failed", "cancelled"].includes(task.status) && (
+            <Button size="small" type="text" danger icon={<Trash2 size={14} />} aria-label="删除此任务" title="删除此任务" onClick={(event) => { event.stopPropagation(); void taskAction(task, "delete"); }} />
+          )}
+          <Progress percent={Math.round(progress)} size="small" />
+          {task.status === "completed" && (
+            <Button
+              size="small"
+              type="text"
+              icon={<Download size={14} />}
+              aria-label="保存至本地"
+              title="保存至本地"
+              onClick={(event) => { event.stopPropagation(); void downloadTaskFile(task); }}
+            />
+          )}
+        </Space>
       ),
     },
   ];
+  const visibleTasks = queueTab === "completed"
+    ? tasks.filter((task) => task.status === "completed")
+    : tasks.filter((task) => task.status !== "completed");
   if (isConfig && loading)
     return (
       <div className="page-loading">
@@ -402,8 +431,16 @@ export default function DownloadPage({
               </Button>
             </div>
           </Card>
-          <Card className="download-content-group" title="下载队列">
-            {tasks.length ? (
+          <Card className="download-content-group" title={null}>
+            <Tabs
+              activeKey={queueTab}
+              onChange={(key) => { setSelected([]); setQueueTab(key as "queue" | "completed"); }}
+              items={[
+                { key: "queue", label: `下载队列${tasks.some((task) => task.status !== "completed") ? ` (${tasks.filter((task) => task.status !== "completed").length})` : ""}` },
+                { key: "completed", label: `完成队列${tasks.some((task) => task.status === "completed") ? ` (${tasks.filter((task) => task.status === "completed").length})` : ""}` },
+              ]}
+            />
+            {visibleTasks.length ? (
               <Table
                 rowKey="id"
                 size="small"
@@ -413,24 +450,18 @@ export default function DownloadPage({
                   onChange: (keys) => setSelected(keys as number[]),
                 }}
                 columns={columns}
-                dataSource={tasks}
+                dataSource={visibleTasks}
                 scroll={{ x: 900 }}
               />
             ) : (
               <div className="download-empty">
                 <Download size={40} strokeWidth={1.5} />
-                <Typography.Text>暂无下载任务</Typography.Text>
+                <Typography.Text>{queueTab === "completed" ? "暂无已完成任务" : "暂无下载任务"}</Typography.Text>
               </div>
             )}
           </Card>
           <Card className="download-content-group" title="下载操作">
-            <div className="download-path-row">
-              <Typography.Text>下载路径</Typography.Text>
-              <Input value={`/app/data/${settings.output_dir}`} readOnly />
-              <Typography.Text type="secondary">
-                在下载配置中修改
-              </Typography.Text>
-            </div>
+            <Typography.Text type="secondary" className="download-bulk-hint">开始、暂停、继续、取消和删除选中仅作用于当前已勾选的任务；“清空列表”会清理所有已完成、失败或已取消的任务。</Typography.Text>
             <Space wrap>
               <Button
                 type="primary"
@@ -488,7 +519,6 @@ export default function DownloadPage({
               >
                 清空列表
               </Button>
-              {selectedTasks.filter((task) => task.status === "completed").map((task) => <Button key={`download-${task.id}`} icon={<Download size={16} />} onClick={() => void downloadTaskFile(task)}>下载 {task.title || `任务 ${task.id}`}</Button>)}
             </Space>
           </Card>
         </div>
@@ -669,8 +699,28 @@ export default function DownloadPage({
             </Checkbox>
           </Card>
           <Card className="download-config-group" title="保存位置">
-            <div className="local-save-picker"><Button type="primary" icon={<Download size={16} />} onClick={() => void chooseLocalDirectory()}>选择本地文件夹</Button><Typography.Text type="secondary">{localDirectoryName ? `已选择：${localDirectoryName}` : "尚未选择，将使用浏览器默认下载目录"}</Typography.Text></div>
-            <Alert type="info" showIcon message="下载任务在服务器端执行。任务完成后，在“下载内容”中点击“下载”即可保存到这里选择的本地文件夹；不支持目录选择的浏览器会使用其默认下载目录。" style={{ marginTop: 12 }} />
+            <div className="download-location-row">
+              <Typography.Text strong className="download-location-label">选择服务器保存位置</Typography.Text>
+              <Input readOnly value={`/app/data/${settings.output_dir}`} />
+              <Typography.Text type="secondary" className="download-location-description">
+                下载任务在服务器端执行，视频文件会先保存到这里，供任务处理和后续下载使用。
+              </Typography.Text>
+            </div>
+            <div className="download-location-row download-local-location-row">
+              <Typography.Text strong className="download-location-label">选择本地保存位置</Typography.Text>
+              <div className="local-save-picker">
+                <Button type="primary" icon={<Download size={16} />} onClick={() => void chooseLocalDirectory()}>
+                  选择本地文件夹
+                </Button>
+                <Typography.Text type="secondary">
+                  {localDirectoryName ? `已选择：${localDirectoryName}` : "未选择，将使用浏览器默认下载目录"}
+                </Typography.Text>
+              </div>
+              <Typography.Text type="secondary" className="download-location-description">
+                任务完成后，在“下载内容”中点击“下载”，文件会保存到此目录。浏览器不会向网页公开本机绝对路径。
+              </Typography.Text>
+            </div>
+            <Alert type="info" showIcon message="服务器保存位置和本地保存位置相互独立：服务器用于执行和暂存任务，本地用于将完成的视频取回到你的电脑。" style={{ marginTop: 12 }} />
           </Card>
           <div className="download-config-actions">
             <Button type="primary" loading={saving} onClick={() => void save()}>

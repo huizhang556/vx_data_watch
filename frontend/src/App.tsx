@@ -30,7 +30,6 @@ import {
   Info,
   LogOut,
   MessageCircle,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Palette,
@@ -81,7 +80,7 @@ const items = [
       { key: "/users/local", label: "本地用户" },
     ],
   },
-  { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat", label: "AI 聊天" }, { key: "/ai-chat/config", label: "AI 配置" }] },
+  { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat/config", label: "AI 配置" }, { key: "/ai-chat", label: "AI 聊天" }] },
   { key: "/accounts", icon: <Video size={19} />, label: "视频号账号" },
   {
     key: "/analysis",
@@ -184,7 +183,7 @@ export default function App() {
     : items
         .filter((item) => ["/users", "/ai-chat-menu", "/analysis", "/download", "/about", "/usage"].includes(item.key))
         .map((item) => item.key === "/users"
-          ? { ...item, children: item.children?.filter((child) => child.key === "/users/accounts") }
+          ? { ...item, label: "视频号管理", children: item.children?.filter((child) => child.key === "/users/accounts").map((child) => ({ ...child, label: "视频号管理" })) }
           : item.key === "/ai-chat-menu"
             ? { ...item, children: item.children?.filter((child) => child.key === "/ai-chat") }
             : item);
@@ -214,14 +213,13 @@ export default function App() {
   const themeIcons = {
     system: <Sun size={16} />,
     morning: <Sun size={16} />,
-    night: <Moon size={16} />,
     rose: <Palette size={16} />,
     lavender: <Sparkles size={16} />,
     mist: <Cloud size={16} />,
     mint: <Leaf size={16} />,
     cream: <Coffee size={16} />,
   };
-  const themeMenu: MenuProps["items"] = (["morning", "night", "rose", "lavender", "mist", "mint", "cream"] as ThemeMode[]).map((mode) => ({
+  const themeMenu: MenuProps["items"] = (["morning", "rose", "lavender", "mist", "mint", "cream"] as ThemeMode[]).map((mode) => ({
     key: mode,
     icon: themeIcons[mode],
     label: THEME_LABELS[mode],
@@ -307,28 +305,14 @@ export default function App() {
               className="theme-toggle"
               type="text"
               icon={
-                theme === "night" ? (
-                  <Sun size={18} />
-                ) : theme === "rose" ? (
+                theme === "rose" ? (
                   <Palette size={18} />
                 ) : (
-                  <Moon size={18} />
+                  <Sun size={18} />
                 )
               }
-              title={
-                theme === "morning"
-                  ? "切换到黑夜模式"
-                  : theme === "night"
-                    ? "切换到柔和玫瑰模式"
-                    : "切换到白天模式"
-              }
-              aria-label={
-                theme === "morning"
-                  ? "切换到黑夜模式"
-                  : theme === "night"
-                    ? "切换到柔和玫瑰模式"
-                    : "切换到白天模式"
-              }
+              title="切换主题"
+              aria-label="切换主题"
               data-theme-mode={theme}
               onClick={toggleTheme}
             />

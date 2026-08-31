@@ -1,6 +1,6 @@
 [project]
 name = "vx-data"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local-first WeChat Channels analytics"
 requires-python = ">=3.12,<3.13"
 dependencies = [

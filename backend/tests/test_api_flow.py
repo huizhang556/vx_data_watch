@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from zipfile import ZipFile
+from io import BytesIO
 
 from .test_importer import CSV_SAMPLE
 
@@ -33,6 +35,42 @@ def test_admin_can_create_user(client: TestClient, auth: dict[str, str]) -> None
     assert any(row["username"] == "viewer" for row in users.json())
 
 
+def test_user_accounts_are_private_from_administrator(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    from app.main import app
+
+    # Use an isolated cookie jar so the shared admin fixture remains valid for
+    # the tests that follow this one.
+    with TestClient(app) as session:
+        login = session.post(
+            "/api/auth/login", json={"username": "viewer", "password": "viewer-pass-123"}
+        )
+        assert login.status_code == 200, login.text
+        viewer_headers = {"X-CSRF-Token": login.json()["csrf_token"]}
+
+        created = session.post(
+            "/api/accounts",
+            headers=viewer_headers,
+            json={"name": "普通用户私有账号", "description": "仅本人可见"},
+        )
+        assert created.status_code == 201, created.text
+        private_account_id = created.json()["id"]
+
+        admin_login = session.post(
+            "/api/auth/login", json={"username": "admin", "password": "secure-pass-123"}
+        )
+        assert admin_login.status_code == 200, admin_login.text
+
+        listed = session.get("/api/accounts")
+        assert listed.status_code == 200
+        assert private_account_id not in {row["id"] for row in listed.json()}
+        denied = session.get(
+            f"/api/analytics/available-dates?account_id={private_account_id}"
+        )
+        assert denied.status_code == 404
+
+
 def test_auth_settings_forms_update_independently(client: TestClient, auth: dict[str, str]) -> None:
     email_only = client.put(
         "/api/settings/auth", headers=auth, json={"registration_enabled": True}
@@ -60,6 +98,52 @@ def test_auth_settings_forms_update_independently(client: TestClient, auth: dict
     assert reset.status_code == 200, reset.text
 
 
+def test_download_cookies_are_saved_per_user(client: TestClient, auth: dict[str, str]) -> None:
+    cookies = ".youtube.com\tTRUE\t/\tTRUE\t0\tYSC\ttest-token"
+    response = client.put(
+        "/api/download/settings",
+        headers=auth,
+        json={"cookies": cookies},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["cookies_set"] is True
+    assert response.json()["cookies"] == ""
+    status = client.get("/api/download/cookies/status")
+    assert status.status_code == 200
+    assert status.json()["configured"] is True
+    assert status.json()["valid"] is True
+
+
+def test_completed_download_can_be_retrieved_as_archive(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    from app.config import get_settings
+    from app.database import SessionLocal
+    from app.models import DownloadTask
+
+    created = client.post(
+        "/api/download/tasks", headers=auth, json={"urls": ["https://youtu.be/test-video"]}
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()[0]["id"]
+    output_dir = get_settings().data_dir / f"download-test-{task_id}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "video.mp4").write_bytes(b"test-video")
+    with SessionLocal() as db:
+        task = db.get(DownloadTask, task_id)
+        assert task is not None
+        task.status = "completed"
+        task.progress = 100
+        task.output_path = str(output_dir)
+        db.commit()
+
+    response = client.get(f"/api/download/tasks/{task_id}/file")
+    assert response.status_code == 200, response.text
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert archive.namelist() == ["video.mp4"]
+        assert archive.read("video.mp4") == b"test-video"
+
+
 def test_admin_can_check_and_queue_system_update(
     client: TestClient,
     auth: dict[str, str],
@@ -70,7 +154,7 @@ def test_admin_can_check_and_queue_system_update(
 
     async def versions(_repository: str, _registry: str = "docker.io") -> list[dict[str, str]]:
         return [
-            {"version": "0.5.1", "published_at": "2026-08-31T00:00:00Z"},
+            {"version": "0.5.2", "published_at": "2026-09-01T00:00:00Z"},
             {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z"},
             {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
                 {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z"},
@@ -84,7 +168,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.5.1"
+    assert checked.json()["current_version"] == "0.5.2"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.4.3", "0.4.2", "0.4.0", "0.3.4"]
 
     queued = client.post(

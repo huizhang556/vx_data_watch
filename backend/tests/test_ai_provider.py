@@ -33,6 +33,43 @@ def test_draft_models_and_test_do_not_change_saved_provider(client: TestClient, 
     assert client.post("/api/ai/provider/test-and-save", headers=auth, json=_payload("bad-model", account_id)).status_code == 502
 
 
+def test_provider_model_cache_is_returned_and_used_by_quick_configs(
+    client: TestClient, auth: dict[str, str], account_id: int, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    async def models(**_kwargs: Any) -> list[str]:
+        return ["cached-a", "cached-b"]
+
+    async def success(**_kwargs: Any) -> str:
+        return "连接成功"
+
+    monkeypatch.setattr(main, "list_provider_models", models)
+    monkeypatch.setattr(main, "test_provider_values", success)
+    provider = client.post(
+        "/api/ai/provider/test-and-save",
+        headers=auth,
+        json={**_payload("cached-a", account_id), "models": ["cached-a", "cached-b"]},
+    )
+    assert provider.status_code == 200, provider.text
+    provider_id = provider.json()["id"]
+
+    listed = client.get(f"/api/ai/providers?account_id={account_id}")
+    cached = next(row for row in listed.json() if row["id"] == provider_id)
+    assert cached["models"] == ["cached-a", "cached-b"]
+
+    quick = client.post(
+        "/api/ai/quick-configs",
+        headers=auth,
+        json={"name": "缓存模型", "provider_id": provider_id, "model": "cached-b"},
+    )
+    assert quick.status_code == 201, quick.text
+    invalid = client.post(
+        "/api/ai/quick-configs",
+        headers=auth,
+        json={"name": "非法模型", "provider_id": provider_id, "model": "not-cached"},
+    )
+    assert invalid.status_code == 422
+
+
 def test_native_provider_protocols(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     requests: list[httpx.Request] = []
     def handler(request: httpx.Request) -> httpx.Response:

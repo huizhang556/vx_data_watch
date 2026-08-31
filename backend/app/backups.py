@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 from .config import get_settings
 from .security import decrypt_bytes, encrypt_bytes
@@ -32,6 +33,25 @@ def _postgres_url() -> str:
     return parsed.render_as_string(hide_password=False)
 
 
+def _postgres_command() -> tuple[str, dict[str, str]]:
+    """Return a password-free connection URL and a private client environment."""
+    parsed = make_url(get_settings().database_url)
+    password = parsed.password or ""
+    drivername = "postgresql" if parsed.drivername.startswith("postgresql+") else parsed.drivername
+    safe_url = URL.create(
+        drivername=drivername,
+        username=parsed.username,
+        host=parsed.host,
+        port=parsed.port,
+        database=parsed.database,
+        query=parsed.query,
+    ).render_as_string(hide_password=False)
+    environment = os.environ.copy()
+    if password:
+        environment["PGPASSWORD"] = password
+    return safe_url, environment
+
+
 def create_backup() -> Path:
     settings = get_settings()
     backup_dir = settings.data_dir / "backups"
@@ -40,10 +60,12 @@ def create_backup() -> Path:
     target = backup_dir / f"vx-data-{timestamp}.vxbackup"
     if _is_postgres():
         try:
+            postgres_url, environment = _postgres_command()
             result = subprocess.run(
-                ["pg_dump", "--no-owner", "--no-privileges", "--dbname", _postgres_url()],
+                ["pg_dump", "--no-owner", "--no-privileges", "--dbname", postgres_url],
                 check=True,
                 capture_output=True,
+                env=environment,
             )
         except FileNotFoundError as exc:
             raise RuntimeError("未安装 PostgreSQL 客户端工具 pg_dump") from exc
@@ -81,11 +103,13 @@ def restore_backup(backup_path: Path) -> None:
     plaintext = decrypt_bytes(backup_path.read_bytes())
     if _is_postgres():
         try:
+            postgres_url, environment = _postgres_command()
             subprocess.run(
-                ["psql", "--set", "ON_ERROR_STOP=1", "--dbname", _postgres_url()],
+                ["psql", "--set", "ON_ERROR_STOP=1", "--dbname", postgres_url],
                 input=plaintext,
                 check=True,
                 capture_output=True,
+                env=environment,
             )
         except FileNotFoundError as exc:
             raise RuntimeError("未安装 PostgreSQL 客户端工具 psql") from exc

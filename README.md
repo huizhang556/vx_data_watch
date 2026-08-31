@@ -12,10 +12,10 @@ VX Data Watch 是一个本地优先的微信视频号数据分析与运营平台
 - **AI 配置**：管理员维护全局的官方 API 或 OPENAI 兼容接口，查询模型、测试连通性并发布可用配置；普通用户只能选择管理员已发布的配置，不能查看或修改 API Key。
 - **AI 快速配置**：每个用户最多保存 5 个常用模型组合，支持创建日期、关联分析数量、编辑、应用和删除，并在 AI 建议页面持久化保存。
 - **模型协议**：支持 OpenAI Chat Completions/Responses，以及 Anthropic Messages、Gemini、Grok 等协议适配。
-- **视频下载**：支持下载配置、Cookies/代理检测、格式和质量选择、下载队列、暂停/继续、转码和完成文件保存。
+- **视频下载**：支持下载配置、Cookies/代理检测、格式和质量选择；下载内容分为下载队列和完成队列，支持批量及单任务暂停/继续/取消/删除，并可将服务器完成文件保存到本地。
 - **用户与权限**：支持管理员、超级会员、会员和普通用户等级；用户资料、视频号账号、AI 会话和使用次数按用户持久化并隔离。
 - **系统安全**：支持邮箱注册与密码重置、Cloudflare Turnstile、人机验证开关、审计日志、加密 API Key 和加密备份。
-- **主题界面**：提供晨曦、暮夜、玫瑰柔和、薰衣草、雾蓝、薄荷和奶油七套主题，支持手动选择、跟随系统并保存到浏览器本地。新增功能区域统一使用 CSS Variables，覆盖背景、卡片、文字、边框、按钮、链接及成功/警告/错误状态。
+- **主题界面**：提供晨曦、玫瑰柔和、薰衣草、雾蓝、薄荷和奶油六套主题，支持手动选择、保存到浏览器本地；跟随系统时统一使用晨曦模式。新增功能区域统一使用 CSS Variables，覆盖背景、卡片、文字、边框、按钮、链接及成功/警告/错误状态。
 - **部署与运维**：支持一键安装/更新/备份迁移/卸载、Docker Compose 和 Ubuntu/Debian 源码部署；数据库可选择 SQLite 或 PostgreSQL，代码源支持 GitHub/Gitee，镜像源支持 Docker Hub/阿里云 ACR。
 - **在线更新**：管理员可检测版本、选择受信任镜像源并执行更新；更新前自动备份，失败时回滚，普通用户无更新权限。
 
@@ -63,7 +63,7 @@ nano .env
 
 | 变量 | 什么时候需要配置 | 示例 |
 | --- | --- | --- |
-| `VX_IMAGE` | Docker Compose 部署时确认镜像源；海外默认 Docker Hub，中国大陆可按提示选择阿里云 ACR | `docker.io/litehub/vx-data-watch:latest` |
+| `VX_IMAGE` | Docker Compose 部署时确认镜像源；一键脚本会按地区默认选择，海外为 Docker Hub，中国大陆为阿里云 ACR | `docker.io/litehub/vx-data-watch:latest` |
 | `VX_MASTER_KEY` | 用于加密密钥和备份；一键脚本会自动生成，手动部署可留空让程序生成 | `openssl rand -base64 32` 的输出 |
 
 选择 PostgreSQL 时，必须同时设置 `VX_DATABASE_MODE=postgres`、`VX_DATABASE_URL` 以及 PostgreSQL 用户、密码和数据库名；不设置时使用 SQLite。
@@ -108,16 +108,17 @@ openssl rand -base64 32
 
 ## 一键运维脚本（小白推荐安装方式）
 
-脚本将项目正式安装到 `/opt/vx-data-watch`，下载脚本所在目录只是临时工作目录，不是项目安装目录。宿主机默认端口为 `10000`，容器内部端口为 `8000`。无需提前准备 `.env` 或手动安装 Docker；脚本会在安装过程中询问必要选项。海外服务器使用 GitHub；中国大陆无法访问 GitHub 时使用 Gitee。
+脚本和项目文件统一放在 `/opt/vx-data-watch`，其中包含 `vx-data.sh`、`.env` 和 `docker-compose.yaml`。宿主机默认端口为 `10000`，容器内部端口为 `8000`。无需提前准备 `.env` 或手动安装 Docker；脚本会检测服务器地区并给出默认源：中国大陆默认使用 Gitee 和阿里云 ACR，其他地区默认使用 GitHub 和 Docker Hub，用户仍可在提示处手动改选。
 
 ```bash
 sudo apt update && sudo apt install -y curl
-mkdir -p /tmp/vx-data-install && cd /tmp/vx-data-install
+sudo mkdir -p /opt/vx-data-watch
+cd /opt/vx-data-watch
 # 海外：
-curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
+sudo curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
 # 中国大陆改用：
-# curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
-chmod +x vx-data.sh
+# sudo curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
+sudo chmod 700 vx-data.sh
 sudo ./vx-data.sh install
 ```
 

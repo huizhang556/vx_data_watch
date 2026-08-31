@@ -3,10 +3,21 @@
   --vx-surface: #ffffff;
   --vx-surface-soft: #eef5f2;
   --vx-border: #d8e4df;
+  --vx-border-strong: #b9cec5;
   --vx-text: #18211e;
   --vx-muted: #6f7c77;
   --vx-accent: #137a63;
+  --vx-accent-strong: #0b5f50;
   --vx-accent-soft: #dff1eb;
+  --vx-hover: #eaf4f0;
+  --vx-on-accent: #ffffff;
+  --vx-link: #0f806b;
+  --vx-success: #389e0d;
+  --vx-warning: #ad6800;
+  --vx-danger: #cf1322;
+  --vx-info-bg: #eaf4f8;
+  --vx-info-border: #b8d5df;
+  --vx-info: #1677ff;
   --vx-shadow: 0 12px 30px rgba(35, 67, 57, .08);
   color: #18211e;
   background: var(--vx-bg);
@@ -116,10 +127,17 @@ button, input, textarea, select { letter-spacing: 0; }
 .download-config-group .ant-typography { margin-bottom: 0; }
 .download-empty { min-height: 180px; display: grid; place-items: center; gap: 10px; color: var(--vx-muted); }
 .download-config-actions { display: flex; justify-content: flex-end; }
-.local-save-picker { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.download-location-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; gap: 8px 14px; padding: 14px 0; }
+.download-location-row + .download-location-row { border-top: 1px solid var(--vx-border); }
+.download-location-label { align-self: start; padding-top: 6px; }
+.download-location-description { grid-column: 2; line-height: 1.6; }
+.local-save-picker { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.local-save-picker .ant-typography { overflow-wrap: anywhere; }
 .download-content { display: grid; gap: 16px; }
 .download-content-group { border-color: #dfe6e2; }
 .download-content-group .ant-card-head-title { font-weight: 700; }
+.download-content-group > .ant-card-body > .ant-tabs { margin-bottom: 12px; }
+.download-bulk-hint { display: block; margin-bottom: 12px; }
 .download-content > .download-content-group:last-child { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 -6px 20px rgba(24, 43, 37, .12); }
 .browser-launch { width: 100%; }
 .download-link-row, .download-path-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 12px; }
@@ -299,6 +317,8 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-message-role { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: var(--vx-accent-soft); color: var(--vx-accent-strong); font-size: 12px; font-weight: 700; }
 .ai-chat-message-content { padding: 11px 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; background: var(--vx-surface-soft); border: 1px solid var(--vx-border); border-radius: 8px; color: var(--vx-text); }
 .ai-chat-message.user .ai-chat-message-content { background: var(--vx-accent-soft); border-color: var(--vx-accent); }
+.ai-chat-message-actions { display: flex; justify-content: flex-end; margin: 6px -6px -6px; }
+.ai-chat-message-actions .ant-btn { width: 24px; height: 22px; padding: 0; }
 .ai-chat-history-attachment { display: block; margin-top: 8px; color: var(--vx-accent); }
 .ai-chat-history-image { display: block; max-width: min(280px, 100%); padding: 0; margin-top: 8px; border: 0; background: transparent; cursor: zoom-in; }
 .ai-chat-history-image img { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; object-fit: contain; }
@@ -429,6 +449,9 @@ a:hover, .link-button:hover, .auth-links button:hover { color: var(--vx-accent-s
 .download-status.downloading, .status-dot.online { color: var(--vx-accent); }
 .download-status.completed, .trend-down { color: var(--vx-success); }
 .download-status.failed, .trend-up { color: var(--vx-danger); }
+.download-progress-cell { width: 100%; }
+.download-progress-cell .ant-progress { min-width: 110px; flex: 1; }
+.download-progress-cell .ant-btn { flex: 0 0 auto; white-space: nowrap; }
 .trend-flat, .trend-na { color: var(--vx-muted); }
 [data-theme] .ant-btn-primary { color: var(--vx-on-accent); background: var(--vx-accent); border-color: var(--vx-accent); }
 [data-theme] .ant-btn-primary:not(:disabled):hover { color: var(--vx-on-accent) !important; background: var(--vx-accent-strong) !important; border-color: var(--vx-accent-strong) !important; }
@@ -483,6 +506,9 @@ body { color-scheme: light; }
 .ant-btn-primary { color: #fff; background: var(--vx-accent); border-color: var(--vx-accent); }
 .ant-btn-primary:not(:disabled):hover { color: #fff !important; background: var(--vx-accent-strong) !important; border-color: var(--vx-accent-strong) !important; }
 .ant-btn-dangerous { color: var(--vx-danger); border-color: #e3aab1; }
+.ant-btn-text.ant-btn-dangerous { border-color: transparent; }
+.ant-btn-text.ant-btn-dangerous:not(:disabled):hover,
+.ant-btn-text.ant-btn-dangerous:focus-visible { border-color: var(--vx-danger); }
 .ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select-selector, .ant-picker {
   color: var(--vx-text); background: var(--vx-surface) !important; border-color: var(--vx-border-strong) !important;
 }
@@ -638,6 +664,15 @@ body { color-scheme: light; }
   --vx-accent: #c65778;
   --vx-accent-strong: #a64060;
   --vx-accent-soft: #fde3eb;
+  --vx-hover: #fbe4e9;
+  --vx-on-accent: #ffffff;
+  --vx-link: #a64060;
+  --vx-success: #3f8061;
+  --vx-warning: #966100;
+  --vx-danger: #b42332;
+  --vx-info-bg: #edf7fb;
+  --vx-info-border: #afd2df;
+  --vx-info: #1677a8;
   --vx-focus: rgba(198, 87, 120, .22);
   --vx-danger: #b42332;
   --vx-warning: #966100;
@@ -683,10 +718,10 @@ body { color-scheme: light; }
 [data-theme='rose'] .rank, [data-theme='rose'] .account-icon { color: var(--vx-accent-strong); background: var(--vx-accent-soft); }
 
 /* Additional low-saturation palettes. Components consume the same semantic tokens. */
-[data-theme='lavender'] { color-scheme: light; --vx-bg:#f8f7fc; --vx-surface:#fff; --vx-surface-soft:#f0eef8; --vx-surface-raised:#fff; --vx-border:#ddd8ec; --vx-border-strong:#c5bddc; --vx-text:#29253a; --vx-muted:#6f6a80; --vx-accent:#7568a8; --vx-accent-strong:#5b4f8d; --vx-accent-soft:#e9e5f5; --vx-focus:rgba(117,104,168,.22); --vx-danger:#b44b59; --vx-warning:#987018; --vx-success:#45856b; --vx-shadow:0 10px 28px rgba(73,61,108,.09); }
-[data-theme='mist'] { color-scheme: light; --vx-bg:#f3f8fa; --vx-surface:#fff; --vx-surface-soft:#eaf3f6; --vx-surface-raised:#fff; --vx-border:#d1e1e7; --vx-border-strong:#adc8d2; --vx-text:#20313a; --vx-muted:#607681; --vx-accent:#4e879d; --vx-accent-strong:#386d82; --vx-accent-soft:#dcecf1; --vx-focus:rgba(78,135,157,.22); --vx-danger:#b64f5b; --vx-warning:#97721b; --vx-success:#4b8a72; --vx-shadow:0 10px 28px rgba(54,91,105,.09); }
-[data-theme='mint'] { color-scheme: light; --vx-bg:#f3faf7; --vx-surface:#fff; --vx-surface-soft:#e8f5ef; --vx-surface-raised:#fff; --vx-border:#cfe4d9; --vx-border-strong:#acd0bc; --vx-text:#20332b; --vx-muted:#5d7469; --vx-accent:#579578; --vx-accent-strong:#3f795f; --vx-accent-soft:#dcefe5; --vx-focus:rgba(87,149,120,.22); --vx-danger:#b54f5c; --vx-warning:#98701b; --vx-success:#45856b; --vx-shadow:0 10px 28px rgba(57,104,79,.09); }
-[data-theme='cream'] { color-scheme: light; --vx-bg:#fbf8f0; --vx-surface:#fffdf8; --vx-surface-soft:#f5efe1; --vx-surface-raised:#fffdf8; --vx-border:#e7dcc3; --vx-border-strong:#d3c29e; --vx-text:#382f24; --vx-muted:#796d5b; --vx-accent:#a27c49; --vx-accent-strong:#805d30; --vx-accent-soft:#f1e6cf; --vx-focus:rgba(162,124,73,.22); --vx-danger:#b05252; --vx-warning:#966c18; --vx-success:#568268; --vx-shadow:0 10px 28px rgba(111,88,49,.09); }
+[data-theme='lavender'] { color-scheme: light; --vx-bg:#f8f7fc; --vx-surface:#fff; --vx-surface-soft:#f0eef8; --vx-surface-raised:#fff; --vx-border:#ddd8ec; --vx-border-strong:#c5bddc; --vx-text:#29253a; --vx-muted:#6f6a80; --vx-accent:#7568a8; --vx-accent-strong:#5b4f8d; --vx-accent-soft:#e9e5f5; --vx-hover:#f0eef8; --vx-on-accent:#fff; --vx-link:#5b4f8d; --vx-danger:#b44b59; --vx-warning:#987018; --vx-success:#45856b; --vx-info-bg:#f0f6fb; --vx-info-border:#bfd5e2; --vx-info:#436f91; --vx-focus:rgba(117,104,168,.22); --vx-shadow:0 10px 28px rgba(73,61,108,.09); }
+[data-theme='mist'] { color-scheme: light; --vx-bg:#f3f8fa; --vx-surface:#fff; --vx-surface-soft:#eaf3f6; --vx-surface-raised:#fff; --vx-border:#d1e1e7; --vx-border-strong:#adc8d2; --vx-text:#20313a; --vx-muted:#607681; --vx-accent:#4e879d; --vx-accent-strong:#386d82; --vx-accent-soft:#dcecf1; --vx-hover:#eaf3f6; --vx-on-accent:#fff; --vx-link:#386d82; --vx-danger:#b64f5b; --vx-warning:#97721b; --vx-success:#4b8a72; --vx-info-bg:#edf6fa; --vx-info-border:#b8d5df; --vx-info:#397b98; --vx-focus:rgba(78,135,157,.22); --vx-shadow:0 10px 28px rgba(54,91,105,.09); }
+[data-theme='mint'] { color-scheme: light; --vx-bg:#f3faf7; --vx-surface:#fff; --vx-surface-soft:#e8f5ef; --vx-surface-raised:#fff; --vx-border:#cfe4d9; --vx-border-strong:#acd0bc; --vx-text:#20332b; --vx-muted:#5d7469; --vx-accent:#579578; --vx-accent-strong:#3f795f; --vx-accent-soft:#dcefe5; --vx-hover:#e8f5ef; --vx-on-accent:#fff; --vx-link:#3f795f; --vx-danger:#b54f5c; --vx-warning:#98701b; --vx-success:#45856b; --vx-info-bg:#edf8f4; --vx-info-border:#b8d9ca; --vx-info:#377a63; --vx-focus:rgba(87,149,120,.22); --vx-shadow:0 10px 28px rgba(57,104,79,.09); }
+[data-theme='cream'] { color-scheme: light; --vx-bg:#fbf8f0; --vx-surface:#fffdf8; --vx-surface-soft:#f5efe1; --vx-surface-raised:#fffdf8; --vx-border:#e7dcc3; --vx-border-strong:#d3c29e; --vx-text:#382f24; --vx-muted:#796d5b; --vx-accent:#a27c49; --vx-accent-strong:#805d30; --vx-accent-soft:#f1e6cf; --vx-hover:#f5efe1; --vx-on-accent:#fff; --vx-link:#805d30; --vx-danger:#b05252; --vx-warning:#966c18; --vx-success:#568268; --vx-info-bg:#f8f2e7; --vx-info-border:#dbc99f; --vx-info:#80652c; --vx-focus:rgba(162,124,73,.22); --vx-shadow:0 10px 28px rgba(111,88,49,.09); }
 
 [data-theme='lavender'], [data-theme='mist'], [data-theme='mint'], [data-theme='cream'] {
   background: var(--vx-bg); color: var(--vx-text);
@@ -767,7 +802,7 @@ body { color-scheme: light; }
 [data-theme='dark'] .mobile-nav { background: rgba(16,32,33,.98); border-color: var(--vx-border); }
 
 /* Shared component polish. Keep surfaces, controls, and focus states on the same token system. */
-.content { background: radial-gradient(circle at 92% 0%, rgba(19,122,99,.07), transparent 30%), var(--vx-bg); }
+.content { background: var(--vx-bg); }
 .page-heading h2, .section-heading h3 { letter-spacing: -.01em; }
 .ant-card { border-radius: 10px; box-shadow: var(--vx-shadow); }
 .ant-card-head { min-height: 56px; padding-inline: 20px; border-bottom-color: var(--vx-border); }
@@ -1054,12 +1089,12 @@ body { color-scheme: light; }
 [data-theme='night'] .sider-user { border-color: var(--vx-border); }
 .desktop-sider .sider-toggle {
   position: fixed !important;
-  top: 50vh !important;
+  top: auto !important;
+  bottom: 118px !important;
   right: auto !important;
-  left: 214px;
-  transform: translateY(-50%);
+  left: 12px;
+  transform: none;
 }
-.app-shell.sider-collapsed .desktop-sider .sider-toggle { left: 62px; }
 [data-theme] .ant-menu-submenu-popup {
   min-width: 168px;
   overflow: hidden;
@@ -1120,7 +1155,7 @@ body { color-scheme: light; }
 [data-theme='night'] .auth-panel .ant-input-affix-wrapper,
 [data-theme='night'] .auth-panel .ant-input { background: var(--vx-surface-soft) !important; border-color: var(--vx-border-strong) !important; }
 
-/* All seven themes use semantic surfaces for newly added feature areas. */
+/* All six selectable themes use semantic surfaces for newly added feature areas. */
 [data-theme] .content { background: var(--vx-bg); }
 [data-theme] .ai-provider-registry,
 [data-theme] .ai-provider-registry-row { border-color: var(--vx-border); }
@@ -1134,13 +1169,16 @@ body { color-scheme: light; }
   .page-heading { margin-bottom: 18px; }
   .ant-card-body { padding: 16px; }
   .download-link-row, .download-path-row { grid-template-columns: 1fr; align-items: stretch; }
+  .download-location-row { grid-template-columns: 1fr; align-items: stretch; }
+  .download-location-label, .download-location-description { grid-column: 1; }
+  .download-location-label { padding-top: 0; }
   .download-settings-grid label, .download-inline-field { grid-template-columns: 1fr; align-items: stretch; }
   .download-settings-grid .ant-checkbox-wrapper { margin-left: 0; }
   [data-theme='dark'] .mobile-nav button { color: #9fbab4; }
   [data-theme='dark'] .mobile-nav button.active { color: #8af0ce; }
 }
 
-/* Keep navigation and AI chat surfaces semantic across all seven themes. */
+/* Keep navigation and AI chat surfaces semantic across all six selectable themes. */
 [data-theme] .desktop-sider,
 [data-theme] .topbar,
 [data-theme] .mobile-nav { background: var(--vx-surface); border-color: var(--vx-border); }
@@ -1158,3 +1196,49 @@ body { color-scheme: light; }
 [data-theme] .ai-chat-message.user .ai-chat-message-content { background: var(--vx-accent-soft); border-color: var(--vx-accent); }
 [data-theme] .mobile-nav button { color: var(--vx-muted); }
 [data-theme] .mobile-nav button.active { color: var(--vx-accent-strong); }
+
+/* Semantic tokens keep all six selectable themes consistent in new and legacy areas. */
+[data-theme] .ant-card,
+[data-theme] .tool-section,
+[data-theme] .metric-card,
+[data-theme] .candidate-card,
+[data-theme] .report,
+[data-theme] .report-browser,
+[data-theme] .history-list article,
+[data-theme] .account-list article,
+[data-theme] .video-item,
+[data-theme] .ant-modal-content { background: var(--vx-surface); border-color: var(--vx-border); color: var(--vx-text); }
+[data-theme] .ant-card-head,
+[data-theme] .ant-modal-header { background: var(--vx-surface); border-color: var(--vx-border); color: var(--vx-text); }
+[data-theme] .ant-input,
+[data-theme] .ant-input-affix-wrapper,
+[data-theme] .ant-input-number,
+[data-theme] .ant-select-selector,
+[data-theme] .ant-picker { background: var(--vx-surface) !important; border-color: var(--vx-border-strong) !important; color: var(--vx-text); }
+[data-theme] .ant-input::placeholder,
+[data-theme] .ant-input-affix-wrapper input::placeholder { color: var(--vx-muted); }
+[data-theme] a,
+[data-theme] .link-button,
+[data-theme] .auth-links button { color: var(--vx-link); }
+[data-theme] .ant-btn-primary { background: var(--vx-accent); border-color: var(--vx-accent); color: var(--vx-on-accent); }
+[data-theme] .ant-btn-primary:not(:disabled):hover { background: var(--vx-accent-strong) !important; border-color: var(--vx-accent-strong) !important; color: var(--vx-on-accent) !important; }
+[data-theme] .ant-btn-default { background: var(--vx-surface); border-color: var(--vx-border-strong); color: var(--vx-text); }
+[data-theme] .ant-btn-default:not(:disabled):hover,
+[data-theme] .ant-btn-text:not(:disabled):hover { background: var(--vx-hover) !important; border-color: var(--vx-accent) !important; color: var(--vx-accent-strong) !important; }
+[data-theme] .ant-table,
+[data-theme] .ant-table-container,
+[data-theme] .ant-table-tbody > tr > td { background: var(--vx-surface); border-color: var(--vx-border); color: var(--vx-text); }
+[data-theme] .ant-table-thead > tr > th { background: var(--vx-surface-soft) !important; border-color: var(--vx-border); color: var(--vx-text); }
+[data-theme] .ant-table-tbody > tr:hover > td { background: var(--vx-hover) !important; }
+[data-theme] .ant-alert-info { background: var(--vx-info-bg); border-color: var(--vx-info-border); color: var(--vx-text); }
+[data-theme] .ant-alert-success { background: color-mix(in srgb, var(--vx-success) 12%, var(--vx-surface)); border-color: var(--vx-success); color: var(--vx-text); }
+[data-theme] .ant-alert-warning { background: color-mix(in srgb, var(--vx-warning) 12%, var(--vx-surface)); border-color: var(--vx-warning); color: var(--vx-text); }
+[data-theme] .ant-alert-error { background: color-mix(in srgb, var(--vx-danger) 10%, var(--vx-surface)); border-color: var(--vx-danger); color: var(--vx-text); }
+[data-theme] .download-status.downloading { color: var(--vx-accent); }
+[data-theme] .download-status.completed,
+[data-theme] .trend-down { color: var(--vx-success); }
+[data-theme] .download-status.failed,
+[data-theme] .trend-up { color: var(--vx-danger); }
+[data-theme] .trend-flat,
+[data-theme] .trend-na { color: var(--vx-muted); }
+[data-theme] .content { background-image: none; }
