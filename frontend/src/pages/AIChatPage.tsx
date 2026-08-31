@@ -6,7 +6,6 @@ import {
   Modal,
   Select,
   Space,
-  Tabs,
   Upload,
   message,
 } from "antd";
@@ -54,6 +53,7 @@ type Provider = {
   protocol: string;
   timeout_seconds: number;
   api_key_configured: boolean;
+  models?: string[];
 };
 function MarkdownCode({ children, className }: { children?: ReactNode; className?: string }) {
   const source = String(children ?? "").replace(/\n$/, "");
@@ -73,10 +73,9 @@ const fileAsDataUrl = (file: File) =>
     reader.readAsDataURL(file);
   });
 
-export default function AIChatPage() {
+export default function AIChatPage({ configOnly = false }: { configOnly?: boolean }) {
   const { user } = useAuth();
   const { account } = useAccount();
-  const [tab, setTab] = useState("chat");
   const [categories, setCategories] = useState<Category[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -86,22 +85,26 @@ export default function AIChatPage() {
   const [categoryId, setCategoryId] = useState<number | undefined>();
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | undefined>();
   const [providerId, setProviderId] = useState<number | undefined>();
+  const [model, setModel] = useState("");
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
   const [search, setSearch] = useState("");
   const [selectedSessions, setSelectedSessions] = useState<number[]>([]);
   const [dragCategoryId, setDragCategoryId] = useState<number | null>(null);
-  const [chatSidebarWidth, setChatSidebarWidth] = useState(260);
+  const [chatSidebarWidth, setChatSidebarWidth] = useState(320);
   const chatLayoutRef = useRef<HTMLDivElement>(null);
   const resizingChatRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const messageRequestRef = useRef(0);
+  const lastNodeClickRef = useRef<{ key: string; at: number } | null>(null);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
       if (!resizingChatRef.current || !chatLayoutRef.current) return;
       const bounds = chatLayoutRef.current.getBoundingClientRect();
-      setChatSidebarWidth(Math.max(220, Math.min(480, event.clientX - bounds.left)));
+      setChatSidebarWidth(Math.max(280, Math.min(520, event.clientX - bounds.left)));
     };
     const stop = () => { resizingChatRef.current = false; };
     window.addEventListener("pointermove", move);
@@ -127,14 +130,31 @@ export default function AIChatPage() {
     setSessions(chats);
     setProviders(configs);
     const first = chats[0];
-    if (first) await openSession(first);
+    if (first) {
+      setProviderId(first.provider_id || undefined);
+      const firstProvider = configs.find((item) => item.id === first.provider_id);
+      setModel(firstProvider?.model || "");
+      setModelOptions(firstProvider?.models?.length ? firstProvider.models : firstProvider?.model ? [firstProvider.model] : []);
+      await openSession(first, configs);
+    }
   };
-  const openSession = async (session: Session) => {
+  const openSession = async (session: Session, providerList = providers) => {
+    const requestId = ++messageRequestRef.current;
     setActiveSession(session);
     setProviderId(session.provider_id || undefined);
-    setMessages(
-      await api<ChatMessage[]>(`/api/ai-chat/sessions/${session.id}/messages`),
-    );
+    const sessionProvider = providerList.find((item) => item.id === session.provider_id);
+    const savedModel = localStorage.getItem(`vx-ai-chat-model:${session.id}`);
+    setModel(savedModel || sessionProvider?.model || "");
+    setModelOptions(sessionProvider?.models?.length ? sessionProvider.models : sessionProvider?.model ? [sessionProvider.model] : []);
+    setMessages([]);
+    try {
+      const history = await api<ChatMessage[]>(`/api/ai-chat/sessions/${session.id}/messages`);
+      if (requestId === messageRequestRef.current) setMessages(history);
+    } catch (cause) {
+      if (requestId === messageRequestRef.current) {
+        message.error(cause instanceof Error ? cause.message : "加载聊天历史失败");
+      }
+    }
   };
   useEffect(() => {
     void load().catch((cause) =>
@@ -143,6 +163,24 @@ export default function AIChatPage() {
       ),
     );
   }, [account]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!providerId || !account) {
+      setModelOptions([]);
+      return;
+    }
+    const provider = providers.find((item) => item.id === providerId);
+    setModelOptions(provider?.models?.length ? provider.models : provider?.model ? [provider.model] : []);
+    void api<{ models: string[] }>(`/api/ai/providers/${providerId}/models?${query({ account_id: account.id })}`)
+      .then((result) => {
+        if (result.models.length) {
+          setModelOptions(result.models);
+          setModel((current) => result.models.includes(current) ? current : result.models[0]);
+        }
+      })
+      .catch(() => {
+        // The configured default model remains available when listing is unavailable.
+      });
+  }, [providerId, account, providers]);
   const createCategory = () => {
     let name = timestampName("新分类");
     Modal.confirm({
@@ -269,7 +307,7 @@ export default function AIChatPage() {
       body: JSON.stringify(patch),
     });
     setSessions((items) =>
-      items.map((item) => (item.id === row.id ? row : item)),
+      items.map((item) => (item.id === row.id ? row : item)).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.id - a.id),
     );
     if (activeSession?.id === row.id) setActiveSession(row);
   };
@@ -440,6 +478,18 @@ export default function AIChatPage() {
     (item) =>
       item.title.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const searchActive = search.trim().length > 0;
+  const categoryNames = new Map(categories.map((item) => [item.id, item.name]));
+  const acceptNodeClick = (key: string) => {
+    const now = Date.now();
+    const previous = lastNodeClickRef.current;
+    if (previous?.key === key && now - previous.at < 350) {
+      lastNodeClickRef.current = null;
+      return false;
+    }
+    lastNodeClickRef.current = { key, at: now };
+    return true;
+  };
   const chatView = (
     <div className="ai-chat-layout" ref={chatLayoutRef} style={{ "--ai-chat-sidebar-width": `${chatSidebarWidth}px` } as CSSProperties}>
       <aside className="ai-chat-sidebar">
@@ -450,7 +500,7 @@ export default function AIChatPage() {
           placeholder="搜索对话"
           allowClear
         />
-        <Space className="ai-chat-bulk-actions" size={4} style={{ marginBottom: 8 }}>
+        {!searchActive && <Space className="ai-chat-bulk-actions" size={4} style={{ marginBottom: 8 }}>
           <Button
             size="small"
             disabled={!visibleSessions.length}
@@ -475,30 +525,49 @@ export default function AIChatPage() {
             icon={<Plus size={16} />}
             onClick={createCategory}
           />
-        </Space>
-        <div className="ai-chat-sessions">
+        </Space>}
+        {searchActive ? (
+          <div className="ai-chat-search-results" role="list" aria-label="对话筛选结果">
+            {visibleSessions.length ? visibleSessions.map((session) => <div
+              key={session.id}
+              className={`ai-chat-session ai-chat-search-result ${activeSession?.id === session.id ? "active" : ""}`}
+              role="listitem"
+              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
+              onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+              onClick={() => { if (acceptNodeClick(`search-${session.id}`)) void openSession(session); }}
+            >
+              <span className="ai-chat-tree-name">{session.pinned && <Pin size={13} />} {session.title}</span>
+              <Space size={0} className="ai-chat-tree-actions">
+                <Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} />
+                <Button type="text" size="small" icon={<Pin size={13} />} aria-label="置顶对话" title="置顶对话" onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} />
+                <Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); void removeSession(session); }} />
+              </Space>
+              <span className="ai-chat-search-category">{categoryNames.get(session.category_id ?? -1) || "未分类"}</span>
+            </div>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未找到匹配的对话" />}
+          </div>
+        ) : <div className="ai-chat-sessions">
           {categories.map((category) => {
             const categorySessions = visibleSessions.filter((item) => item.category_id === category.id);
             const expanded = expandedCategoryId === category.id;
             return <div className="ai-chat-tree-group" key={category.id}>
-              <div className={`ai-chat-category-node ${categoryId === category.id ? "active" : ""}`} draggable onDragStart={() => setDragCategoryId(category.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => void reorderCategory(category.id)} onClick={() => { setCategoryId(category.id); setExpandedCategoryId(expanded ? undefined : category.id); }}>
+              <div className={`ai-chat-category-node ${categoryId === category.id ? "active" : ""}`} draggable onDragStart={() => setDragCategoryId(category.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => void reorderCategory(category.id)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => { if (!acceptNodeClick(`category-${category.id}`)) return; setCategoryId(category.id); setExpandedCategoryId(expanded ? undefined : category.id); }}>
                 <Button type="text" size="small" icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />} aria-label={expanded ? "收起分类" : "展开分类"} />
                 <span className="ai-chat-tree-name">{category.name}</span>
                 <Space size={0} className="ai-chat-tree-actions">
                   <Button type="text" size="small" icon={<Plus size={14} />} aria-label="添加对话" title="添加对话" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); void createSession(); }} />
                   <Button type="text" size="small" icon={<Edit3 size={14} />} aria-label="编辑分类" title="编辑分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); editCategory(); }} />
-                  <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item))) }} />
-                  <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(); }} />
+                  <Button type="text" size="small" icon={<Pin size={14} />} aria-label="置顶分类" title="置顶分类" onClick={(event) => { event.stopPropagation(); void api<Category>(`/api/ai-chat/categories/${category.id}`, { method: "PATCH", body: JSON.stringify({ name: category.name, pinned: !category.pinned }) }).then((row) => setCategories((items) => items.map((item) => item.id === row.id ? row : item).sort((a, b) => Number(b.pinned) - Number(a.pinned) || (a.sort_order ?? 0) - (b.sort_order ?? 0)))) }} />
+                  <Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label="删除分类" title="删除分类" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); setCategoryId(category.id); deleteCategory(); }} />
                 </Space>
               </div>
-              {expanded && categorySessions.map((session) => <div key={session.id} className={`ai-chat-session ai-chat-tree-session ${activeSession?.id === session.id ? "active" : ""}`} onClick={() => void openSession(session)}>
+              {expanded && categorySessions.map((session) => <div key={session.id} className={`ai-chat-session ai-chat-tree-session ${activeSession?.id === session.id ? "active" : ""}`} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={() => { if (acceptNodeClick(`session-${session.id}`)) void openSession(session); }}>
                 <input type="checkbox" checked={selectedSessions.includes(session.id)} onChange={(event) => { event.stopPropagation(); setSelectedSessions((items) => event.target.checked ? [...items, session.id] : items.filter((id) => id !== session.id)); }} onClick={(event) => event.stopPropagation()} />
                 <span className="ai-chat-tree-name">{session.pinned && <Pin size={13} />} {session.title}</span>
-                <Space size={0} className="ai-chat-tree-actions"><Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} /><Button type="text" size="small" icon={<Pin size={13} />} aria-label="置顶对话" title="置顶对话" onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} /><Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onClick={(event) => { event.stopPropagation(); void removeSession(session); }} /></Space>
+                <Space size={0} className="ai-chat-tree-actions"><Button type="text" size="small" icon={<Edit3 size={13} />} aria-label="编辑对话" title="编辑对话" onClick={(event) => { event.stopPropagation(); renameSession(session); }} /><Button type="text" size="small" icon={<Pin size={13} />} aria-label="置顶对话" title="置顶对话" onClick={(event) => { event.stopPropagation(); void updateSession(session, { pinned: !session.pinned }); }} /><Button type="text" danger size="small" icon={<Trash2 size={13} />} aria-label="删除对话" title="删除对话" onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); void removeSession(session); }} /></Space>
               </div>)}
             </div>;
           })}
-        </div>
+        </div>}
       </aside>
       <div
         className="ai-chat-resizer"
@@ -514,21 +583,34 @@ export default function AIChatPage() {
         <div className="ai-chat-toolbar">
           <Select
             value={providerId}
-            allowClear
-            placeholder="选择 AI 模型"
-            onChange={setProviderId}
+            placeholder="选择模型厂商"
+            onChange={(value) => {
+              setProviderId(value);
+              const provider = providers.find((item) => item.id === value);
+              setModel(provider?.model || "");
+              setModelOptions(provider?.models?.length ? provider.models : provider?.model ? [provider.model] : []);
+            }}
             options={providers.map((item) => ({
               value: item.id,
-              label: `${item.name} · ${item.model}`,
+              label: item.name,
             }))}
           />
+          <Select
+            value={model || undefined}
+            placeholder="选择具体模型"
+            disabled={!providerId}
+            onChange={setModel}
+            options={modelOptions.map((item) => ({ value: item, label: item }))}
+          />
           <Button
-            onClick={() =>
-              activeSession &&
-              void updateSession(activeSession, { provider_id: providerId })
-            }
+            onClick={() => {
+              if (!activeSession) return;
+              if (model) localStorage.setItem(`vx-ai-chat-model:${activeSession.id}`, model);
+              void updateSession(activeSession, { provider_id: providerId });
+              message.success("已保存当前会话模型");
+            }}
           >
-            应用模型
+            保存模型
           </Button>
           <Space className="ai-chat-export-actions" size={8}>
             <Button
@@ -719,16 +801,6 @@ export default function AIChatPage() {
       </Modal>
     </div>
   );
-  return (
-    <div className="page ai-chat-page">
-      <Tabs
-        activeKey={tab}
-        onChange={setTab}
-        items={[
-          { key: "config", label: "AI 配置", children: <AIPage configOnly /> },
-          { key: "chat", label: "AI 聊天", children: chatView },
-        ].filter((item) => user.role === "admin" || item.key !== "config")}
-      />
-    </div>
-  );
+  if (configOnly) return <div className="page ai-chat-page"><AIPage configOnly /></div>;
+  return <div className="page ai-chat-page">{chatView}</div>;
 }

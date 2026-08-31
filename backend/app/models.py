@@ -240,6 +240,7 @@ class AIProviderConfig(Base):
     base_url: Mapped[str] = mapped_column(String(500))
     model: Mapped[str] = mapped_column(String(200))
     protocol: Mapped[str] = mapped_column(String(30), default="chat_completions")
+    interface_type: Mapped[str] = mapped_column(String(20), default="compatible", server_default="compatible")
     encrypted_api_key: Mapped[bytes] = mapped_column(LargeBinary)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -296,6 +297,7 @@ class AIQuickConfig(Base):
 
 class AIChatCategory(Base):
     __tablename__ = "ai_chat_categories"
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -309,6 +311,7 @@ class AIChatCategory(Base):
 
 class AIChatSession(Base):
     __tablename__ = "ai_chat_sessions"
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

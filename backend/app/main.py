@@ -1295,6 +1295,7 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
         "base_url": config.base_url,
         "model": config.model,
         "protocol": config.protocol,
+        "interface_type": config.interface_type,
         "timeout_seconds": config.timeout_seconds,
         "api_key_configured": bool(config.encrypted_api_key),
         "is_active": config.is_active,
@@ -1363,7 +1364,7 @@ def _chat_message_content(db: Session, message: AIChatMessage) -> str | list[dic
 
 @app.get("/api/ai-chat/categories")
 def list_chat_categories(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
-    return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.pinned.desc(), AIChatCategory.sort_order, AIChatCategory.id)).all()]
+    return [_chat_category_payload(row) for row in db.scalars(select(AIChatCategory).where(AIChatCategory.user_id == user.id).order_by(AIChatCategory.pinned.desc(), AIChatCategory.pinned_at.desc().nullslast(), AIChatCategory.sort_order, AIChatCategory.id)).all()]
 
 
 @app.post("/api/ai-chat/categories", status_code=201)
@@ -1380,7 +1381,9 @@ def update_chat_category(category_id: int, payload: AIChatCategoryInput, user: C
     if not row: raise HTTPException(status_code=404, detail="分类不存在")
     row.name = payload.name.strip()
     if payload.sort_order is not None: row.sort_order = payload.sort_order
-    if payload.pinned is not None: row.pinned = payload.pinned
+    if payload.pinned is not None:
+        row.pinned = payload.pinned
+        row.pinned_at = datetime.now(UTC) if payload.pinned else None
     if payload.provider_id is not None: row.provider_id = payload.provider_id
     db.commit(); return _chat_category_payload(row)
 
@@ -1394,7 +1397,7 @@ def delete_chat_category(category_id: int, user: CsrfUser, db: Annotated[Session
 
 @app.get("/api/ai-chat/sessions")
 def list_chat_sessions(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
-    rows = db.scalars(select(AIChatSession).where(AIChatSession.user_id == user.id).order_by(AIChatSession.pinned.desc(), AIChatSession.updated_at.desc())).all()
+    rows = db.scalars(select(AIChatSession).where(AIChatSession.user_id == user.id).order_by(AIChatSession.pinned.desc(), AIChatSession.pinned_at.desc().nullslast(), AIChatSession.updated_at.desc())).all()
     return [_chat_session_payload(row) for row in rows]
 
 
@@ -1414,7 +1417,9 @@ def update_chat_session(session_id: int, payload: AIChatSessionUpdate, user: Csr
     if payload.category_id is not None:
         if not db.scalar(select(AIChatCategory).where(AIChatCategory.id == payload.category_id, AIChatCategory.user_id == user.id)): raise HTTPException(status_code=404, detail="分类不存在")
         row.category_id = payload.category_id
-    if payload.pinned is not None: row.pinned = payload.pinned
+    if payload.pinned is not None:
+        row.pinned = payload.pinned
+        row.pinned_at = datetime.now(UTC) if payload.pinned else None
     if payload.provider_id is not None: row.provider_id = payload.provider_id
     db.commit(); return _chat_session_payload(row)
 
@@ -1551,6 +1556,36 @@ def list_ai_providers(
     return [_provider_payload(row) for row in rows]
 
 
+@app.get("/api/ai/providers/{provider_id}/models")
+async def list_ai_provider_models(
+    provider_id: int,
+    account_id: int,
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, list[str]]:
+    """Return models available from a configured provider for the current user."""
+    _get_account(db, account_id, user)
+    config = db.get(AIProviderConfig, provider_id)
+    if not config or not config.is_active:
+        raise HTTPException(status_code=404, detail="接口配置不存在")
+    allowed = _provider_candidates(db, account_id, user)
+    if config.id not in {row.id for row in allowed}:
+        raise HTTPException(status_code=403, detail="无权使用此接口配置")
+    try:
+        models = await list_provider_models(
+            base_url=config.base_url,
+            timeout_seconds=config.timeout_seconds,
+            api_key=decrypt_secret(config.encrypted_api_key),
+            protocol=config.protocol,
+        )
+    except Exception:
+        # Keep the configured default usable when a provider's model listing is unavailable.
+        models = []
+    if config.model and config.model not in models:
+        models.insert(0, config.model)
+    return {"models": models}
+
+
 @app.get("/api/ai/provider")
 def get_ai_provider(
     account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
@@ -1593,6 +1628,7 @@ def save_ai_provider(
     config.base_url = payload.base_url
     config.model = payload.model
     config.protocol = payload.protocol
+    config.interface_type = payload.interface_type
     config.timeout_seconds = payload.timeout_seconds
     db.execute(
         AIProviderConfig.__table__.update()

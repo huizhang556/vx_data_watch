@@ -81,7 +81,7 @@ const items = [
       { key: "/users/local", label: "本地用户" },
     ],
   },
-  { key: "/ai-chat", icon: <Bot size={19} />, label: "AI 速问" },
+  { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat", label: "AI 聊天" }, { key: "/ai-chat/config", label: "AI 配置" }] },
   { key: "/accounts", icon: <Video size={19} />, label: "视频号账号" },
   {
     key: "/analysis",
@@ -178,19 +178,26 @@ export default function App() {
     localStorage.setItem("vx_account_id", String(id));
   };
   const account = accounts.find((row) => row.id === accountId) || null;
-  const visibleItems =
-    user.role === "admin"
-      ? items
-      : items.filter((item) =>
-          [
-            "/ai-chat",
-            "/accounts",
-            "/analysis",
-            "/download",
-            "/about",
-            "/usage",
-          ].includes(item.key),
-        );
+  const isAnalysisRoute = location.pathname === "/analysis" || location.pathname.startsWith("/analysis/");
+  const visibleItems = user.role === "admin"
+    ? items.filter((item) => item.key !== "/accounts")
+    : items
+        .filter((item) => ["/users", "/ai-chat-menu", "/analysis", "/download", "/about", "/usage"].includes(item.key))
+        .map((item) => item.key === "/users"
+          ? { ...item, children: item.children?.filter((child) => child.key === "/users/accounts") }
+          : item.key === "/ai-chat-menu"
+            ? { ...item, children: item.children?.filter((child) => child.key === "/ai-chat") }
+            : item);
+  // A one-child group is a direct destination; only real groups keep a submenu.
+  const menuItems = visibleItems.map((item) => {
+    if (item.children?.length !== 1) return item;
+    return { ...item, key: item.children[0].key, children: undefined };
+  });
+  const handleMenuClick: MenuProps["onClick"] = ({ key }) => {
+    const parent = visibleItems.find((item) => item.key === key);
+    if (parent?.children?.length) return;
+    navigate(key);
+  };
   const context = useMemo(
     () => ({ accounts, account, setAccountId, reloadAccounts }),
     [accounts, account, reloadAccounts],
@@ -261,9 +268,10 @@ export default function App() {
             inlineCollapsed={siderCollapsed}
             openKeys={siderCollapsed ? [] : openKeys}
             selectedKeys={[location.pathname]}
-            items={visibleItems}
+            items={menuItems}
             onOpenChange={(keys) => setOpenKeys(keys.slice(-1))}
-            onClick={({ key }) => navigate(key)}
+            onClick={handleMenuClick}
+            triggerSubMenuAction="hover"
           />
           <div className="sider-user">
             {!siderCollapsed && (
@@ -347,7 +355,7 @@ export default function App() {
             </Space>
             <Select
               aria-label="当前视频号"
-              className="account-select"
+              className={`account-select ${isAnalysisRoute ? "" : "account-select-hidden"}`}
               placeholder="请先创建视频号"
               value={accountId || undefined}
               onChange={setAccountId}
@@ -403,6 +411,7 @@ export default function App() {
                 <Route path="/imports" element={<ImportsPage />} />
                 <Route path="/ai" element={<AIPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
+                <Route path="/ai-chat/config" element={<AIChatPage configOnly />} />
                 <Route path="/accounts" element={<SettingsPage section="accounts" />} />
                 <Route path="/analysis/dashboard" element={<DashboardPage />} />
                 <Route path="/analysis/videos" element={<VideosPage />} />

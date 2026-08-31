@@ -180,6 +180,7 @@ class AIProviderInput(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     model: str = Field(min_length=1, max_length=200)
     protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok"] = "chat_completions"
+    interface_type: Literal["official", "compatible"] = "compatible"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
 

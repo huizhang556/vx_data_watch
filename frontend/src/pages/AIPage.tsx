@@ -12,11 +12,11 @@ import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../
 import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
-interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; protocol: string; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
+interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
 interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
-interface ProviderForm { account_id: number; provider_id?: number; name: string; base_url: string; model: string; protocol: string; timeout_seconds: number; api_key?: string }
+interface ProviderForm { account_id: number; provider_id?: number; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key?: string }
 const reportMetrics = [
   { key: 'plays' as const, label: '播放', color: '#1677ff' },
   { key: 'likes' as const, label: '点赞', color: '#d4380d' },
@@ -32,9 +32,9 @@ const periodOptions = [
 ]
 const officialPresets = [
   { label: 'OpenAI', name: 'OpenAI', base_url: 'https://api.openai.com', model: 'gpt-4o-mini' },
-  { label: 'Anthropic（兼容接口）', name: 'Anthropic', base_url: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest' },
-  { label: 'Gemini（兼容接口）', name: 'Gemini', base_url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.0-flash' },
-  { label: 'Grok（兼容接口）', name: 'Grok', base_url: 'https://api.x.ai', model: 'grok-3-mini' },
+  { label: 'Anthropic', name: 'Anthropic', base_url: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest' },
+  { label: 'Gemini', name: 'Gemini', base_url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.0-flash' },
+  { label: 'Grok', name: 'Grok', base_url: 'https://api.x.ai', model: 'grok-3-mini' },
   { label: 'DeepSeek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
   { label: '智谱', name: '智谱 AI', base_url: 'https://open.bigmodel.cn/api/paas', model: 'glm-4-flash' },
   { label: '通义千问', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode', model: 'qwen-plus' },
@@ -52,6 +52,17 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [histories, setHistories] = useState<QueryHistory[]>([])
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
+  const [quickConfigOpen, setQuickConfigOpen] = useState(false)
+  const [quickConfigName, setQuickConfigName] = useState('')
+  const [quickProviderId, setQuickProviderId] = useState<number>()
+  const [quickModel, setQuickModel] = useState('')
+  const [quickModels, setQuickModels] = useState<string[]>([])
+  useEffect(() => {
+    if (!quickConfigOpen || !quickProviderId || !account) return
+    void api<{ models: string[] }>(`/api/ai/providers/${quickProviderId}/models?${query({ account_id: account.id })}`).then((result) => {
+      if (result.models.length) { setQuickModels(result.models); setQuickModel((current) => result.models.includes(current) ? current : result.models[0]) }
+    }).catch(() => undefined)
+  }, [quickConfigOpen, quickProviderId, account])
   const [configAction, setConfigAction] = useState<'new' | 'edit'>('new')
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
@@ -70,6 +81,12 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
   const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(7, 'day'))
   const [form] = Form.useForm<ProviderForm>()
+
+  useEffect(() => {
+    document.body.classList.toggle('ai-compatible-config', configMode === 'compatible' && configOpen)
+    document.body.classList.toggle('ai-config-editing', configAction === 'edit' && configOpen)
+    return () => { document.body.classList.remove('ai-compatible-config'); document.body.classList.remove('ai-config-editing') }
+  }, [configMode, configOpen])
 
   const loadProviders = async (accountId: number) => {
     const [rows, active] = await Promise.all([
@@ -136,7 +153,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setSaveLoading(true); setError('')
     try {
       const values = await form.validateFields()
-      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, account_id: account!.id, provider_id: form.getFieldValue('provider_id') }) })
+      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
       await loadProviders(account!.id); setConfigOpen(false); message.success('接口配置已保存')
     } catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
@@ -149,6 +166,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setTested(false)
     setError('')
     setConfigAction('new')
+    setConfigMode('official')
   }
 
   const editProvider = (item: Provider) => {
@@ -157,6 +175,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setTested(false)
     setError('')
     setConfigAction('edit')
+    setConfigMode(item.interface_type || 'compatible')
     setConfigOpen(true)
   }
 
@@ -227,12 +246,21 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   }))
 
   const saveQuickConfig = () => {
-    if (!provider) return
-    let name = `${provider.name} - ${provider.model}`
-    Modal.confirm({ title: '添加快捷配置', content: <Input autoFocus defaultValue={name} onChange={(event) => { name = event.target.value }} />, onOk: async () => {
-      const row = await api<QuickConfig>('/api/ai/quick-configs', { method: 'POST', body: JSON.stringify({ name, provider_id: provider.id, model: provider.model }) })
-      setQuickConfigs((items) => [...items, row]); message.success('快捷配置已保存')
-    } })
+    const selected = provider || providers[0]
+    if (!selected || !account) return
+    setQuickProviderId(selected.id)
+    setQuickModel(selected.model)
+    setQuickModels([selected.model])
+    setQuickConfigName(`${selected.name} - ${selected.model}`)
+    setQuickConfigOpen(true)
+    void api<{ models: string[] }>(`/api/ai/providers/${selected.id}/models?${query({ account_id: account.id })}`)
+      .then((result) => { if (result.models.length) { setQuickModels(result.models); setQuickModel((current) => result.models.includes(current) ? current : result.models[0]) } })
+      .catch(() => undefined)
+  }
+  const submitQuickConfig = async () => {
+    if (!quickProviderId || !quickModel || !quickConfigName.trim()) return
+    const row = await api<QuickConfig>('/api/ai/quick-configs', { method: 'POST', body: JSON.stringify({ name: quickConfigName.trim(), provider_id: quickProviderId, model: quickModel }) })
+    setQuickConfigs((items) => [...items, row]); setQuickConfigOpen(false); message.success('快捷配置已保存')
   }
   const applyQuickConfig = async (item: QuickConfig) => {
     if (!account) return
@@ -339,7 +367,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
         </Space></article>)}</div>}
       </section>
 
-      <Modal title={<div className="config-modal-title"><span>{configMode === 'official' ? '官方接口' : 'OPENAI兼容'}</span><span className={`config-modal-mode ${configAction}`}>{configAction === 'new' ? '新增配置' : '编辑旧配置'}</span>{configAction === 'edit' && <Button type="link" size="small" onClick={startNewProvider}>新增配置</Button>}</div>} open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
+      <Modal title={<div className="config-modal-title"><span>{configMode === 'official' ? '官方接口' : 'OPENAI兼容'}</span><span className={`config-modal-mode ${configAction}`}>{configAction === 'new' ? '新增配置' : '编辑旧配置'}</span></div>} open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
         {error && <Alert type="error" showIcon message={error} />}
         <Tabs activeKey={configMode} onChange={(key) => setConfigMode(key as 'official' | 'compatible')} items={[
@@ -356,6 +384,11 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>
+      </Modal>
+      <Modal title="添加快捷配置" open={quickConfigOpen} onCancel={() => setQuickConfigOpen(false)} onOk={() => void submitQuickConfig()} okText="保存">
+        <Input value={quickConfigName} onChange={(event) => setQuickConfigName(event.target.value)} placeholder="快捷配置名称" />
+        <Select style={{ width: '100%', marginTop: 12 }} value={quickProviderId} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { const item = providers.find((row) => row.id === value); setQuickProviderId(value); setQuickModel(item?.model || ''); setQuickModels(item?.model ? [item.model] : []) }} placeholder="选择接口配置" />
+        <Select style={{ width: '100%', marginTop: 12 }} value={quickModel || undefined} options={quickModels.map((item) => ({ value: item, label: item }))} onChange={setQuickModel} placeholder="选择模型" />
       </Modal>
     </div>
   )
