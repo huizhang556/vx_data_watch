@@ -140,30 +140,6 @@ sudo /opt/vx-data-watch/vx-data.sh uninstall           # 选择保留数据或�
 
 这种方式直接下载官方镜像，不需要安装 Python、Node.js，也不需要在服务器构建镜像。
 
-### 本地构建镜像测试（重要）
-
-如果你在本机修改源码并构建了 `vx-data-watch:0.5.1`，直接执行 `docker compose up -d` 仍会按照 `.env` 或 Compose 默认值启动远程 `docker.io/litehub/vx-data-watch:latest`，页面可能因此仍是旧版本。必须显式指定本地镜像并强制重建容器：
-
-```powershell
-$env:VX_IMAGE = "vx-data-watch:0.5.1"
-docker compose up -d --no-build --force-recreate
-docker compose ps
-```
-
-也可以把下面一行写入项目 `.env`，以后直接执行 `docker compose up -d`：
-
-```dotenv
-VX_IMAGE=vx-data-watch:0.5.1
-```
-
-检查容器实际使用的镜像：
-
-```powershell
-docker compose images
-```
-
-发布或恢复使用远程镜像时，再将 `VX_IMAGE` 改回 Docker Hub 或阿里云 ACR 地址。
-
 ### 1. 安装 Docker
 
 先按照 Docker 官方文档为 [Ubuntu](https://docs.docker.com/engine/install/ubuntu/) 或 [Debian](https://docs.docker.com/engine/install/debian/) 安装 Docker Engine 和 Compose 插件。安装完成后检查：
