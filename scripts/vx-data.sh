@@ -129,6 +129,12 @@ generate_env() {
   download "$DOWNLOAD_BASE/.env.example" "$PROJECT_DIR/.env.example"; cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
   local key; key="$(openssl rand -base64 32 | tr -d '\n' | tr '/+' '_-')"
   sed -i "s|^# VX_MASTER_KEY=.*|VX_MASTER_KEY=$key|" "$PROJECT_DIR/.env"; sed -i 's|^VX_HOST_PORT=.*|VX_HOST_PORT=10000|' "$PROJECT_DIR/.env"; sed -i 's|^VX_PORT=.*|VX_PORT=8000|' "$PROJECT_DIR/.env"; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$SELECTED_IMAGE|" "$PROJECT_DIR/.env"; if [ "$SELECTED_IMAGE" = "$ACR_IMAGE" ]; then sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com|' "$PROJECT_DIR/.env"; else sed -i 's|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=docker.io|' "$PROJECT_DIR/.env"; fi
+  # Keep the updater repository explicit so the app and companion use the same source.
+  if [ "$SELECTED_IMAGE" = "$ACR_IMAGE" ]; then
+    printf '\nVX_UPDATE_REPOSITORY=zhang_spaces/vx-data-watch\n' >> "$PROJECT_DIR/.env"
+  else
+    printf '\nVX_UPDATE_REPOSITORY=litehub/vx-data-watch\n' >> "$PROJECT_DIR/.env"
+  fi
   if [ "${DB_MODE:-sqlite}" = postgres ]; then
     sed -i 's|^# VX_DATABASE_MODE=.*|VX_DATABASE_MODE=postgres|' "$PROJECT_DIR/.env"
     sed -i "s|^# VX_POSTGRES_USER=.*|VX_POSTGRES_USER=$POSTGRES_USER|; s|^# VX_POSTGRES_PASSWORD=.*|VX_POSTGRES_PASSWORD=$POSTGRES_PASSWORD|; s|^# VX_POSTGRES_DB=.*|VX_POSTGRES_DB=$POSTGRES_DB|; s|^# VX_DATABASE_URL=.*|VX_DATABASE_URL=postgresql+psycopg://$POSTGRES_USER:$POSTGRES_PASSWORD@postgres:5432/$POSTGRES_DB|" "$PROJECT_DIR/.env"
@@ -140,6 +146,14 @@ generate_env() {
 load_env() { [ -f "$PROJECT_DIR/.env" ] || die "缺少 $PROJECT_DIR/.env。"; set -a; . "$PROJECT_DIR/.env"; set +a; IMAGE="${VX_IMAGE:-$DEFAULT_IMAGE}"; }
 fetch_compose() { [ -n "${DETECTED_COUNTRY:-}" ] || DETECTED_COUNTRY="$(detect_country || true)"; select_download_source; download "$DOWNLOAD_BASE/docker-compose.yaml" "$PROJECT_DIR/docker-compose.yaml"; }
 compose() { if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then (cd "$PROJECT_DIR" && docker compose --profile postgres -f docker-compose.yaml "$@"); else (cd "$PROJECT_DIR" && docker compose -f docker-compose.yaml "$@"); fi; }
+stop_cmd() {
+  need_root
+  [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"
+  load_env
+  log "正在停止 VX Data Watch（包含 PostgreSQL Profile）..."
+  compose down --remove-orphans
+  log "项目已停止，数据卷和镜像均已保留。"
+}
 wait_healthy() { local i status; for i in $(seq 1 30); do status="$(compose ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)"; echo "$status" | grep -q '^app healthy' && return 0; sleep 2; done; compose ps; return 1; }
 archive_volume() {
   local target="$1" archive="$2" include_media="${3:-yes}"; mkdir -p "$target"; local available required
@@ -194,6 +208,8 @@ install_cmd_v2() {
   chmod 700 "$PROJECT_DIR/vx-data.sh"
   generate_env
   load_env
+  log "最终镜像配置：$IMAGE"
+  log "在线更新仓库：${VX_UPDATE_REGISTRY:-docker.io}/${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}"
   log "正在拉取应用镜像：$IMAGE"
   retry docker pull "$IMAGE" || die '镜像拉取失败，请检查网络、代理或镜像加速配置。'
   if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then
@@ -210,9 +226,10 @@ install_cmd_v2() {
 }
 
 usage() { cat <<'EOF'
-用法：sudo ./scripts/vx-data.sh <install|update|backup|migrate|uninstall> [参数]
+用法：sudo ./scripts/vx-data.sh <install|stop|update|backup|migrate|uninstall> [参数]
 
 install             安装依赖、下载 Compose、生成随机 .env 并启动
+stop                停止 app、updater 和数据库容器，保留数据卷和镜像
 update [版本]       先备份，再拉取 latest 或指定版本并健康检查，失败自动回滚
 backup [目录]       备份 vx-data 数据卷，默认 /home/vx_backed
 migrate             导出数据卷后用 rsync 断点续传到另一台服务器
@@ -222,5 +239,5 @@ uninstall           选择保留数据或完全删除，并单独选择是否删
 环境变量：VX_DOWNLOAD_BASE_URL、VX_RETRY_COUNT、VX_SKIP_MIRROR_PROMPT=1、VX_FORCE_MIRROR_PROMPT=1、VX_ASSUME_YES=1
 EOF
 }
-main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; update) update_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
+main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; stop) stop_cmd "$@" ;; update) update_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
 main "$@"

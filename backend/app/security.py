@@ -36,7 +36,7 @@ def token_hash(token: str) -> str:
 
 
 def session_expiry() -> datetime:
-    return datetime.now(UTC) + timedelta(days=get_settings().session_days)
+    return datetime.now(UTC) + timedelta(hours=get_settings().session_hours)
 
 
 def _load_master_key() -> bytes:

@@ -16,7 +16,7 @@ services:
       VX_DATA_DIR: /app/data
       VX_DATABASE_URL: ${VX_DATABASE_URL:-sqlite:////app/data/vx_data.db}
       VX_COOKIE_SECURE: ${VX_COOKIE_SECURE:-false}
-      VX_SESSION_DAYS: ${VX_SESSION_DAYS:-14}
+      VX_SESSION_HOURS: ${VX_SESSION_HOURS:-12}
       VX_MAX_UPLOAD_MB: ${VX_MAX_UPLOAD_MB:-20}
       VX_MASTER_KEY: ${VX_MASTER_KEY:-}
       VX_UPDATER_ENABLED: "true"

@@ -103,6 +103,7 @@ from .schemas import (
     AIProviderDraft,
     AIProviderInput,
     AIProviderSelect,
+    AIProviderCategoriesInput,
     AIQuickConfigInput,
     AIChatCategoryInput,
     AIChatSessionInput,
@@ -111,6 +112,7 @@ from .schemas import (
     AIChatMessageUpdate,
     LoginRequest,
     PasswordChange,
+    ProfileUpdate,
     PasswordResetConfirm,
     PasswordResetRequest,
     RegisterCodeRequest,
@@ -202,7 +204,7 @@ def _set_session_cookie(request: Request, response: Response, token: str) -> Non
     response.set_cookie(
         "vx_session",
         token,
-        max_age=settings.session_days * 86400,
+        max_age=settings.session_hours * 3600,
         httponly=True,
         secure=_secure_cookie(request),
         samesite="lax",
@@ -734,6 +736,22 @@ def change_username(payload: UsernameChange, user: CsrfUser, db: Annotated[Sessi
     user.username = payload.username
     db.commit()
     return {"username": user.username}
+
+
+@app.put("/api/auth/profile")
+def update_profile(payload: ProfileUpdate, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if db.scalar(select(User).where(User.username == payload.username, User.id != user.id)):
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    normalized_email = normalize_email(payload.email) if payload.email else None
+    if normalized_email and db.scalar(select(User).where(User.email == normalized_email, User.id != user.id)):
+        raise HTTPException(status_code=409, detail="注册邮箱已存在")
+    user.username = payload.username
+    user.email = normalized_email
+    user.email_verified = bool(normalized_email)
+    if payload.avatar is not None:
+        user.avatar = payload.avatar or "default"
+    db.commit()
+    return _user_payload(user)
 
 
 @app.get("/api/auth/sessions")
@@ -1305,6 +1323,23 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
     models = [str(item) for item in models if str(item).strip()]
     if config.model and config.model not in models:
         models.insert(0, config.model)
+    try:
+        categories = json.loads(config.model_categories_json) if config.model_categories_json else {}
+    except (TypeError, ValueError):
+        categories = {}
+    if not isinstance(categories, dict):
+        categories = {}
+    if not categories:
+        categories = {"chat": [], "image": [], "video": []}
+        for model_name in models:
+            lowered = model_name.lower()
+            if any(token in lowered for token in ("image", "dall-e", "sdxl", "flux", "画", "生图")):
+                categories["image"].append(model_name)
+            elif any(token in lowered for token in ("video", "wan", "sora", "kling", "视频")):
+                categories["video"].append(model_name)
+            else:
+                categories["chat"].append(model_name)
+    categories = {key: [str(item) for item in value if str(item).strip()] for key, value in categories.items() if isinstance(value, list)}
     return {
         "id": config.id,
         "account_id": config.account_id,
@@ -1312,11 +1347,13 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
         "base_url": config.base_url,
         "model": config.model,
         "models": models,
+        "model_categories": categories,
         "protocol": config.protocol,
         "interface_type": config.interface_type,
         "timeout_seconds": config.timeout_seconds,
         "api_key_configured": bool(config.encrypted_api_key),
         "is_active": config.is_active,
+        "is_enabled": config.is_enabled,
     }
 
 
@@ -1329,6 +1366,7 @@ def _provider_candidates(db: Session, account_id: int, user: User | None = None)
             select(AIProviderConfig)
             .outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id)
             .where((AIProviderConfig.account_id.is_(None)) | ChannelsAccount.user_id.is_(None))
+            .where(AIProviderConfig.is_enabled.is_(True))
             .order_by(AIProviderConfig.id)
         ).all())
     return list(
@@ -1355,7 +1393,7 @@ def _chat_category_payload(row: AIChatCategory) -> dict[str, Any]:
 
 
 def _chat_session_payload(row: AIChatSession) -> dict[str, Any]:
-    return {"id": row.id, "category_id": row.category_id, "title": row.title, "pinned": row.pinned, "provider_id": row.provider_id, "created_at": row.created_at, "updated_at": row.updated_at}
+    return {"id": row.id, "category_id": row.category_id, "title": row.title, "pinned": row.pinned, "provider_id": row.provider_id, "generation_status": row.generation_status, "generation_type": row.generation_type, "generation_error": row.generation_error, "created_at": row.created_at, "updated_at": row.updated_at}
 
 
 def _chat_owned_session(db: Session, session_id: int, user: User) -> AIChatSession:
@@ -1383,6 +1421,48 @@ def _chat_message_content(db: Session, message: AIChatMessage) -> str | list[dic
         else:
             parts.append({"type": "text", "text": f"\n[附件 {attachment.filename}]\n{raw.decode('utf-8', errors='replace')}"})
     return parts or message.content
+
+
+CHAT_CONTEXT_LIMIT = 12000
+CHAT_CONTEXT_RECENT_MESSAGES = 12
+
+
+def _context_tokens(content: str | list[dict[str, Any]]) -> int:
+    if isinstance(content, str):
+        return max(1, (len(content) + 2) // 3)
+    total = 0
+    for item in content:
+        total += 500 if item.get("type") == "image_url" else max(1, (len(str(item.get("text", ""))) + 2) // 3)
+    return max(1, total)
+
+
+def _prepare_chat_context(
+    db: Session,
+    session: AIChatSession,
+    previous: list[AIChatMessage],
+    current: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep the full transcript, but send a bounded summary plus recent turns."""
+    history = [{"role": item.role, "content": _chat_message_content(db, item)} for item in previous]
+    all_messages = history + current
+    used = sum(_context_tokens(item["content"]) for item in all_messages)
+    compressed = False
+    summary = session.context_summary or ""
+    if used > CHAT_CONTEXT_LIMIT:
+        compressed = True
+        split_at = max(0, len(history) - CHAT_CONTEXT_RECENT_MESSAGES)
+        old = history[:split_at]
+        snippets = []
+        for item in old:
+            text = item["content"] if isinstance(item["content"], str) else "[图片或附件]"
+            snippets.append(f"{item['role']}: {str(text).replace(chr(10), ' ')[:240]}")
+        summary = (summary + "\n" if summary else "") + "\n".join(snippets)
+        summary = summary[-6000:]
+        session.context_summary = summary
+        db.commit()
+        all_messages = ([{"role": "system", "content": "以下是较早对话的压缩摘要，仅用于保持上下文：\n" + summary}] if summary else []) + history[split_at:] + current
+        used = sum(_context_tokens(item["content"]) for item in all_messages)
+    return all_messages, {"used_tokens": used, "max_tokens": CHAT_CONTEXT_LIMIT, "compressed": compressed}
 
 
 @app.get("/api/ai-chat/categories")
@@ -1579,8 +1659,20 @@ def _consume_usage(db: Session, user: User, kind: str, amount: int = 1) -> None:
 async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> StreamingResponse:
     _consume_usage(db, user, "ai_chat")
     row = _chat_owned_session(db, session_id, user)
+    if payload.mode in {"image", "video"}:
+        if row.generation_status == "running":
+            raise HTTPException(status_code=409, detail="当前对话已有生成任务进行中，请等待任务完成")
+        row.generation_status = "running"
+        row.generation_type = payload.mode
+        row.generation_error = None
+        db.commit()
+        row.generation_status = "failed"
+        row.generation_error = "当前接口尚未接入生图/生视频任务协议"
+        db.commit()
+        raise HTTPException(status_code=501, detail="当前接口尚未接入生图/生视频任务协议，请选择聊天模型或配置对应生成接口")
     config = db.get(AIProviderConfig, payload.provider_id or row.provider_id) if (payload.provider_id or row.provider_id) else db.scalar(select(AIProviderConfig).where(AIProviderConfig.is_active.is_(True)).order_by(AIProviderConfig.id))
     if not config: raise HTTPException(status_code=409, detail="请先配置并选择 AI 接口")
+    if not config.is_enabled: raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
     if user.role.value != "admin" and config.account_id is not None:
         raise HTTPException(status_code=403, detail="该 AI 接口不是管理员发布的全局配置")
     if config.account_id is not None and not db.get(ChannelsAccount, config.account_id): raise HTTPException(status_code=404, detail="AI 配置不存在")
@@ -1621,10 +1713,11 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
     db.add(user_message); db.flush()
     for attachment in attachment_rows: attachment.message_id = user_message.id; db.add(attachment)
     db.commit()
-    messages = [{"role": item.role, "content": _chat_message_content(db, item)} for item in previous[-20:]] + [{"role": "user", "content": content_parts}]
+    messages, context_info = _prepare_chat_context(db, row, previous, [{"role": "user", "content": content_parts}])
     async def event_stream():
         parts: list[str] = []
         try:
+            yield f"data: {json.dumps({'type': 'context', **context_info}, ensure_ascii=False)}\n\n"
             async for part in stream_chat_provider(config, messages):
                 parts.append(part); yield f"data: {json.dumps({'type': 'delta', 'content': part}, ensure_ascii=False)}\n\n"
             answer = "".join(parts)
@@ -1728,7 +1821,14 @@ def save_ai_provider(
         list(dict.fromkeys([item.strip() for item in payload.models if item.strip()])),
         ensure_ascii=False,
     ) if payload.models else config.models_json
-    config.protocol = payload.protocol
+    if payload.model_categories:
+        allowed = set(json.loads(config.models_json) if config.models_json else [])
+        categories = {key: list(dict.fromkeys(item for item in values if item in allowed)) for key, values in payload.model_categories.items() if isinstance(values, list)}
+        config.model_categories_json = json.dumps(categories, ensure_ascii=False)
+    # OPENAI-compatible endpoints use the Chat Completions contract. Older
+    # records may contain ``responses`` from the former UI, so normalize them
+    # when saving as well as at call time.
+    config.protocol = "chat_completions" if payload.interface_type == "compatible" else payload.protocol
     config.interface_type = payload.interface_type
     config.timeout_seconds = payload.timeout_seconds
     db.execute(
@@ -1768,6 +1868,8 @@ def select_ai_provider(
     )
     if not config:
         raise HTTPException(status_code=404, detail="接口配置不存在")
+    if not config.is_enabled:
+        raise HTTPException(status_code=409, detail="该 AI 接口已被禁用")
     if config.account_id is not None and user.role.value != "admin":
         raise HTTPException(status_code=403, detail="仅可选择管理员发布的全局接口配置")
     db.execute(
@@ -1856,6 +1958,41 @@ def delete_ai_provider(
     write_audit(db, "ai.provider.delete", user, "ai_provider", provider_id)
     db.commit()
     return Response(status_code=204)
+
+
+@app.patch("/api/ai/provider/{provider_id}/enabled")
+def set_ai_provider_enabled(
+    provider_id: int,
+    account_id: int,
+    enabled: bool,
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    _get_account(db, account_id, user)
+    config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == provider_id, (AIProviderConfig.account_id == account_id) | AIProviderConfig.account_id.is_(None)))
+    if not config:
+        raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
+    config.is_enabled = enabled
+    if not enabled and config.is_active:
+        config.is_active = False
+    write_audit(db, "ai.provider.enabled", user, "ai_provider", provider_id, {"enabled": enabled})
+    db.commit()
+    return _provider_payload(config)
+
+@app.patch("/api/ai/provider/{provider_id}/categories")
+def save_ai_provider_categories(provider_id: int, payload: AIProviderCategoriesInput, user: Annotated[User, Depends(require_csrf_admin)], db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    _get_account(db, payload.account_id, user)
+    config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == provider_id, (AIProviderConfig.account_id == payload.account_id) | AIProviderConfig.account_id.is_(None)))
+    if not config:
+        raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
+    try:
+        allowed = set(json.loads(config.models_json) if config.models_json else [])
+    except (TypeError, ValueError):
+        allowed = set()
+    categories = {key: list(dict.fromkeys(item for item in values if item in allowed)) for key, values in payload.model_categories.items() if isinstance(values, list)}
+    config.model_categories_json = json.dumps(categories, ensure_ascii=False)
+    db.commit()
+    return _provider_payload(config)
 
 
 @app.post("/api/ai/provider/test-and-save")

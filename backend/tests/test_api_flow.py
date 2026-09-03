@@ -154,7 +154,7 @@ def test_admin_can_check_and_queue_system_update(
 
     async def versions(_repository: str, _registry: str = "docker.io") -> list[dict[str, str]]:
         return [
-            {"version": "0.5.2", "published_at": "2026-09-01T00:00:00Z"},
+            {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z"},
             {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z"},
             {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
                 {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z"},
@@ -168,7 +168,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.5.2"
+    assert checked.json()["current_version"] == "0.5.3"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.4.3", "0.4.2", "0.4.0", "0.3.4"]
 
     queued = client.post(

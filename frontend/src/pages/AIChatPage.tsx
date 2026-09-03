@@ -40,14 +40,18 @@ type Session = {
   title: string;
   pinned: boolean;
   provider_id?: number | null;
+  generation_status?: "idle" | "running" | "completed" | "failed";
+  generation_type?: "image" | "video" | null;
+  generation_error?: string | null;
 };
 type ChatMessage = {
   id: number;
   role: "user" | "assistant";
   content: string;
   created_at?: string;
-  attachments?: { id: number; filename: string; content_type: string }[];
+  attachments?: { id: number | string; filename: string; content_type: string; preview?: string }[];
 };
+type ContextInfo = { used_tokens: number; max_tokens: number; compressed: boolean };
 type Provider = {
   id: number;
   name: string;
@@ -57,6 +61,7 @@ type Provider = {
   timeout_seconds: number;
   api_key_configured: boolean;
   models?: string[];
+  model_categories?: Record<string, string[]>;
 };
 function MarkdownCode({ children, className }: { children?: ReactNode; className?: string }) {
   const source = String(children ?? "").replace(/\n$/, "");
@@ -89,7 +94,14 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | undefined>();
   const [providerId, setProviderId] = useState<number | undefined>();
   const [model, setModel] = useState("");
+  const [modelCategory, setModelCategory] = useState("chat");
   const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const categoryModels = (provider: Provider | undefined, category: string) => {
+    if (!provider) return [];
+    const categorized = provider.model_categories?.[category];
+    if (categorized?.length) return categorized;
+    return provider.models?.length ? provider.models : provider.model ? [provider.model] : [];
+  };
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
@@ -100,6 +112,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const [selectedSessions, setSelectedSessions] = useState<number[]>([]);
   const [dragCategoryId, setDragCategoryId] = useState<number | null>(null);
   const [chatSidebarWidth, setChatSidebarWidth] = useState(320);
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
   const chatLayoutRef = useRef<HTMLDivElement>(null);
   const resizingChatRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -156,22 +169,27 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       setProviderId(first.provider_id || undefined);
       const firstProvider = configs.find((item) => item.id === first.provider_id);
       setModel(firstProvider?.model || "");
-      setModelOptions(firstProvider?.models?.length ? firstProvider.models : firstProvider?.model ? [firstProvider.model] : []);
+      setModelOptions(categoryModels(firstProvider, "chat"));
       await openSession(first, configs);
     }
   };
   const openSession = async (session: Session, providerList = providers) => {
     const requestId = ++messageRequestRef.current;
     setActiveSession(session);
+    setContextInfo(null);
     setProviderId(session.provider_id || undefined);
     const sessionProvider = providerList.find((item) => item.id === session.provider_id);
     const savedModel = localStorage.getItem(`vx-ai-chat-model:${session.id}`);
     setModel(savedModel || sessionProvider?.model || "");
-    setModelOptions(sessionProvider?.models?.length ? sessionProvider.models : sessionProvider?.model ? [sessionProvider.model] : []);
+    setModelOptions(categoryModels(sessionProvider, modelCategory));
     setMessages([]);
     try {
       const history = await api<ChatMessage[]>(`/api/ai-chat/sessions/${session.id}/messages`);
-      if (requestId === messageRequestRef.current) setMessages(history);
+      if (requestId === messageRequestRef.current) {
+        setMessages(history);
+        const used = history.reduce((total, item) => total + Math.max(1, Math.ceil(item.content.length / 3)), 0);
+        setContextInfo({ used_tokens: used, max_tokens: 12000, compressed: false });
+      }
     } catch (cause) {
       if (requestId === messageRequestRef.current) {
         message.error(cause instanceof Error ? cause.message : "加载聊天历史失败");
@@ -191,8 +209,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       return;
     }
     const provider = providers.find((item) => item.id === providerId);
-    setModelOptions(provider?.models?.length ? provider.models : provider?.model ? [provider.model] : []);
-  }, [providerId, account, providers]);
+    setModelOptions(categoryModels(provider, modelCategory));
+  }, [providerId, account, providers, modelCategory]);
   const createCategory = () => {
     let name = timestampName("新分类");
     Modal.confirm({
@@ -416,10 +434,12 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     setInput("");
     setAttachments([]);
     setBusy(true);
+    if (modelCategory !== "chat") message.info(modelCategory === "image" ? "生图任务正在进行中，完成后会通知您" : "生视频任务正在进行中，完成后会通知您");
+    const temporaryMessageId = -Date.now();
     setMessages((items) => [
       ...items,
-      { id: Date.now(), role: "user", content: content || "（附件）" },
-      { id: Date.now() + 1, role: "assistant", content: "" },
+      { id: temporaryMessageId, role: "user", content, attachments: files.map(({ file, preview }) => ({ id: `${temporaryMessageId}-${file.name}`, filename: file.name, content_type: file.type || "application/octet-stream", preview })) },
+      { id: temporaryMessageId - 1, role: "assistant", content: "" },
     ]);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -444,6 +464,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           body: JSON.stringify({
             content,
             provider_id: providerId,
+            mode: modelCategory,
             attachments: attachmentPayload,
           }),
         },
@@ -464,6 +485,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
             .find((item) => item.startsWith("data:"));
           if (!line) continue;
           const event = JSON.parse(line.slice(5));
+          if (event.type === "context") setContextInfo({ used_tokens: event.used_tokens, max_tokens: event.max_tokens, compressed: Boolean(event.compressed) });
           if (event.type === "delta")
             setMessages((items) =>
               items.map((item, index) =>
@@ -482,7 +504,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       );
     } catch (cause) {
       if ((cause as DOMException)?.name !== "AbortError") {
-        setMessages((items) => items.slice(0, -1));
+        setMessages((items) => items.filter((item) => item.id !== temporaryMessageId && item.id !== temporaryMessageId - 1));
         message.error(cause instanceof Error ? cause.message : "AI 请求失败");
       }
     } finally {
@@ -670,12 +692,19 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
               setProviderId(value);
               const provider = providers.find((item) => item.id === value);
               setModel(provider?.model || "");
-              setModelOptions(provider?.models?.length ? provider.models : provider?.model ? [provider.model] : []);
+              setModelCategory("chat");
+              setModelOptions(categoryModels(provider, "chat"));
             }}
             options={providers.map((item) => ({
               value: item.id,
               label: item.name,
             }))}
+          />
+          <Select
+            value={modelCategory}
+            disabled={!providerId}
+            onChange={(value) => { setModelCategory(value); const provider = providers.find((item) => item.id === providerId); const options = categoryModels(provider, value); setModelOptions(options); setModel(options.includes(model) ? model : options[0] || ""); }}
+            options={[{ value: "chat", label: "聊天模型" }, { value: "image", label: "生图模型" }, { value: "video", label: "视频模型" }]}
           />
           <Select
             value={model || undefined}
@@ -689,10 +718,10 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
               if (!activeSession) return;
               if (model) localStorage.setItem(`vx-ai-chat-model:${activeSession.id}`, model);
               void updateSession(activeSession, { provider_id: providerId });
-              message.success("已保存当前会话模型");
+              message.success("模型已应用并写入本地配置");
             }}
           >
-            保存模型
+            应用模型
           </Button>
           <Space className="ai-chat-export-actions" size={8}>
             <Button
@@ -741,9 +770,9 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                           type="button"
                           key={attachment.id}
                           className="ai-chat-history-image"
-                          onClick={() => setPreviewImage(`/api/ai-chat/attachments/${attachment.id}`)}
+                          onClick={() => setPreviewImage(attachment.preview || `/api/ai-chat/attachments/${attachment.id}`)}
                         >
-                          <img src={`/api/ai-chat/attachments/${attachment.id}`} alt={attachment.filename} />
+                          <img src={attachment.preview || `/api/ai-chat/attachments/${attachment.id}`} alt={attachment.filename} />
                         </button>
                       ) : (
                         <a
@@ -828,6 +857,12 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                   </div>
                 ))}
               </div>
+              {contextInfo && <div className="ai-chat-context-info" role="status">
+                <span>背景信息窗口：</span>
+                <strong>{Math.min(100, Math.round((contextInfo.used_tokens / contextInfo.max_tokens) * 100))}% 已用</strong>
+                <span>（剩余 {Math.max(0, 100 - Math.min(100, Math.round((contextInfo.used_tokens / contextInfo.max_tokens) * 100)))}%）</span>
+                {contextInfo.compressed && <span>已自动压缩较早消息</span>}
+              </div>}
               <Input.TextArea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}

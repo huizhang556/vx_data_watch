@@ -66,6 +66,8 @@ nano .env
 | `VX_IMAGE` | Docker Compose 部署时确认镜像源；一键脚本会按地区默认选择，海外为 Docker Hub，中国大陆为阿里云 ACR | `docker.io/litehub/vx-data-watch:latest` |
 | `VX_MASTER_KEY` | 用于加密密钥和备份；一键脚本会自动生成，手动部署可留空让程序生成 | `openssl rand -base64 32` 的输出 |
 
+登录凭证默认有效 12 小时（`VX_SESSION_HOURS=12`）。超过有效期未重新登录时，凭证会失效；重新登录后会重新签发 12 小时凭证。可在 `.env` 中按小时调整该值，修改后需重启服务。
+
 选择 PostgreSQL 时，必须同时设置 `VX_DATABASE_MODE=postgres`、`VX_DATABASE_URL` 以及 PostgreSQL 用户、密码和数据库名；不设置时使用 SQLite。
 
 应用启动时会自动执行 Alembic 数据库迁移。迁移会沿单一版本链升级，不会覆盖业务数据；在线更新和一键更新会先备份，再启动新容器并等待健康检查，迁移或启动失败时自动恢复旧版本。升级前仍建议确认备份可用，不要手动删除 `alembic_version` 表或迁移文件。

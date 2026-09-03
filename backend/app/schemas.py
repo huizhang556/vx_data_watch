@@ -104,6 +104,14 @@ class UsernameChange(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
 
 
+class ProfileUpdate(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
+    email: str | None = Field(default=None, max_length=254)
+    avatar: str | None = Field(default=None, max_length=2_000_000)
+
+    _email_format = field_validator("email")(validate_email_address)
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_.-]+$")
     email: str = Field(min_length=5, max_length=254)
@@ -184,6 +192,7 @@ class AIProviderInput(BaseModel):
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
     models: list[str] = Field(default_factory=list, max_length=500)
+    model_categories: dict[str, list[str]] = Field(default_factory=dict)
 
     @field_validator("base_url")
     @classmethod
@@ -216,6 +225,10 @@ class AIProviderSelect(BaseModel):
     account_id: int
     provider_id: int
 
+class AIProviderCategoriesInput(BaseModel):
+    account_id: int
+    model_categories: dict[str, list[str]] = Field(default_factory=dict)
+
 
 class AIQuickConfigInput(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -246,6 +259,7 @@ class AIChatSessionUpdate(BaseModel):
 class AIChatMessageInput(BaseModel):
     content: str = Field(default="", max_length=100_000)
     provider_id: int | None = None
+    mode: Literal["chat", "image", "video"] = "chat"
     attachments: list[dict[str, str]] = Field(default_factory=list, max_length=8)
 
 

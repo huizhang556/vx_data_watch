@@ -143,6 +143,8 @@ export default function App() {
   );
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const [loadingLabel, setLoadingLabel] = useState("正在加载");
   const location = useLocation();
   const navigate = useNavigate();
   const checkUpdates = useCallback(async () => {
@@ -153,8 +155,15 @@ export default function App() {
     } catch {
       setUpdateCheck(null);
     }
-  }, [user.role]);
+  }, []);
   useEffect(() => { void checkUpdates(); }, [checkUpdates]);
+  useEffect(() => {
+    const start = (event: Event) => { setPendingRequests((value) => value + 1); setLoadingLabel((event as CustomEvent<{ label?: string }>).detail?.label || "正在加载"); };
+    const end = () => setPendingRequests((value) => Math.max(0, value - 1));
+    window.addEventListener("vx:request-start", start);
+    window.addEventListener("vx:request-end", end);
+    return () => { window.removeEventListener("vx:request-start", start); window.removeEventListener("vx:request-end", end); };
+  }, []);
 
   const reloadAccounts = useCallback(async () => {
     const rows = await api<Account[]>("/api/accounts");
@@ -227,6 +236,7 @@ export default function App() {
 
   return (
     <AccountContext.Provider value={context}>
+      {pendingRequests > 0 && <div className="global-loading-indicator" role="status" aria-live="polite"><Spin size="small" /><span>{loadingLabel}</span></div>}
       <Layout
         className={`app-shell ${siderCollapsed ? "sider-collapsed" : ""}`}
       >
@@ -390,6 +400,7 @@ export default function App() {
               fallback={
                 <div className="page-loading">
                   <Spin size="large" />
+                  <span>正在加载</span>
                 </div>
               }
             >

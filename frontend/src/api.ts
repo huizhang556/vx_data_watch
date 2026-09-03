@@ -3,6 +3,8 @@ let csrfToken = ''
 export function setCsrfToken(value?: string) {
   csrfToken = value || ''
 }
+export function beginRequestActivity(label = '正在加载') { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('vx:request-start', { detail: { label } })) }
+export function endRequestActivity() { if (typeof window !== 'undefined') window.dispatchEvent(new Event('vx:request-end')) }
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -10,7 +12,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const method = (init.method || 'GET').toUpperCase()
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) headers.set('X-CSRF-Token', csrfToken)
-  const response = await fetch(path, { ...init, headers, credentials: 'same-origin' })
+  const requestLabel = method === 'DELETE' ? '正在删除' : method === 'GET' || method === 'HEAD' ? '正在加载' : path.includes('/profile') || path.includes('/settings') || path.includes('/provider') || path.includes('/quick-configs') ? '正在保存' : path.includes('/upload') || path.includes('/imports') ? '正在上传' : path.includes('/analyze') ? '正在生成分析' : '正在处理'
+  beginRequestActivity(requestLabel)
+  let response: Response
+  try {
+    response = await fetch(path, { ...init, headers, credentials: 'same-origin' })
+  } finally {
+    endRequestActivity()
+  }
   if (!response.ok) {
     if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('vx:unauthorized'))
     let detail = response.status === 413

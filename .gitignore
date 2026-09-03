@@ -80,3 +80,5 @@ Desktop.ini
 
 # Maintainer-only local release notes
 LOCAL_RELEASE_RUNBOOK.md
+# Maintainer-only local development documents
+*.docx

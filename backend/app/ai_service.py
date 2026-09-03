@@ -100,6 +100,35 @@ def _content_items(content: Any) -> list[dict[str, Any]]:
     return content if isinstance(content, list) else ([{"type": "text", "text": str(content)}] if content else [])
 
 
+def _responses_request(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
+    """Convert Chat Completions messages to the Responses API input schema."""
+    instructions: str | None = None
+    converted: list[dict[str, Any]] = []
+    for message in messages:
+        role = str(message.get("role", "user"))
+        if role == "system":
+            instructions = str(message.get("content") or "")
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            items = [{"type": "input_text", "text": content}]
+        else:
+            items = []
+            for item in _content_items(content):
+                item_type = item.get("type")
+                if item_type == "text":
+                    items.append({"type": "input_text", "text": str(item.get("text", ""))})
+                elif item_type == "image_url":
+                    image = item.get("image_url", {})
+                    url = image.get("url", "") if isinstance(image, dict) else image
+                    if url:
+                        items.append({"type": "input_image", "image_url": str(url)})
+            if not items:
+                items = [{"type": "input_text", "text": ""}]
+        converted.append({"role": role if role in {"user", "assistant", "developer"} else "user", "content": items})
+    return instructions, converted
+
+
 def _anthropic_content(content: Any) -> str | list[dict[str, Any]]:
     items = _content_items(content)
     if not any(item.get("type") == "image_url" for item in items):
@@ -155,10 +184,11 @@ async def _call_native_provider(base_url: str, model: str, protocol: str, timeou
 
 
 async def call_provider(config: AIProviderConfig, snapshot: dict[str, Any]) -> str:
+    protocol = "chat_completions" if config.interface_type == "compatible" else config.protocol
     return await _call_provider(
         base_url=config.base_url,
         model=config.model,
-        protocol=config.protocol,
+        protocol=protocol,
         timeout_seconds=config.timeout_seconds,
         api_key=decrypt_secret(config.encrypted_api_key),
         snapshot=snapshot,
@@ -194,17 +224,21 @@ async def stream_chat_provider(
     config: AIProviderConfig, messages: list[dict[str, Any]]
 ) -> AsyncGenerator[str, None]:
     """Yield assistant text from an OpenAI-compatible chat completion stream."""
-    if config.protocol in {"anthropic", "gemini", "grok"}:
+    protocol = "chat_completions" if config.interface_type == "compatible" else config.protocol
+    if protocol in {"anthropic", "gemini", "grok"}:
         async for part in _stream_native_provider(config, messages):
             yield part
         return
     api_key = decrypt_secret(config.encrypted_api_key)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {"model": config.model, "messages": messages, "stream": True}
-    if config.protocol == "responses":
-        body = {"model": config.model, "input": messages, "stream": True}
+    if protocol == "responses":
+        instructions, response_input = _responses_request(messages)
+        body = {"model": config.model, "input": response_input, "stream": True}
+        if instructions:
+            body["instructions"] = instructions
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
-        endpoint = "responses" if config.protocol == "responses" else "chat/completions"
+        endpoint = "responses" if protocol == "responses" else "chat/completions"
         for candidate in _base_candidates(config.base_url):
           async with client.stream("POST", _endpoint(candidate, f"/{endpoint}"), headers=headers, json=body) as response:
             if response.status_code == 404 and candidate != _base_candidates(config.base_url)[-1]:
@@ -214,7 +248,7 @@ async def stream_chat_provider(
             except httpx.HTTPStatusError as exc:
                 detail = (await response.aread()).decode("utf-8", errors="replace")[:500]
                 raise RuntimeError(f"AI 接口返回 {response.status_code}: {detail}") from exc
-            if config.protocol == "responses":
+            if protocol == "responses":
                 async for line in response.aiter_lines():
                     if line.startswith("data:") and line[5:].strip() not in {"", "[DONE]"}:
                         try:

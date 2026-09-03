@@ -240,11 +240,13 @@ class AIProviderConfig(Base):
     base_url: Mapped[str] = mapped_column(String(500))
     model: Mapped[str] = mapped_column(String(200))
     models_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_categories_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     protocol: Mapped[str] = mapped_column(String(30), default="chat_completions")
     interface_type: Mapped[str] = mapped_column(String(20), default="compatible", server_default="compatible")
     encrypted_api_key: Mapped[bytes] = mapped_column(LargeBinary)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -320,6 +322,10 @@ class AIChatSession(Base):
     title: Mapped[str] = mapped_column(String(200), default="新对话")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_provider_configs.id", ondelete="SET NULL"))
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_status: Mapped[str] = mapped_column(String(20), default="idle", server_default="idle")
+    generation_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

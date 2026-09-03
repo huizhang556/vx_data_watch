@@ -5,7 +5,7 @@ import { LockKeyhole, Mail, UserRound } from 'lucide-react'
 import { api, setCsrfToken } from './api'
 import type { User } from './types'
 
-interface AuthContextValue { user: User; logout: () => Promise<void> }
+interface AuthContextValue { user: User; logout: () => Promise<void>; updateUser: (user: User) => void }
 const AuthContext = createContext<AuthContextValue | null>(null)
 export function useAuth() { const value = useContext(AuthContext); if (!value) throw new Error('AuthContext is missing'); return value }
 
@@ -48,7 +48,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const syncField = (name: string, value: string) => { form.setFieldValue(name, value); if (name === 'email') setEmail(value) }
   const sendCode = async (value?: string) => { const targetEmail = value || form.getFieldValue('email') || email; setBusy(true); try { await api(mode === 'register' ? '/api/auth/register/request-code' : '/api/auth/password-reset/request-code', { method: 'POST', body: JSON.stringify({ email: targetEmail, captcha_token: captcha }) }); message.success('验证码已发送，请检查邮箱') } catch (cause) { message.error(cause instanceof Error ? cause.message : '发送失败') } finally { setBusy(false) } }
   const logout = async () => { try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* clear local state even if server is unavailable */ } finally { setCsrfToken(); setUser(null); setMode('login'); setCaptcha(undefined); form.resetFields(); localStorage.removeItem('vx_account_id'); window.history.replaceState({}, '', '/') } }
-  const value = useMemo(() => user ? { user, logout } : null, [user])
+  const updateUser = (next: User) => { setUser(next); if (next.csrf_token) setCsrfToken(next.csrf_token) }
+  const value = useMemo(() => user ? { user, logout, updateUser } : null, [user])
   if (loading) return <div className="center-screen"><Spin size="large" /></div>
   if (user) return <AuthContext.Provider value={value!}>{children}</AuthContext.Provider>
   const isSetup = !initialized

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
-import { Bot, Eye, History, PlugZap, Plus, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, CheckSquare, Eye, History, PlugZap, Plus, Power, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
 import ReactMarkdown from 'react-markdown'
@@ -12,7 +12,7 @@ import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../
 import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
-interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; models?: string[]; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean }
+interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; models?: string[]; model_categories?: Record<string, string[]>; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean; is_enabled: boolean }
 interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
@@ -60,6 +60,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [configAction, setConfigAction] = useState<'new' | 'edit'>('new')
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
+  const [modelCategories, setModelCategories] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
   const [tested, setTested] = useState(false)
   const [modelLoading, setModelLoading] = useState(false)
   const [draftTestLoading, setDraftTestLoading] = useState(false)
@@ -71,6 +72,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [viewingId, setViewingId] = useState<number | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const [configError, setConfigError] = useState('')
   const [days, setDays] = useState(7)
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
   const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(7, 'day'))
@@ -89,8 +91,8 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     ])
     setProviders(rows)
     setProvider(active)
-    if (active) { form.setFieldsValue({ ...active, account_id: accountId, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]) }
-    else { form.resetFields(); form.setFieldsValue({ account_id: accountId, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]) }
+    if (active) { form.setFieldsValue({ ...active, account_id: accountId, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]); setModelCategories(active.model_categories || { chat: active.models || [active.model], image: [], video: [] }) }
+    else { form.resetFields(); form.setFieldsValue({ account_id: accountId, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]); setModelCategories({ chat: [], image: [], video: [] }) }
   }
   const loadHistories = () => account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
@@ -122,34 +124,37 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   }
 
   const fetchModels = async () => {
-    setModelLoading(true); setError('')
+    setModelLoading(true); setConfigError('')
     try {
       const values = await draftValues()
       const response = await api<{ models: string[] }>('/api/ai/provider/models', { method: 'POST', body: JSON.stringify(values) })
       setModels(response.models)
+      const categories = { chat: [] as string[], image: [] as string[], video: [] as string[] }
+      response.models.forEach((name) => { const value = name.toLowerCase(); const key = /image|dall-e|sdxl|flux|画|生图/.test(value) ? 'image' : /video|wan|sora|kling|视频/.test(value) ? 'video' : 'chat'; categories[key].push(name) })
+      setModelCategories(categories)
       if (!response.models.includes(form.getFieldValue('model'))) form.setFieldValue('model', response.models[0])
       message.success(`查询到 ${response.models.length} 个模型`)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '模型查询失败') }
+    } catch (cause) { setConfigError(cause instanceof Error ? cause.message : '模型查询失败') }
     finally { setModelLoading(false) }
   }
 
   const testDraft = async () => {
-    setDraftTestLoading(true); setError('')
+    setDraftTestLoading(true); setConfigError('')
     try {
       const values = await draftValues(true)
       const response = await api<{ result: string }>('/api/ai/provider/test-draft', { method: 'POST', body: JSON.stringify(values) })
       setTested(true); message.success(response.result.slice(0, 100) || '连接成功')
-    } catch (cause) { setTested(false); setError(cause instanceof Error ? cause.message : '测试失败') }
+    } catch (cause) { setTested(false); setConfigError(cause instanceof Error ? cause.message : '测试失败') }
     finally { setDraftTestLoading(false) }
   }
 
   const saveProvider = async () => {
-    setSaveLoading(true); setError('')
+    setSaveLoading(true); setConfigError('')
     try {
       const values = await form.validateFields()
-      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
+      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, model_categories: modelCategories, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
       await loadProviders(account!.id); setConfigOpen(false); message.success('接口配置已保存')
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败') }
+    } catch (cause) { setConfigError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
   }
 
@@ -157,7 +162,9 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     form.resetFields()
     form.setFieldsValue({ account_id: account!.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 })
     setModels([])
+    setModelCategories({ chat: [], image: [], video: [] })
     setTested(false)
+    setConfigError('')
     setError('')
     setConfigAction('new')
     setConfigMode('official')
@@ -166,7 +173,9 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const editProvider = (item: Provider) => {
     form.setFieldsValue({ ...item, account_id: account!.id, provider_id: item.id, api_key: undefined })
     setModels(item.models?.length ? item.models : item.model ? [item.model] : [])
+    setModelCategories(item.model_categories || { chat: item.models || [item.model], image: [], video: [] })
     setTested(false)
+    setConfigError('')
     setError('')
     setConfigAction('edit')
     setConfigMode(item.interface_type || 'compatible')
@@ -234,7 +243,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     } catch (cause) { setError(cause instanceof Error ? cause.message : '删除配置失败') }
   }
 
-  const providerOptions = providers.map((item) => ({
+  const providerOptions = providers.filter((item) => item.is_enabled).map((item) => ({
     value: item.id,
     label: <div className="provider-option"><span>{item.name}</span><Popconfirm title="删除接口配置" description="删除后不能恢复，历史分析记录使用过的配置无法删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={(event) => { event?.stopPropagation(); void deleteProvider(item) }}><Button type="text" danger size="small" icon={<Trash2 size={14} />} aria-label={`删除配置 ${item.name}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} /></Popconfirm></div>,
   }))
@@ -309,14 +318,16 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   if (!account) return <Empty description="请先创建视频号账号" />
   return (
     <div className={`page ${configOnly ? 'ai-config-only' : ''}`}>
-      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title>{!configOnly && <Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text>}</div>{user.role === 'admin' && (configOnly ? <Button type="primary" icon={<Plus size={18} />} onClick={() => { startNewProvider(); setConfigOpen(true) }}>新增配置</Button> : location.pathname === '/ai-chat' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setTested(false); setConfigAction(provider ? 'edit' : 'new'); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>)}</div>
+      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title>{!configOnly && <Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text>}</div>{user.role === 'admin' && (configOnly ? <Button type="primary" icon={<Plus size={18} />} onClick={() => { startNewProvider(); setConfigOpen(true) }}>新增配置</Button> : location.pathname === '/ai-chat' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setConfigError(''); setTested(false); setConfigAction(provider ? 'edit' : 'new'); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>)}</div>
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
       {configOnly && <section className="ai-provider-registry">
         <div className="section-heading"><Typography.Title level={3}>已配置接口</Typography.Title><Typography.Text type="secondary">可随时编辑或删除已保存的模型接口</Typography.Text></div>
         {!providers.length ? <Empty description="暂无已配置接口，请先新增配置" /> : <div className="ai-provider-registry-list">{providers.map((item) => <article className={`ai-provider-registry-row ${item.is_active ? 'active' : ''}`} key={item.id}>
           <div className="ai-provider-registry-main"><strong>{item.name}</strong><span>{item.model || '未设置模型'}</span><small>{item.base_url}</small></div>
-          <div className="ai-provider-registry-meta"><span>{item.protocol}</span><span className={item.is_active ? 'provider-active' : ''}>{item.is_active ? '当前使用' : '未启用'}</span></div>
-          <Button size="small" icon={<Settings2 size={15} />} onClick={() => editProvider(item)}>编辑</Button>
+          <div className="ai-provider-registry-meta"><span>{item.protocol}</span><span className={item.is_enabled ? 'provider-active' : 'provider-disabled'}>{item.is_enabled ? '已启用' : '已禁用'}</span>{item.is_active && <span className="provider-active">当前使用</span>}</div>
+          <Button type="text" size="small" icon={<Power size={15} />} aria-label={item.is_enabled ? '禁用配置' : '启用配置'} title={item.is_enabled ? '禁用配置' : '启用配置'} onClick={() => void api<Provider>(`/api/ai/provider/${item.id}/enabled?${query({ account_id: account.id, enabled: item.is_enabled ? 0 : 1 })}`, { method: 'PATCH' }).then((row) => setProviders((rows) => rows.map((current) => current.id === row.id ? row : current))).catch((cause) => setError(cause instanceof Error ? cause.message : '配置状态修改失败'))} />
+          <Button type="text" size="small" icon={<Settings2 size={15} />} aria-label="编辑配置" title="编辑配置" onClick={() => editProvider(item)} />
+          <Button type="text" danger size="small" icon={<Trash2 size={15} />} aria-label="删除配置" title="删除配置" onClick={() => Modal.confirm({ title: '删除配置', content: `确认删除“${item.name}”？`, okButtonProps: { danger: true }, onOk: async () => { await api(`/api/ai/provider/${item.id}?${query({ account_id: account.id })}`, { method: 'DELETE' }); setProviders((rows) => rows.filter((row) => row.id !== item.id)) } })} />
         </article>)}</div>}
       </section>}
       <section className="ai-control">
@@ -361,8 +372,8 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
 
       <Modal title={<div className="config-modal-title"><span>{configMode === 'official' ? '官方接口' : 'OPENAI兼容'}</span><span className={`config-modal-mode ${configAction}`}>{configAction === 'new' ? '新增配置' : '编辑旧配置'}</span></div>} open={configOpen} onCancel={() => setConfigOpen(false)} footer={null} destroyOnHidden width={620}>
         <Alert type="info" showIcon message="API Key 仅在后端加密存储" description="先查询模型并测试草稿配置，测试成功后再保存。测试不会修改已保存配置。" />
-        {error && <Alert type="error" showIcon message={error} />}
-        <Tabs activeKey={configMode} onChange={(key) => setConfigMode(key as 'official' | 'compatible')} items={[
+        {configError && <Alert type="error" showIcon closable onClose={() => setConfigError('')} message={configError} />}
+        <Tabs activeKey={configMode} onChange={(key) => { const mode = key as 'official' | 'compatible'; setConfigMode(mode); if (mode === 'compatible') form.setFieldValue('protocol', 'chat_completions') }} items={[
           { key: 'official', label: '官方接口', children: <Typography.Text type="secondary">选择官方厂商预置并填写对应 API Key。</Typography.Text> },
           { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
         ]} />
@@ -372,7 +383,29 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
           <Form.Item name="api_key" label="API Key（已有配置可留空保持不变）" rules={[({ getFieldValue }) => ({ validator: async (_rule, value) => { if (value || getFieldValue('provider_id')) return; throw new Error('新建配置必须填写 API Key') } })]}><Input.Password autoComplete="new-password" /></Form.Item>
           <div className="model-row"><Form.Item name="model" label="模型" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
-          <Form.Item name="protocol" label="协议"><Radio.Group optionType="button" options={[{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Gemini', value: 'gemini' }, { label: 'Grok', value: 'grok' }]} /></Form.Item>
+          <div className="model-category-editor">
+            {([['chat', '聊天模型'], ['image', '生图模型'], ['video', '视频模型']] as const).map(([key, label]) => {
+              const selected = modelCategories[key] || []
+              const allSelected = models.length > 0 && selected.length === models.length
+              return <div className="model-category-row" key={key}>
+                <strong>{label}</strong>
+                <Select mode="multiple" value={selected} options={models.map((item) => ({ value: item, label: item }))} onChange={(value) => setModelCategories((current) => ({ ...current, [key]: value }))} placeholder="从查询结果中选择模型" />
+                <Space size={2}>
+                  <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? 'Deselect all' : 'Select all'} onClick={() => setModelCategories((current) => ({ ...current, [key]: allSelected ? [] : [...models] }))} />
+                  <Button type="text" size="small" icon={<Plus size={15} />} title="Add model" onClick={() => { const next = models.find((item) => !(selected || []).includes(item)); if (next) setModelCategories((current) => ({ ...current, [key]: [...(current[key] || []), next] })) }} />
+                  <Button type="text" size="small" icon={<Trash2 size={15} />} title="Remove models" onClick={() => setModelCategories((current) => ({ ...current, [key]: [] }))} />
+                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="Save category" onClick={() => void api<Provider>(`/api/ai/provider/${form.getFieldValue('provider_id')}/categories`, { method: 'PATCH', body: JSON.stringify({ account_id: account.id, model_categories: modelCategories }) }).then((row) => { setModelCategories(row.model_categories || modelCategories); message.success(`${label}已保存到本地配置`) }).catch((cause) => setConfigError(cause instanceof Error ? cause.message : '分类保存失败'))} />
+                  {/*
+                  <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? '全不选' : '全选'} onClick={() => setModelCategories((current) => ({ ...current, [key]: allSelected ? [] : [...models] }))} />
+                  <Button type="text" size="small" icon={<Plus size={15} />} title="添加模型" onClick={() => setModelCategories((current) => ({ ...current, [key]: [...new Set([...(current[key] || []), ...(models.filter((item) => !(current[key] || []).includes(item)).slice(0, 1)))] }))} />
+                  <Button type="text" size="small" icon={<Trash2 size={15} />} title="删除选中模型" onClick={() => setModelCategories((current) => ({ ...current, [key]: [] }))} />
+                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="保存分类" onClick={() => message.success(`${label}已保存到本地配置`)} />
+                  */}
+                </Space>
+              </div>
+            })}
+          </div>
+          {configMode === 'official' && <Form.Item name="protocol" label="协议"><Radio.Group optionType="button" options={[{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Gemini', value: 'gemini' }, { label: 'Grok', value: 'grok' }]} /></Form.Item>}
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>

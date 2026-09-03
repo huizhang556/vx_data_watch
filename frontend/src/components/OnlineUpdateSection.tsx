@@ -16,23 +16,25 @@ export default function OnlineUpdateSection() {
   const [versionError, setVersionError] = useState('')
   const [versionLoading, setVersionLoading] = useState(false)
   const [targetVersion, setTargetVersion] = useState<string>()
-  const [registry, setRegistry] = useState('docker.io')
-  const [configuredRegistry, setConfiguredRegistry] = useState('docker.io')
+  const [registry, setRegistry] = useState('')
+  const [configuredRegistry, setConfiguredRegistry] = useState('')
   const [registrySaving, setRegistrySaving] = useState(false)
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null)
   const [updateStarting, setUpdateStarting] = useState(false)
   const initialLoadRef = useRef(false); const requestIdRef = useRef(0)
   const registryOptions = versionInfo?.registries?.map((item) => ({ value: item.registry, label: item.label })) || [{ value: 'docker.io', label: 'Docker Hub' }, { value: 'crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com', label: '阿里云 ACR' }]
-  const selectedRepository = repositoryFor(registry, versionInfo)
-  const loadVersions = async (selectedRegistry = registry) => {
+  const selectedRepository = repositoryFor(registry || configuredRegistry || 'docker.io', versionInfo)
+  const loadVersions = async (selectedRegistry?: string) => {
     const requestId = ++requestIdRef.current
     setVersionLoading(true)
     try {
-      const result = await api<SystemVersionInfo>(`/api/system/versions?registry=${encodeURIComponent(selectedRegistry)}`)
+      const endpoint = selectedRegistry ? `/api/system/versions?registry=${encodeURIComponent(selectedRegistry)}` : '/api/system/versions'
+      const result = await api<SystemVersionInfo>(endpoint)
       if (requestId !== requestIdRef.current) return
-      setVersionError(''); setVersionInfo(result); setRegistry(result.registry || selectedRegistry); setConfiguredRegistry(result.configured_registry || result.registry || selectedRegistry); setTargetVersion(result.versions[0]?.version)
+      const resolvedRegistry = result.registry || selectedRegistry || 'docker.io'
+      setVersionError(''); setVersionInfo(result); setRegistry(resolvedRegistry); setConfiguredRegistry(result.configured_registry || resolvedRegistry); setTargetVersion(result.versions[0]?.version)
     } catch (cause) {
-      if (requestId === requestIdRef.current) { setRegistry(configuredRegistry); setVersionError(`${repositoryFor(selectedRegistry)} 不可用：${cause instanceof Error ? cause.message : '无法获取版本信息'}`) }
+      if (requestId === requestIdRef.current) { const failedRegistry = selectedRegistry || configuredRegistry || 'docker.io'; setRegistry(failedRegistry); setVersionError(`${repositoryFor(failedRegistry)} 不可用：${cause instanceof Error ? cause.message : '无法获取版本信息'}`) }
     } finally { if (requestId === requestIdRef.current) setVersionLoading(false) }
   }
   const saveRegistry = async () => {
