@@ -9,7 +9,7 @@ const compareVersions = (left: string, right: string) => {
   for (let i = 0; i < 3; i += 1) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0)
   return 0
 }
-const repositoryFor = (registry: string, info?: SystemVersionInfo | null) => info?.registries?.find((item) => item.registry === registry)?.repository || (registry === 'docker.io' ? 'docker.io/litehub/vx-data-watch' : `${registry}/zhang_spaces/vx-data-watch`)
+const repositoryFor = (registry: string, info?: SystemVersionInfo | null) => info?.registries?.find((item) => item.registry === registry)?.repository || (registry === 'docker.io' ? 'docker.io/litehub/vx-data-watch:latest' : `${registry}/zhang_spaces/vx-data-watch:latest`)
 
 export default function OnlineUpdateSection() {
   const [versionInfo, setVersionInfo] = useState<SystemVersionInfo | null>(null)
@@ -45,6 +45,12 @@ export default function OnlineUpdateSection() {
   }
   const loadUpdateStatus = async () => { try { setUpdateStatus(await api<SystemUpdateStatus>('/api/system/update-status')) } catch { /* The app can restart during an update. */ } }
   useEffect(() => { if (initialLoadRef.current) return; initialLoadRef.current = true; void loadVersions(); void loadUpdateStatus() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') void loadVersions(configuredRegistry || undefined) }
+    const timer = window.setInterval(refresh, 60_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh) }
+  }, [configuredRegistry]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!updateStatus || !['queued', 'pulling', 'restarting', 'verifying', 'rolling_back'].includes(updateStatus.state)) return; const timer = window.setInterval(() => void loadUpdateStatus(), 2000); return () => window.clearInterval(timer) }, [updateStatus?.state]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const pendingId = window.sessionStorage.getItem('vx_update_id'); if (updateStatus?.state !== 'success' || !pendingId || pendingId !== updateStatus.id) return; const timer = window.setTimeout(() => { window.sessionStorage.removeItem('vx_update_id'); window.location.reload() }, 1500); return () => window.clearTimeout(timer) }, [updateStatus?.id, updateStatus?.state])
   const startUpdate = () => {

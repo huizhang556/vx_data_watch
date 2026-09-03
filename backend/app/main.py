@@ -103,6 +103,7 @@ from .schemas import (
     AIProviderDraft,
     AIProviderInput,
     AIProviderSelect,
+    AIProviderModelTest,
     AIProviderCategoriesInput,
     AIQuickConfigInput,
     AIChatCategoryInput,
@@ -144,6 +145,7 @@ from .updates import (
     UpdateBusyError,
     UpdateRegistryError,
     fetch_registry_versions,
+    configured_registry,
     queue_update,
     read_update_status,
     save_update_registry,
@@ -152,6 +154,17 @@ from .updates import (
 )
 
 settings = get_settings()
+MENU_VISIBILITY_KEY = "ui.menu_visibility"
+DEFAULT_MENU_VISIBILITY = {
+    "/users": True, "/users/accounts": True, "/users/local": True,
+    "/ai-chat-menu": True, "/ai-chat/config": True, "/ai-chat": True,
+    "/analysis": True, "/analysis/dashboard": True, "/analysis/videos": True,
+    "/analysis/imports": True, "/analysis/ai": True,
+    "/download": True, "/download/config": True, "/download/content": True,
+    "/settings": True, "/backups": True, "/updates": True,
+    "/usage": True, "/usage/levels": True, "/about": True,
+    "/about/architecture": True, "/about/technology": True, "/about/team": True,
+}
 _login_attempts: dict[str, list[float]] = {}
 
 
@@ -551,6 +564,46 @@ def update_auth_settings(payload: AuthSettingsUpdate, user: CsrfUser, db: Annota
     return {**values, "smtp_password_set": bool(values.get("smtp_password")), "smtp_password": None, "captcha_secret_key_set": bool(values.get("captcha_secret_key")), "captcha_secret_key": None}
 
 
+@app.get("/api/settings/menu-visibility")
+def read_menu_visibility(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_KEY))
+    if not row:
+        return dict(DEFAULT_MENU_VISIBILITY)
+    try:
+        stored = json.loads(row.value.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError):
+        stored = {}
+    return {key: bool(stored.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
+
+
+@app.put("/api/settings/menu-visibility")
+def save_menu_visibility(payload: dict[str, bool], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    if not isinstance(payload, dict) or any(key not in DEFAULT_MENU_VISIBILITY for key in payload):
+        raise HTTPException(status_code=422, detail="包含未知的菜单项")
+    values = {key: bool(payload.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
+    # Parent visibility is derived from its children so an all-hidden group
+    # cannot remain visible in the ordinary-user sidebar.
+    for parent, children in {
+        "/users": ("/users/accounts", "/users/local"),
+        "/ai-chat-menu": ("/ai-chat/config", "/ai-chat"),
+        "/analysis": ("/analysis/dashboard", "/analysis/videos", "/analysis/imports", "/analysis/ai"),
+        "/download": ("/download/config", "/download/content"),
+        "/usage": ("/usage/levels",),
+        "/about": ("/about/architecture", "/about/technology", "/about/team"),
+    }.items():
+        values[parent] = any(values[child] for child in children)
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=MENU_VISIBILITY_KEY, value=encoded))
+    db.commit()
+    return values
+
+
 @app.post("/api/settings/auth/test")
 def test_auth_smtp(payload: SMTPTestRequest, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
     if user.role != Role.admin:
@@ -750,6 +803,7 @@ def update_profile(payload: ProfileUpdate, user: CsrfUser, db: Annotated[Session
     user.email_verified = bool(normalized_email)
     if payload.avatar is not None:
         user.avatar = payload.avatar or "default"
+    write_audit(db, "auth.profile.update", user, "user", user.id)
     db.commit()
     return _user_payload(user)
 
@@ -1357,8 +1411,9 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
     }
 
 
-def _provider_candidates(db: Session, account_id: int, user: User | None = None) -> list[AIProviderConfig]:
-    _get_account(db, account_id, user)
+def _provider_candidates(db: Session, account_id: int | None, user: User | None = None) -> list[AIProviderConfig]:
+    if account_id is not None:
+        _get_account(db, account_id, user)
     # New configurations are global. Keep legacy account-scoped rows readable
     # for administrators so they can promote them by editing once.
     if user is not None and user.role.value != "admin":
@@ -1381,7 +1436,7 @@ def _provider_candidates(db: Session, account_id: int, user: User | None = None)
     )
 
 
-def _active_provider(db: Session, account_id: int, user: User | None = None) -> AIProviderConfig | None:
+def _active_provider(db: Session, account_id: int | None, user: User | None = None) -> AIProviderConfig | None:
     rows = _provider_candidates(db, account_id, user)
     return next((row for row in rows if row.account_id is None and row.is_active), None) or next(
         (row for row in rows if row.account_id == account_id and row.is_active), None
@@ -1657,8 +1712,17 @@ def _consume_usage(db: Session, user: User, kind: str, amount: int = 1) -> None:
 
 @app.post("/api/ai-chat/sessions/{session_id}/messages")
 async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> StreamingResponse:
-    _consume_usage(db, user, "ai_chat")
     row = _chat_owned_session(db, session_id, user)
+    if payload.mode in {"image", "video"}:
+        has_history = db.scalar(
+            select(func.count(AIChatMessage.id)).where(AIChatMessage.session_id == row.id)
+        ) or 0
+        if has_history:
+            raise HTTPException(
+                status_code=409,
+                detail="当前对话已有历史消息，生图或生视频需要新建聊天窗口",
+            )
+    _consume_usage(db, user, "ai_chat")
     if payload.mode in {"image", "video"}:
         if row.generation_status == "running":
             raise HTTPException(status_code=409, detail="当前对话已有生成任务进行中，请等待任务完成")
@@ -1731,10 +1795,11 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
 
 @app.get("/api/ai/providers")
 def list_ai_providers(
-    account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+    account_id: int | None = None, user: CurrentUser = None, db: Annotated[Session, Depends(get_db)] = None
 ) -> list[dict[str, Any]]:
     if user.role.value == "admin":
-        _get_account(db, account_id, user)
+        if account_id not in (None, 0):
+            _get_account(db, account_id, user)
         rows = db.scalars(
             select(AIProviderConfig)
             .outerjoin(ChannelsAccount, AIProviderConfig.account_id == ChannelsAccount.id)
@@ -1749,12 +1814,13 @@ def list_ai_providers(
 @app.get("/api/ai/providers/{provider_id}/models")
 async def list_ai_provider_models(
     provider_id: int,
-    account_id: int,
     user: CurrentUser,
     db: Annotated[Session, Depends(get_db)],
+    account_id: int | None = None,
 ) -> dict[str, list[str]]:
     """Return models available from a configured provider for the current user."""
-    _get_account(db, account_id, user)
+    if account_id not in (None, 0):
+        _get_account(db, account_id, user)
     config = db.get(AIProviderConfig, provider_id)
     if not config or not config.is_active:
         raise HTTPException(status_code=404, detail="接口配置不存在")
@@ -1778,7 +1844,7 @@ async def list_ai_provider_models(
 
 @app.get("/api/ai/provider")
 def get_ai_provider(
-    account_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+    account_id: int | None = None, user: CurrentUser = None, db: Annotated[Session, Depends(get_db)] = None
 ) -> dict[str, Any] | None:
     config = _active_provider(db, account_id, user)
     return _provider_payload(config) if config else None
@@ -1790,7 +1856,8 @@ def save_ai_provider(
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id, user)
+    if payload.account_id not in (None, 0):
+        _get_account(db, payload.account_id, user)
     config = None
     if payload.provider_id:
         config = db.scalar(
@@ -1858,7 +1925,8 @@ def select_ai_provider(
     user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    _get_account(db, payload.account_id, user)
+    if payload.account_id is not None:
+        _get_account(db, payload.account_id, user)
     config = db.scalar(
         select(AIProviderConfig).where(
             AIProviderConfig.id == payload.provider_id,
@@ -1909,6 +1977,8 @@ def create_quick_config(payload: AIQuickConfigInput, user: CsrfUser, db: Annotat
     if db.scalar(select(func.count(AIQuickConfig.id)).where(AIQuickConfig.user_id == user.id)) >= 5:
         raise HTTPException(status_code=409, detail="每个用户最多保存 5 个快捷配置")
     provider = _owned_provider(db, payload.provider_id, user)
+    if not provider.is_enabled:
+        raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
     if payload.model not in _provider_models(provider):
         raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
     row = AIQuickConfig(user_id=user.id, provider_id=provider.id, name=payload.name.strip(), model=payload.model)
@@ -1921,6 +1991,8 @@ def update_quick_config(config_id: int, payload: AIQuickConfigInput, user: CsrfU
     row = db.scalar(select(AIQuickConfig).where(AIQuickConfig.id == config_id, AIQuickConfig.user_id == user.id))
     if not row: raise HTTPException(status_code=404, detail="快捷配置不存在")
     provider = _owned_provider(db, payload.provider_id, user)
+    if not provider.is_enabled:
+        raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
     if payload.model not in _provider_models(provider): raise HTTPException(status_code=422, detail="模型必须来自已配置接口")
     row.name = payload.name.strip(); row.provider_id = provider.id; row.model = payload.model
     db.commit(); return _quick_config_payload(row)
@@ -1936,11 +2008,12 @@ def delete_quick_config(config_id: int, user: CsrfUser, db: Annotated[Session, D
 @app.delete("/api/ai/provider/{provider_id}", status_code=204)
 def delete_ai_provider(
     provider_id: int,
-    account_id: int,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
+    account_id: int | None = None,
 ) -> Response:
-    _get_account(db, account_id, user)
+    if account_id not in (None, 0):
+        _get_account(db, account_id, user)
     config = db.scalar(
         select(AIProviderConfig).where(
             AIProviderConfig.id == provider_id,
@@ -1963,12 +2036,13 @@ def delete_ai_provider(
 @app.patch("/api/ai/provider/{provider_id}/enabled")
 def set_ai_provider_enabled(
     provider_id: int,
-    account_id: int,
     enabled: bool,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
+    account_id: int | None = None,
 ) -> dict[str, Any]:
-    _get_account(db, account_id, user)
+    if account_id not in (None, 0):
+        _get_account(db, account_id, user)
     config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == provider_id, (AIProviderConfig.account_id == account_id) | AIProviderConfig.account_id.is_(None)))
     if not config:
         raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
@@ -1981,7 +2055,8 @@ def set_ai_provider_enabled(
 
 @app.patch("/api/ai/provider/{provider_id}/categories")
 def save_ai_provider_categories(provider_id: int, payload: AIProviderCategoriesInput, user: Annotated[User, Depends(require_csrf_admin)], db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
-    _get_account(db, payload.account_id, user)
+    if payload.account_id not in (None, 0):
+        _get_account(db, payload.account_id, user)
     config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == provider_id, (AIProviderConfig.account_id == payload.account_id) | AIProviderConfig.account_id.is_(None)))
     if not config:
         raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
@@ -2031,11 +2106,11 @@ async def test_and_save_ai_provider(
 
 @app.post("/api/ai/provider/test")
 async def test_ai_provider(
-    account_id: int,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
+    account_id: int | None = None,
 ) -> dict[str, str]:
-    config = _active_provider(db, account_id)
+    config = _active_provider(db, account_id, user)
     if not config:
         raise HTTPException(status_code=404, detail="尚未配置 AI")
     try:
@@ -2044,6 +2119,34 @@ async def test_ai_provider(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     write_audit(db, "ai.provider.test", user, "ai_provider", config.id)
     db.commit()
+    return {"result": result}
+
+
+@app.post("/api/ai/provider/test-selected")
+async def test_selected_ai_provider(
+    payload: AIProviderModelTest,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, str]:
+    """Test the exact provider/model selected in an AI chat session."""
+    if payload.account_id is not None:
+        _get_account(db, payload.account_id, user)
+    config = db.get(AIProviderConfig, payload.provider_id)
+    allowed = _provider_candidates(db, payload.account_id, user)
+    if not config or config.id not in {row.id for row in allowed}:
+        raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
+    if not config.is_enabled:
+        raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
+    try:
+        result = await test_provider_values(
+            base_url=config.base_url,
+            model=payload.model,
+            protocol=config.protocol,
+            timeout_seconds=config.timeout_seconds,
+            api_key=decrypt_secret(config.encrypted_api_key),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"result": result}
 
 
@@ -2341,7 +2444,7 @@ async def system_versions(
     user: CurrentUser,
     registry: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    selected_registry = registry or settings.update_registry
+    selected_registry = registry or configured_registry()
     if selected_registry not in ALLOWED_REGISTRIES:
         raise HTTPException(status_code=400, detail="不支持的镜像仓库")
     try:

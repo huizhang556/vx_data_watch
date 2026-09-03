@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Checkbox, DatePicker, Dropdown, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
 import { Bot, CheckSquare, Eye, History, PlugZap, Plus, Power, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
@@ -16,7 +16,7 @@ interface Provider { id: number; account_id: number | null; name: string; base_u
 interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
-interface ProviderForm { account_id: number; provider_id?: number; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key?: string }
+interface ProviderForm { account_id?: number | null; provider_id?: number; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key?: string }
 const reportMetrics = [
   { key: 'plays' as const, label: '播放', color: '#1677ff' },
   { key: 'likes' as const, label: '点赞', color: '#d4380d' },
@@ -41,11 +41,15 @@ const officialPresets = [
 ]
 
 export default function AIPage({ configOnly = false }: { configOnly?: boolean }) {
-  const { account } = useAccount()
+  const { account: selectedAccount } = useAccount()
+  // AI configuration is administrator-global and does not require a video account.
+  const account = selectedAccount || (configOnly ? ({ id: 0 } as NonNullable<typeof selectedAccount>) : null)
   const availableDates = useAvailableDates(account?.id)
   const { user } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
+  const providerAccountId = configOnly ? undefined : account?.id
+  const providerAccountQuery = providerAccountId == null ? '' : `?${query({ account_id: providerAccountId })}`
   const [provider, setProvider] = useState<Provider | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [quickConfigs, setQuickConfigs] = useState<QuickConfig[]>([])
@@ -61,6 +65,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
   const [modelCategories, setModelCategories] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
+  const [modelCategoryChecked, setModelCategoryChecked] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
   const [tested, setTested] = useState(false)
   const [modelLoading, setModelLoading] = useState(false)
   const [draftTestLoading, setDraftTestLoading] = useState(false)
@@ -84,23 +89,27 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     return () => { document.body.classList.remove('ai-compatible-config'); document.body.classList.remove('ai-config-editing') }
   }, [configMode, configOpen])
 
-  const loadProviders = async (accountId: number) => {
+  const loadProviders = async (accountId?: number) => {
+    const suffix = accountId == null ? '' : `?${query({ account_id: accountId })}`
     const [rows, active] = await Promise.all([
-      api<Provider[]>(`/api/ai/providers?${query({ account_id: accountId })}`),
-      api<Provider | null>(`/api/ai/provider?${query({ account_id: accountId })}`),
+      api<Provider[]>(`/api/ai/providers${suffix}`),
+      api<Provider | null>(`/api/ai/provider${suffix}`),
     ])
     setProviders(rows)
     setProvider(active)
-    if (active) { form.setFieldsValue({ ...active, account_id: accountId, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]); setModelCategories(active.model_categories || { chat: active.models || [active.model], image: [], video: [] }) }
-    else { form.resetFields(); form.setFieldsValue({ account_id: accountId, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]); setModelCategories({ chat: [], image: [], video: [] }) }
+    if (active) { form.setFieldsValue({ ...active, account_id: accountId ?? null, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]); setModelCategories(active.model_categories || { chat: active.models || [active.model], image: [], video: [] }); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
+    else { form.resetFields(); form.setFieldsValue({ account_id: accountId ?? null, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]); setModelCategories({ chat: [], image: [], video: [] }); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
   }
-  const loadHistories = () => account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
+  const refreshProviderChoices = async () => {
+    await loadProviders(providerAccountId)
+  }
+  const loadHistories = () => !configOnly && account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
-  useEffect(() => { if (account) void loadProviders(account.id) }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void loadHistories() }, [account]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (configOnly) void loadProviders(); else if (account) void loadProviders(account.id) }, [account, configOnly]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!configOnly) void loadHistories() }, [account, configOnly]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadQuickConfigs() }, [])
   useEffect(() => {
-    if (!account) return
+    if (!account || configOnly) return
     const start = startDate.format('YYYY-MM-DD')
     const end = endDate.format('YYYY-MM-DD')
     const requestedDays = endDate.diff(startDate, 'day') + 1
@@ -114,13 +123,13 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       })
       .catch(() => setRangeWarning('暂时无法检查该时间段的数据量，请稍后重试。'))
       .finally(() => setRangeChecking(false))
-  }, [account, startDate, endDate])
+  }, [account, configOnly, startDate, endDate])
 
   const draftValues = async (requireModel = false) => {
     const fields: Array<keyof ProviderForm> = ['base_url', 'protocol', 'timeout_seconds', 'api_key']
     if (requireModel) fields.push('model')
     const values = await form.validateFields(fields)
-    return { ...values, account_id: account!.id, provider_id: form.getFieldValue('provider_id') }
+    return { ...values, account_id: configOnly ? null : account?.id, provider_id: form.getFieldValue('provider_id') }
   }
 
   const fetchModels = async () => {
@@ -132,6 +141,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       const categories = { chat: [] as string[], image: [] as string[], video: [] as string[] }
       response.models.forEach((name) => { const value = name.toLowerCase(); const key = /image|dall-e|sdxl|flux|画|生图/.test(value) ? 'image' : /video|wan|sora|kling|视频/.test(value) ? 'video' : 'chat'; categories[key].push(name) })
       setModelCategories(categories)
+      setModelCategoryChecked({ chat: [], image: [], video: [] })
       if (!response.models.includes(form.getFieldValue('model'))) form.setFieldValue('model', response.models[0])
       message.success(`查询到 ${response.models.length} 个模型`)
     } catch (cause) { setConfigError(cause instanceof Error ? cause.message : '模型查询失败') }
@@ -152,17 +162,18 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setSaveLoading(true); setConfigError('')
     try {
       const values = await form.validateFields()
-      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, model_categories: modelCategories, account_id: account!.id, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
-      await loadProviders(account!.id); setConfigOpen(false); message.success('接口配置已保存')
+      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, model_categories: modelCategories, account_id: providerAccountId ?? null, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
+      await loadProviders(providerAccountId); setConfigOpen(false); message.success('接口配置已保存')
     } catch (cause) { setConfigError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
   }
 
   const startNewProvider = () => {
     form.resetFields()
-    form.setFieldsValue({ account_id: account!.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 })
+    form.setFieldsValue({ account_id: providerAccountId ?? null, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 })
     setModels([])
     setModelCategories({ chat: [], image: [], video: [] })
+    setModelCategoryChecked({ chat: [], image: [], video: [] })
     setTested(false)
     setConfigError('')
     setError('')
@@ -171,9 +182,10 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   }
 
   const editProvider = (item: Provider) => {
-    form.setFieldsValue({ ...item, account_id: account!.id, provider_id: item.id, api_key: undefined })
+    form.setFieldsValue({ ...item, account_id: item.account_id ?? null, provider_id: item.id, api_key: undefined })
     setModels(item.models?.length ? item.models : item.model ? [item.model] : [])
     setModelCategories(item.model_categories || { chat: item.models || [item.model], image: [], video: [] })
+    setModelCategoryChecked({ chat: [], image: [], video: [] })
     setTested(false)
     setConfigError('')
     setError('')
@@ -336,7 +348,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <Segmented value={periodOptions.some((item) => item.value === days) ? days : 0} onChange={(value) => { const nextDays = Number(value); if (!nextDays) { setDays(0); return }; setDays(nextDays); setStartDate(endDate.subtract(nextDays - 1, 'day')) }} options={[...periodOptions.map((item) => ({ ...item, disabled: !rangeHasAllDates(endDate, item.value, availableDates) })), { label: '自定义', value: 0 }]} />
           <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="开始日期" placeholder="开始日期" allowClear={false} value={startDate} onChange={(value) => value && setStartDate(value.isAfter(endDate, 'day') ? endDate : value)} />
           <DatePicker disabledDate={(value) => disableUnavailableDate(value, availableDates)} aria-label="结束日期" placeholder="结束日期" allowClear={false} value={endDate} onChange={(value) => { if (!value) return; setEndDate(value); setStartDate(days ? value.subtract(days - 1, 'day') : (startDate.isAfter(value, 'day') ? value : startDate)) }} />
-          <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onChange={(id) => {
+          <Select aria-label="AI 接口配置" value={provider?.id} placeholder="选择接口配置" style={{ minWidth: 190 }} options={providerOptions} onOpenChange={(open) => { if (open) void refreshProviderChoices() }} onChange={(id) => {
             const next = providers.find((item) => item.id === id)
             if (next) void api<Provider>('/api/ai/provider/select', { method: 'POST', body: JSON.stringify({ account_id: account.id, provider_id: next.id }) }).then((active) => { setProvider(active); message.success(`已切换到 ${active.name}`) }).catch((cause) => setError(cause instanceof Error ? cause.message : '切换配置失败'))
           }} />
@@ -386,22 +398,18 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <div className="model-category-editor">
             {([['chat', '聊天模型'], ['image', '生图模型'], ['video', '视频模型']] as const).map(([key, label]) => {
               const selected = modelCategories[key] || []
-              const allSelected = models.length > 0 && selected.length === models.length
-              return <div className="model-category-row" key={key}>
-                <strong>{label}</strong>
-                <Select mode="multiple" value={selected} options={models.map((item) => ({ value: item, label: item }))} onChange={(value) => setModelCategories((current) => ({ ...current, [key]: value }))} placeholder="从查询结果中选择模型" />
-                <Space size={2}>
-                  <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? 'Deselect all' : 'Select all'} onClick={() => setModelCategories((current) => ({ ...current, [key]: allSelected ? [] : [...models] }))} />
-                  <Button type="text" size="small" icon={<Plus size={15} />} title="Add model" onClick={() => { const next = models.find((item) => !(selected || []).includes(item)); if (next) setModelCategories((current) => ({ ...current, [key]: [...(current[key] || []), next] })) }} />
-                  <Button type="text" size="small" icon={<Trash2 size={15} />} title="Remove models" onClick={() => setModelCategories((current) => ({ ...current, [key]: [] }))} />
-                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="Save category" onClick={() => void api<Provider>(`/api/ai/provider/${form.getFieldValue('provider_id')}/categories`, { method: 'PATCH', body: JSON.stringify({ account_id: account.id, model_categories: modelCategories }) }).then((row) => { setModelCategories(row.model_categories || modelCategories); message.success(`${label}已保存到本地配置`) }).catch((cause) => setConfigError(cause instanceof Error ? cause.message : '分类保存失败'))} />
-                  {/*
-                  <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? '全不选' : '全选'} onClick={() => setModelCategories((current) => ({ ...current, [key]: allSelected ? [] : [...models] }))} />
-                  <Button type="text" size="small" icon={<Plus size={15} />} title="添加模型" onClick={() => setModelCategories((current) => ({ ...current, [key]: [...new Set([...(current[key] || []), ...(models.filter((item) => !(current[key] || []).includes(item)).slice(0, 1)))] }))} />
-                  <Button type="text" size="small" icon={<Trash2 size={15} />} title="删除选中模型" onClick={() => setModelCategories((current) => ({ ...current, [key]: [] }))} />
-                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="保存分类" onClick={() => message.success(`${label}已保存到本地配置`)} />
-                  */}
-                </Space>
+              const checked = modelCategoryChecked[key] || []
+              const allSelected = selected.length > 0 && checked.length === selected.length
+              const addable = models.filter((item) => !selected.includes(item))
+              const saveCategory = () => void api<Provider>(`/api/ai/provider/${form.getFieldValue('provider_id')}/categories`, { method: 'PATCH', body: JSON.stringify({ account_id: providerAccountId ?? null, model_categories: modelCategories }) }).then((row) => { setModelCategories(row.model_categories || modelCategories); setModelCategoryChecked((current) => ({ ...current, [key]: [] })); message.success(`${label}已保存到本地配置`) }).catch((cause) => setConfigError(cause instanceof Error ? cause.message : '分类保存失败'))
+              return <div className="model-category-card" key={key}>
+                <div className="model-category-card-header"><strong>{label}</strong><Space size={2}>
+                  <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? '全不选' : '全选'} aria-label={`${label}${allSelected ? '全不选' : '全选'}`} onClick={() => setModelCategoryChecked((current) => ({ ...current, [key]: allSelected ? [] : [...selected] }))} />
+                  <Dropdown trigger={['click']} disabled={!addable.length} menu={{ items: addable.map((item) => ({ key: item, label: item })), onClick: ({ key: value }) => setModelCategories((current) => ({ ...current, [key]: [...(current[key] || []), String(value)] })) }}><Button type="text" size="small" icon={<Plus size={15} />} title="添加模型" aria-label={`${label}添加模型`} /></Dropdown>
+                  <Button type="text" size="small" danger disabled={!checked.length} icon={<Trash2 size={15} />} title="删除已勾选模型" aria-label={`${label}删除已勾选模型`} onClick={() => { setModelCategories((current) => ({ ...current, [key]: (current[key] || []).filter((item) => !checked.includes(item)) })); setModelCategoryChecked((current) => ({ ...current, [key]: [] })) }} />
+                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="保存分类" aria-label={`${label}保存分类`} onClick={saveCategory} />
+                </Space></div>
+                <div className="model-category-list">{selected.length ? <Checkbox.Group value={checked} onChange={(values) => setModelCategoryChecked((current) => ({ ...current, [key]: values.map(String) }))} options={selected.map((item) => ({ label: item, value: item }))} /> : <Typography.Text type="secondary">暂无模型</Typography.Text>}</div>
               </div>
             })}
           </div>
@@ -412,7 +420,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       </Modal>
       <Modal title="添加快捷配置" open={quickConfigOpen} onCancel={() => setQuickConfigOpen(false)} onOk={() => void submitQuickConfig().catch((cause) => message.error(cause instanceof Error ? cause.message : '快捷配置保存失败'))} okText="保存">
         <Input value={quickConfigName} onChange={(event) => setQuickConfigName(event.target.value)} placeholder="快捷配置名称" />
-        <Select style={{ width: '100%', marginTop: 12 }} value={quickProviderId} options={providers.map((item) => ({ value: item.id, label: item.name }))} onChange={(value) => { const item = providers.find((row) => row.id === value); const available = item?.models?.length ? item.models : item?.model ? [item.model] : []; setQuickProviderId(value); setQuickModel(available[0] || ''); setQuickModels(available) }} placeholder="选择接口配置" />
+        <Select style={{ width: '100%', marginTop: 12 }} value={quickProviderId} options={providers.filter((item) => item.is_enabled).map((item) => ({ value: item.id, label: item.name }))} onOpenChange={(open) => { if (open) void refreshProviderChoices() }} onChange={(value) => { const item = providers.find((row) => row.id === value && row.is_enabled); const available = item?.models?.length ? item.models : item?.model ? [item.model] : []; setQuickProviderId(value); setQuickModel(available[0] || ''); setQuickModels(available) }} placeholder="选择接口配置" />
         <Select style={{ width: '100%', marginTop: 12 }} value={quickModel || undefined} options={quickModels.map((item) => ({ value: item, label: item }))} onChange={setQuickModel} placeholder="选择模型" />
       </Modal>
     </div>

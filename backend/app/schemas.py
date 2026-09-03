@@ -182,7 +182,7 @@ class VideoMetricCommit(BaseModel):
 
 
 class AIProviderInput(BaseModel):
-    account_id: int
+    account_id: int | None = None
     provider_id: int | None = None
     name: str = Field(default="默认 AI", max_length=100)
     base_url: str = Field(min_length=8, max_length=500)
@@ -204,7 +204,7 @@ class AIProviderInput(BaseModel):
 
 
 class AIProviderDraft(BaseModel):
-    account_id: int
+    account_id: int | None = None
     provider_id: int | None = None
     base_url: str = Field(min_length=8, max_length=500)
     model: str | None = Field(default=None, max_length=200)
@@ -222,11 +222,16 @@ class AIProviderDraft(BaseModel):
 
 
 class AIProviderSelect(BaseModel):
-    account_id: int
+    account_id: int | None = None
     provider_id: int
 
+class AIProviderModelTest(BaseModel):
+    account_id: int | None = None
+    provider_id: int
+    model: str = Field(min_length=1, max_length=200)
+
 class AIProviderCategoriesInput(BaseModel):
-    account_id: int
+    account_id: int | None = None
     model_categories: dict[str, list[str]] = Field(default_factory=dict)
 
 

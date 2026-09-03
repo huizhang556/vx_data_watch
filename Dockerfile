@@ -1,6 +1,6 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.5.3
+ARG APP_VERSION=0.5.4
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
 FROM ${NODE_IMAGE} AS frontend-build
@@ -26,7 +26,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VX_COOKIE_SECURE=false
 WORKDIR /app
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
-    && apt-get update \
+    && (apt-get update -o Acquire::Retries=5 && apt-cache show curl >/dev/null 2>&1 \
+        || (sed -i 's|https://deb.debian.org|http://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+            && apt-get update -o Acquire::Retries=5 && apt-cache show curl >/dev/null 2>&1)) \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 curl ffmpeg postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml ./

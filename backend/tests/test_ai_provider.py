@@ -20,6 +20,19 @@ def test_provider_is_saved_only_after_successful_test(client: TestClient, auth: 
     assert client.get(f"/api/ai/provider?account_id={account_id}").json()["model"] == "test-model"
 
 
+def test_admin_can_create_global_provider_without_video_account(client: TestClient, auth: dict[str, str], monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def success(**_kwargs: Any) -> str: return "连接成功"
+    monkeypatch.setattr(main, "test_provider_values", success)
+    payload = _payload("global-model")
+    payload["account_id"] = None
+    saved = client.post("/api/ai/provider/test-and-save", headers=auth, json=payload)
+    assert saved.status_code == 200, saved.text
+    providers = client.get("/api/ai/providers", headers=auth)
+    assert providers.status_code == 200
+    row = next(item for item in providers.json() if item["id"] == saved.json()["id"])
+    assert row["account_id"] is None
+
+
 def test_draft_models_and_test_do_not_change_saved_provider(client: TestClient, auth: dict[str, str], account_id: int, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     async def models(**_kwargs: Any) -> list[str]: return ["model-a", "model-b"]
     async def success(**_kwargs: Any) -> str: return "连接成功"
@@ -103,6 +116,9 @@ def test_ai_chat_end_to_end(client: TestClient, auth: dict[str, str], account_id
     monkeypatch.setattr(main, "stream_chat_provider", stream)
     response = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "你好", "attachments": [{"filename": "note.txt", "content_type": "text/plain", "data": "aGVsbG8="}]})
     assert response.status_code == 200
+    generation = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "生成图片", "mode": "image"})
+    assert generation.status_code == 409
+    assert "新建聊天窗口" in generation.json()["detail"]
     messages = client.get(f"/api/ai-chat/sessions/{session_id}/messages", headers=auth).json()
     assert "done" in response.text, response.text
     assert [item["role"] for item in messages] == ["user", "assistant"], response.text

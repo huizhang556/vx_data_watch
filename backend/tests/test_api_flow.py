@@ -35,6 +35,27 @@ def test_admin_can_create_user(client: TestClient, auth: dict[str, str]) -> None
     assert any(row["username"] == "viewer" for row in users.json())
 
 
+def test_menu_visibility_normalizes_hidden_parent_groups(client: TestClient, auth: dict[str, str]) -> None:
+    payload = {
+        "/users/accounts": False,
+        "/users/local": False,
+        "/ai-chat/config": False,
+        "/ai-chat": False,
+        "/analysis/dashboard": False,
+        "/analysis/videos": False,
+        "/analysis/imports": False,
+        "/analysis/ai": False,
+    }
+    saved = client.put("/api/settings/menu-visibility", headers=auth, json=payload)
+    assert saved.status_code == 200, saved.text
+    values = saved.json()
+    assert values["/users"] is False
+    assert values["/ai-chat-menu"] is False
+    assert values["/analysis"] is False
+    unknown = client.put("/api/settings/menu-visibility", headers=auth, json={"/unknown": False})
+    assert unknown.status_code == 422
+
+
 def test_user_accounts_are_private_from_administrator(
     client: TestClient, auth: dict[str, str]
 ) -> None:
@@ -69,6 +90,34 @@ def test_user_accounts_are_private_from_administrator(
             f"/api/analytics/available-dates?account_id={private_account_id}"
         )
         assert denied.status_code == 404
+
+
+def test_regular_user_can_update_own_profile_only(client: TestClient, auth: dict[str, str]) -> None:
+    from app.main import app
+
+    with TestClient(app) as session:
+        login = session.post(
+            "/api/auth/login", json={"username": "viewer", "password": "viewer-pass-123"}
+        )
+        assert login.status_code == 200, login.text
+        headers = {"X-CSRF-Token": login.json()["csrf_token"]}
+        updated = session.put(
+            "/api/auth/profile",
+            headers=headers,
+            json={
+                "username": "viewer_self",
+                "email": "viewer-self@example.com",
+                "avatar": "data:image/png;base64,dGVzdA==",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["username"] == "viewer_self"
+        assert updated.json()["avatar"].startswith("data:image/png")
+        assert session.get("/api/users").status_code == 403
+
+    # The administrator's user-management endpoint remains available to admins.
+    admin_users = client.get("/api/users")
+    assert admin_users.status_code == 200
 
 
 def test_auth_settings_forms_update_independently(client: TestClient, auth: dict[str, str]) -> None:
@@ -154,7 +203,8 @@ def test_admin_can_check_and_queue_system_update(
 
     async def versions(_repository: str, _registry: str = "docker.io") -> list[dict[str, str]]:
         return [
-            {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z"},
+                {"version": "0.5.4", "published_at": "2026-09-04T00:00:00Z"},
+                {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z"},
             {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z"},
             {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
                 {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z"},
@@ -168,8 +218,8 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.5.3"
-    assert [row["version"] for row in checked.json()["versions"]] == ["0.4.3", "0.4.2", "0.4.0", "0.3.4"]
+    assert checked.json()["current_version"] == "0.5.4"
+    assert [row["version"] for row in checked.json()["versions"]] == ["0.5.3", "0.4.3", "0.4.2", "0.4.0", "0.3.4"]
 
     queued = client.post(
         "/api/system/update", headers=auth, json={"version": "0.4.0"}

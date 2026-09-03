@@ -57,9 +57,24 @@ class DockerEngine:
 
     def pull(self, repository: str, tag: str) -> None:
         query = urlencode({"fromImage": repository, "tag": tag})
-        result = self._request("POST", f"/images/create?{query}", expected={200})
-        if isinstance(result, str) and '"error"' in result:
-            raise DockerEngineError(f"镜像拉取失败: {result[-500:]}")
+        result = None
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                result = self._request("POST", f"/images/create?{query}", expected={200})
+                if isinstance(result, str) and '"error"' in result:
+                    raise DockerEngineError(f"镜像拉取失败: {result[-500:]}")
+                break
+            except DockerEngineError as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+        else:
+            raise DockerEngineError(f"Docker image pull failed after 3 attempts: {last_error}") from last_error
+
+    def tag(self, source: str, repository: str, tag: str) -> None:
+        query = urlencode({"repo": repository, "tag": tag})
+        self._request("POST", f"/images/{quote(source, safe='')}/tag?{query}", expected={201})
 
     def find_compose_container(self, project: str, service: str) -> dict[str, Any]:
         filters = quote(

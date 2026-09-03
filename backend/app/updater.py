@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .config import get_settings
 from .docker_engine import DockerEngine
 from .updates import (
@@ -46,6 +47,24 @@ def _persist_image(env_file: Path, image: str) -> None:
     env_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+def _rollback_record_path() -> Path:
+    request_path, _, _ = update_paths()
+    return request_path.with_name("rollback.json")
+
+
+def _write_rollback_record(request: dict[str, Any], previous_env: str, image: str) -> None:
+    write_json_atomic(
+        _rollback_record_path(),
+        {
+            "request_id": request.get("id"),
+            "previous_version": __version__,
+            "previous_image": image,
+            "previous_env": previous_env,
+            "recorded_at": datetime.now(UTC).isoformat(),
+        },
+    )
+
+
 def process_update(request: dict[str, Any], engine: DockerEngine | None = None) -> None:
     settings = get_settings()
     version = request.get("version")
@@ -57,20 +76,31 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     if repository != expected_repository or registry not in ALLOWED_REGISTRIES:
         raise ValueError("更新镜像仓库不在允许列表中")
     docker = engine or DockerEngine()
-    _status(request, "pulling", "正在拉取目标镜像")
-    pull_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
-    docker.pull(pull_repository, version)
     env_existed = settings.update_env_file.exists()
     previous_env = (
         settings.update_env_file.read_text(encoding="utf-8") if env_existed else ""
     )
-    image_ref = f"docker.io/{pull_repository}:{version}" if registry == "docker.io" else f"{pull_repository}:{version}"
-    _persist_image(settings.update_env_file, image_ref)
+    previous_image = next(
+        (line.partition("=")[2].strip() for line in previous_env.splitlines() if line.startswith("VX_IMAGE=")),
+        "",
+    )
+    _write_rollback_record(request, previous_env, previous_image)
+    _status(request, "pulling", "正在拉取目标镜像")
+    pull_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
+    docker.pull(pull_repository, version)
+    # Keep deployment configuration on stable latest while pulling immutable
+    # release tags. The updater container is refreshed on the next compose
+    # restart, because replacing it while it runs would interrupt the update.
+    image_repository = f"docker.io/{repository}" if registry == "docker.io" else pull_repository
+    source_image = f"{pull_repository}:{version}"
+    latest_image = f"{image_repository}:latest"
+    docker.tag(source_image, image_repository, "latest")
+    _persist_image(settings.update_env_file, latest_image)
     _status(request, "restarting", "正在替换并重启应用")
     try:
-        compose_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
+        compose_repository = image_repository
         docker.replace_compose_service(
-            settings.update_project, settings.update_service, compose_repository, version
+            settings.update_project, settings.update_service, compose_repository, "latest"
         )
     except Exception:
         _status(request, "rolling_back", "更新失败，正在恢复原版本")
@@ -79,6 +109,7 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
         else:
             settings.update_env_file.unlink(missing_ok=True)
         raise
+    _rollback_record_path().unlink(missing_ok=True)
     _status(request, "success", "更新完成", current_version=version)
 
 

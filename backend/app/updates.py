@@ -17,8 +17,9 @@ from .config import get_settings
 
 SEMVER_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 ACTIVE_STATES = {"queued", "pulling", "restarting", "verifying", "rolling_back"}
-_VERSION_CACHE_TTL = 600.0
-_version_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+# Keep background version checks reasonably fresh without hammering registries.
+_VERSION_CACHE_TTL = 60.0
+_version_cache: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 
 
 class UpdateRegistryError(RuntimeError):
@@ -45,44 +46,85 @@ REGISTRY_REPOSITORIES = {
     "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com": "zhang_spaces/vx-data-watch",
 }
 
+def configured_registry() -> str:
+    """Resolve the updater registry, correcting legacy env files by VX_IMAGE."""
+    settings = get_settings()
+    registry = getattr(settings, "update_registry", "docker.io")
+    configured_path = Path(getattr(settings, "update_env_file", ".env"))
+    path = configured_path if configured_path.is_file() else Path(".env")
+    try:
+        content = path.read_text(encoding="utf-8") if path.is_file() else ""
+        image_match = re.search(r"(?m)^VX_IMAGE=([^\r\n]+)", content)
+        image = image_match.group(1).strip() if image_match else ""
+        acr_host = next((value for value in ALLOWED_REGISTRIES if value != "docker.io" and image.startswith(value + "/")), None)
+        if acr_host:
+            return acr_host
+    except OSError:
+        pass
+    return registry
+
 
 async def fetch_registry_versions(repository: str, registry: str = "docker.io") -> list[dict[str, Any]]:
     if registry not in ALLOWED_REGISTRIES:
         raise UpdateRegistryError("不支持的镜像仓库")
-    if registry == "docker.io":
-        url = f"https://hub.docker.com/v2/repositories/{repository}/tags"
-    else:
-        url = f"https://{registry}/v2/{repository}/tags/list"
+    urls = (
+        [(f"https://hub.docker.com/v2/repositories/{repository}/tags", {"page_size": 100, "ordering": "last_updated"}),
+         (f"https://registry-1.docker.io/v2/{repository}/tags/list", None)]
+        if registry == "docker.io"
+        else [(f"https://{registry}/v2/{repository}/tags/list", None)]
+    )
     last_error: Exception | None = None
     try:
         async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            for attempt in range(3):
-                try:
-                    response = await client.get(
-                        url,
-                        params={"page_size": 100, "ordering": "last_updated"} if registry == "docker.io" else None,
-                    )
-                    response.raise_for_status()
-                    payload = response.json()
+            payload: dict[str, Any] | None = None
+            for url, params in urls:
+                for attempt in range(3):
+                    try:
+                        response = await client.get(url, params=params)
+                        if response.status_code == 401:
+                            challenge = response.headers.get("www-authenticate", "")
+                            match = re.match(r"Bearer\s+(.+)", challenge, re.IGNORECASE)
+                            if not match:
+                                response.raise_for_status()
+                            values = dict(re.findall(r'(\w+)="([^"]+)"', match.group(1)))
+                            realm = values.get("realm")
+                            if not realm:
+                                response.raise_for_status()
+                            token_response = await client.get(
+                                realm,
+                                params={key: value for key, value in values.items() if key in {"service", "scope"}},
+                            )
+                            token_response.raise_for_status()
+                            token_payload = token_response.json()
+                            token = token_payload.get("token") or token_payload.get("access_token")
+                            if not isinstance(token, str) or not token:
+                                raise UpdateRegistryError("镜像仓库认证响应缺少访问令牌")
+                            response = await client.get(url, params=params, headers={"Authorization": f"Bearer {token}"})
+                        response.raise_for_status()
+                        decoded = response.json()
+                        if not isinstance(decoded, dict):
+                            raise ValueError("镜像仓库返回格式无效")
+                        payload = decoded
+                        break
+                    except (httpx.HTTPError, ValueError, TypeError, UpdateRegistryError) as exc:
+                        last_error = exc
+                        if attempt < 2:
+                            await asyncio.sleep(0.25 * (attempt + 1))
+                if payload is not None:
                     break
-                except (httpx.HTTPError, ValueError, TypeError) as exc:
-                    last_error = exc
-                    if attempt < 2:
-                        await asyncio.sleep(0.25 * (attempt + 1))
-            else:
+            if payload is None:
                 label = ALLOWED_REGISTRIES.get(registry, registry)
                 raise UpdateRegistryError(
                     f"镜像仓库 {registry}（{label}）不可用，无法获取版本信息；请检查服务器网络、镜像源可用性或仓库权限"
                 ) from last_error
-                raise UpdateRegistryError(f"无法连接 {label} 获取版本信息，请检查服务器网络、镜像源可用性或仓库权限") from last_error
     except UpdateRegistryError:
-        cached = _version_cache.get(repository)
+        cached = _version_cache.get((registry, repository))
         if cached and time.monotonic() - cached[0] <= _VERSION_CACHE_TTL:
             return cached[1]
         raise
 
     versions: list[dict[str, Any]] = []
-    rows = payload.get("results", []) if registry == "docker.io" else [{"name": name} for name in payload.get("tags", [])]
+    rows = payload.get("results", []) if "results" in payload else [{"name": name} for name in payload.get("tags", [])]
     for row in rows:
         name = row.get("name")
         if not isinstance(name, str) or not SEMVER_PATTERN.fullmatch(name):
@@ -95,23 +137,24 @@ async def fetch_registry_versions(repository: str, registry: str = "docker.io") 
             }
         )
     versions.sort(key=lambda row: version_key(row["version"]), reverse=True)
-    _version_cache[repository] = (time.monotonic(), versions)
+    _version_cache[(registry, repository)] = (time.monotonic(), versions)
     return versions
 
 
 def version_payload(versions: list[dict[str, Any]], registry: str | None = None) -> dict[str, Any]:
     settings = get_settings()
-    selected_registry = registry or getattr(settings, "update_registry", "docker.io")
+    selected_registry = registry or configured_registry()
     repository = REGISTRY_REPOSITORIES.get(selected_registry, settings.update_repository)
     selectable = [row for row in versions if row["version"] != __version__]
+    image_repository = f"{selected_registry}/{repository}:latest"
     return {
         "current_version": __version__,
         "latest_version": versions[0]["version"] if versions else None,
         "versions": selectable,
-        "repository": f"{selected_registry}/{repository}",
+        "repository": image_repository,
         "registry": selected_registry,
-        "configured_registry": getattr(settings, "update_registry", "docker.io"),
-        "registries": [{"registry": key, "label": label, "repository": f"{key}/{REGISTRY_REPOSITORIES[key]}"} for key, label in ALLOWED_REGISTRIES.items()],
+        "configured_registry": configured_registry(),
+        "registries": [{"registry": key, "label": label, "repository": f"{key}/{REGISTRY_REPOSITORIES[key]}:latest"} for key, label in ALLOWED_REGISTRIES.items()],
         "update_supported": settings.updater_enabled,
         "deployment": "docker" if settings.updater_enabled else "source",
     }

@@ -16,8 +16,14 @@ DOCKERHUB_IMAGE="docker.io/litehub/vx-data-watch:latest"
 ACR_IMAGE="crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch:latest"
 SELECTED_IMAGE="$DOCKERHUB_IMAGE"
 DETECTED_COUNTRY=""
+DETECTED_IP=""
 
-log() { printf '[vx-data] %s\n' "$*"; }
+log() {
+  # The legacy install message contains a literal "IP:" placeholder; the
+  # install wrapper prints the detected address after health checks.
+  case "$*" in *"IP:"*) return 0 ;; esac
+  printf '[vx-data] %s\n' "$*"
+}
 warn() { printf '[vx-data] 警告：%s\n' "$*" >&2; }
 die() { printf '[vx-data] 错误：%s\n' "$*" >&2; exit 1; }
 need_root() { [ "$(id -u)" -eq 0 ] || die '请使用 sudo 或 root 执行。'; }
@@ -81,7 +87,34 @@ detect_country() {
   [[ "$country" =~ ^[A-Za-z]{2}$ ]] && printf '%s' "${country^^}"
 }
 detect_ip() {
-  curl -fsS --connect-timeout 5 --max-time 8 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true
+  [ -n "$DETECTED_IP" ] && { printf '%s' "$DETECTED_IP"; return 0; }
+  local ip endpoint
+  for endpoint in https://api.ipify.org https://ifconfig.me https://icanhazip.com https://ident.me; do
+    ip="$(curl -4 -fsS --connect-timeout 4 --max-time 7 "$endpoint" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      printf '%s' "$ip"
+      DETECTED_IP="$ip"
+      return 0
+    fi
+  done
+  # Public-IP services can be blocked on domestic or restricted networks.
+  # Fall back to the route address so LAN deployments still get a usable URL.
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')"
+    [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && { DETECTED_IP="$ip"; printf '%s' "$ip"; return 0; }
+  fi
+  ip="$(hostname -I 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i !~ /:/) {print $i; exit}}')"
+  DETECTED_IP="$ip"
+  printf '%s' "$ip"
+}
+access_ip() {
+  local ip
+  ip="$(detect_ip)"
+  if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    printf '%s' "$ip"
+  else
+    printf '服务器IP'
+  fi
 }
 select_registry() {
   local country choice public_ip recommendation
@@ -94,7 +127,7 @@ select_registry() {
     recommendation='阿里云 ACR（中国大陆服务器优先建议）'
     log "检测结果：公网 IP ${public_ip:-未知}，国家代码 CN（中国大陆）。"
     log "明确建议：$recommendation；也可以选择 Docker Hub。"
-    log '1) Docker Hub（默认）  2) 阿里云 ACR（中国大陆备用）'
+    log '1) Docker Hub（可选）  2) 阿里云 ACR（默认）'
   elif [ -n "$country" ]; then
     recommendation='Docker Hub（海外服务器默认建议）'
     log "检测结果：公网 IP ${public_ip:-未知}，国家代码 $country。"
@@ -144,6 +177,23 @@ generate_env() {
   chmod 600 "$PROJECT_DIR/.env"; log '.env 已生成，宿主机默认端口为 10000，容器内部端口固定为 8000。'
 }
 load_env() { [ -f "$PROJECT_DIR/.env" ] || die "缺少 $PROJECT_DIR/.env。"; set -a; . "$PROJECT_DIR/.env"; set +a; IMAGE="${VX_IMAGE:-$DEFAULT_IMAGE}"; }
+sync_update_registry() {
+  local registry
+  case "$IMAGE" in
+    "$ACR_IMAGE"|crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/*)
+      registry='crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com'
+      grep -q '^VX_UPDATE_REPOSITORY=' "$PROJECT_DIR/.env" || printf '\nVX_UPDATE_REPOSITORY=zhang_spaces/vx-data-watch\n' >> "$PROJECT_DIR/.env"
+      ;;
+    docker.io/*) registry='docker.io' ;;
+    *) return 0 ;;
+  esac
+  if grep -q '^VX_UPDATE_REGISTRY=' "$PROJECT_DIR/.env"; then
+    sed -i "s|^VX_UPDATE_REGISTRY=.*|VX_UPDATE_REGISTRY=$registry|" "$PROJECT_DIR/.env"
+  else
+    printf '\nVX_UPDATE_REGISTRY=%s\n' "$registry" >> "$PROJECT_DIR/.env"
+  fi
+  load_env
+}
 fetch_compose() { [ -n "${DETECTED_COUNTRY:-}" ] || DETECTED_COUNTRY="$(detect_country || true)"; select_download_source; download "$DOWNLOAD_BASE/docker-compose.yaml" "$PROJECT_DIR/docker-compose.yaml"; }
 compose() { if [ "${VX_DATABASE_MODE:-sqlite}" = postgres ]; then (cd "$PROJECT_DIR" && docker compose --profile postgres -f docker-compose.yaml "$@"); else (cd "$PROJECT_DIR" && docker compose -f docker-compose.yaml "$@"); fi; }
 stop_cmd() {
@@ -180,6 +230,29 @@ update_cmd() {
   if ! compose up -d --no-build --force-recreate || ! wait_healthy; then warn '新版本启动失败，正在恢复原镜像。'; sed -i "s|^VX_IMAGE=.*|VX_IMAGE=$old_image|" "$PROJECT_DIR/.env"; docker pull "$old_image" || true; compose up -d --no-build --force-recreate || true; die '更新失败，已尝试恢复原版本。'; fi
   log "更新完成：$version，数据卷 $DATA_VOLUME 未删除。"
 }
+# Keep VX_IMAGE on latest during manual updates as well. The release image is
+# pulled temporarily, then promoted to latest; a rollback tag protects the
+# previous image if the replacement fails health checks.
+update_cmd() {
+  need_root; [ -d "$PROJECT_DIR" ] || die "project directory missing: $PROJECT_DIR"; load_env
+  local version="${1:-latest}" old_image="$IMAGE" image_repo="${IMAGE%:*}" target_image="${image_repo}:${version#v}" rollback_image="${image_repo}:vx-rollback-$$"
+  backup_cmd
+  docker tag "$old_image" "$rollback_image" || die 'unable to save current image for rollback'
+  if ! retry docker pull "$target_image" || ! docker tag "$target_image" "$image_repo:latest"; then
+    docker tag "$rollback_image" "$image_repo:latest" >/dev/null 2>&1 || true
+    docker image rm "$rollback_image" >/dev/null 2>&1 || true
+    die 'image pull failed; restored the previous latest image'
+  fi
+  if ! compose up -d --no-build --force-recreate || ! wait_healthy; then
+    warn 'new version failed health checks; restoring the previous image'
+    docker tag "$rollback_image" "$image_repo:latest" >/dev/null 2>&1 || true
+    compose up -d --no-build --force-recreate || true
+    docker image rm "$rollback_image" >/dev/null 2>&1 || true
+    die 'update failed; attempted rollback to the previous version'
+  fi
+  docker image rm "$rollback_image" >/dev/null 2>&1 || true
+  log "update completed: $version; data volume $DATA_VOLUME was preserved"
+}
 uninstall_cmd() {
   need_root; [ -d "$PROJECT_DIR" ] || die "项目目录不存在：$PROJECT_DIR"; load_env; log '1) 删除容器并保留数据  2) 删除容器、数据卷和项目目录  3) 取消'; local choice; read -r -p '请选择 [1-3]：' choice
   case "$choice" in
@@ -188,7 +261,7 @@ uninstall_cmd() {
     *) log '已取消卸载。' ;;
   esac
 }
-install_cmd_v2() {
+_install_cmd_v2_impl() {
   need_root
   log "开始安装 VX Data Watch，项目目录：$PROJECT_DIR"
   check_os
@@ -208,6 +281,7 @@ install_cmd_v2() {
   chmod 700 "$PROJECT_DIR/vx-data.sh"
   generate_env
   load_env
+  sync_update_registry
   log "最终镜像配置：$IMAGE"
   log "在线更新仓库：${VX_UPDATE_REGISTRY:-docker.io}/${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}"
   log "正在拉取应用镜像：$IMAGE"
@@ -225,6 +299,37 @@ install_cmd_v2() {
   log "安装完成：请访问 http://服务器IP:${VX_HOST_PORT:-10000}（容器内部端口为 8000）。"
 }
 
+install_cmd_v2() {
+  _install_cmd_v2_impl "$@"
+  log "访问地址：http://$(access_ip):${VX_HOST_PORT:-10000}"
+  log "如果公网 IP 未开放，请使用服务器内网地址或绑定的域名访问。"
+}
+
+rollback_cmd() {
+  need_root; [ -d "$PROJECT_DIR" ] || die "project directory missing: $PROJECT_DIR"; load_env
+  local record version image_repo target_image rollback_image
+  record="$(docker exec vx-data-watch-updater sh -c 'cat /app/data/updates/rollback.json' 2>/dev/null || true)"
+  version="$(printf '%s' "$record" | sed -n 's/.*"previous_version"[[:space:]]*:[[:space:]]*"\([0-9][0-9.]*\)".*/\1/p')"
+  [ -n "$version" ] || die 'no rollback record is available'
+  image_repo="${IMAGE%:*}"; target_image="${image_repo}:${version}"; rollback_image="${image_repo}:vx-rollback-$$"
+  backup_cmd
+  docker tag "$IMAGE" "$rollback_image" || die 'unable to save current image for rollback'
+  if ! retry docker pull "$target_image" || ! docker tag "$target_image" "$image_repo:latest"; then
+    docker tag "$rollback_image" "$image_repo:latest" >/dev/null 2>&1 || true; docker image rm "$rollback_image" >/dev/null 2>&1 || true
+    die "rollback image pull failed; restored current latest image"
+  fi
+  if ! compose up -d --no-build --force-recreate || ! wait_healthy; then
+    warn 'rollback version failed health checks; restoring current image'
+    docker tag "$rollback_image" "$image_repo:latest" >/dev/null 2>&1 || true
+    compose up -d --no-build --force-recreate || true
+    docker image rm "$rollback_image" >/dev/null 2>&1 || true
+    die 'rollback failed; attempted to restore current version'
+  fi
+  docker image rm "$rollback_image" >/dev/null 2>&1 || true
+  docker exec vx-data-watch-updater rm -f /app/data/updates/rollback.json >/dev/null 2>&1 || true
+  log "rollback completed: v$version; data volume $DATA_VOLUME was preserved"
+}
+
 usage() { cat <<'EOF'
 用法：sudo ./scripts/vx-data.sh <install|stop|update|backup|migrate|uninstall> [参数]
 
@@ -239,5 +344,5 @@ uninstall           选择保留数据或完全删除，并单独选择是否删
 环境变量：VX_DOWNLOAD_BASE_URL、VX_RETRY_COUNT、VX_SKIP_MIRROR_PROMPT=1、VX_FORCE_MIRROR_PROMPT=1、VX_ASSUME_YES=1
 EOF
 }
-main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; stop) stop_cmd "$@" ;; update) update_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
+main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; stop) stop_cmd "$@" ;; update) update_cmd "$@" ;; rollback) rollback_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
 main "$@"

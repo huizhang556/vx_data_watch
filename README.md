@@ -119,14 +119,12 @@ openssl rand -base64 32
 
 ```bash
 sudo apt update && sudo apt install -y curl
-sudo mkdir -p /opt/vx-data-watch
-cd /opt/vx-data-watch
+sudo mkdir -p /opt/vx-data-watch && cd /opt/vx-data-watch
 # 海外：
 sudo curl -fL --retry 5 -o vx-data.sh https://raw.githubusercontent.com/huizhang556/vx_data_watch/main/scripts/vx-data.sh
 # 中国大陆改用：
 # sudo curl -fL --retry 5 -o vx-data.sh https://gitee.com/huizhang556/vx_data_watch/raw/main/scripts/vx-data.sh
-sudo chmod 700 vx-data.sh
-sudo ./vx-data.sh install
+sudo chmod 700 vx-data.sh && sudo ./vx-data.sh install
 ```
 
 安装时脚本会检测网络和公网地区，提示选择镜像源、镜像加速和数据库。数据库默认 SQLite，也可以选择自动部署 PostgreSQL；缺少 Docker 或依赖时会先征得同意再安装。首次安装会自动生成随机密钥和 PostgreSQL 密码。安装完成后直接访问提示的 `http://服务器IP:10000`，不需要 Nginx；需要域名或 HTTPS 时再按文末指引自行配置。
@@ -136,6 +134,7 @@ sudo ./vx-data.sh install
 ```bash
 sudo /opt/vx-data-watch/vx-data.sh update             # 备份后更新 latest
 sudo /opt/vx-data-watch/vx-data.sh update 0.5.1       # 更新到指定版本
+sudo /opt/vx-data-watch/vx-data.sh rollback           # 按更新记录恢复上一版本
 sudo /opt/vx-data-watch/vx-data.sh backup              # 备份到 /home/vx_backed
 sudo /opt/vx-data-watch/vx-data.sh backup /data/backup # 自定义备份目录
 sudo /opt/vx-data-watch/vx-data.sh migrate             # rsync 迁移到另一台服务器
@@ -196,7 +195,7 @@ cp .env.example .env
 VX_IMAGE=crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch:latest
 ```
 
-使用 ACR 镜像时，请先登录 ACR。终端一键更新会沿用 `.env` 中当前镜像的仓库地址；网页在线更新只允许在 Docker Hub 和已配置的阿里云 ACR 之间选择。
+当前配置的阿里云 ACR 命名空间和镜像仓库为公开仓库，正常安装、拉取和在线更新无需预先登录。终端一键更新会沿用 `.env` 中当前镜像的完整仓库地址；网页在线更新只允许在 Docker Hub 和已配置的阿里云 ACR 之间选择。只有服务器实际返回 `unauthorized` 或 `authentication required` 时，才需要检查 ACR 公开权限或执行 `docker login`。
 
 普通部署无需修改这些 Docker 变量。
 

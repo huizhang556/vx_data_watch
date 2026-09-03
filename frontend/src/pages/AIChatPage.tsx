@@ -62,6 +62,7 @@ type Provider = {
   api_key_configured: boolean;
   models?: string[];
   model_categories?: Record<string, string[]>;
+  is_enabled: boolean;
 };
 function MarkdownCode({ children, className }: { children?: ReactNode; className?: string }) {
   const source = String(children ?? "").replace(/\n$/, "");
@@ -103,6 +104,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     return provider.models?.length ? provider.models : provider.model ? [provider.model] : [];
   };
   const [busy, setBusy] = useState(false);
+  const [applyingModel, setApplyingModel] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
   const [search, setSearch] = useState("");
@@ -173,6 +175,16 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       await openSession(first, configs);
     }
   };
+  const refreshProviderChoices = async () => {
+    if (!account) return;
+    const rows = await api<Provider[]>(`/api/ai/providers?${query({ account_id: account.id })}`);
+    setProviders(rows.filter((item) => item.is_enabled));
+    if (providerId && !rows.some((item) => item.id === providerId && item.is_enabled)) {
+      setProviderId(undefined);
+      setModel("");
+      setModelOptions([]);
+    }
+  };
   const openSession = async (session: Session, providerList = providers) => {
     const requestId = ++messageRequestRef.current;
     setActiveSession(session);
@@ -211,6 +223,41 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     const provider = providers.find((item) => item.id === providerId);
     setModelOptions(categoryModels(provider, modelCategory));
   }, [providerId, account, providers, modelCategory]);
+  const changeModelCategory = (value: string) => {
+    if (value !== "chat" && activeSession && messages.length > 0) {
+      const provider = providers.find((item) => item.id === providerId);
+      const options = categoryModels(provider, "chat");
+      setModelCategory("chat");
+      setModelOptions(options);
+      setModel(options.includes(model) ? model : options[0] || "");
+      message.warning("当前对话已有历史消息，生图或生视频需要新建聊天窗口");
+      return;
+    }
+    setModelCategory(value);
+    const provider = providers.find((item) => item.id === providerId);
+    const options = categoryModels(provider, value);
+    setModelOptions(options);
+    setModel(options.includes(model) ? model : options[0] || "");
+  };
+  const applyModel = async () => {
+    if (!activeSession || !providerId || !model || applyingModel) return;
+    const selectedProvider = providers.find((item) => item.id === providerId);
+    if (!selectedProvider) return;
+    setApplyingModel(true);
+    try {
+      const response = await api<{ result: string }>("/api/ai/provider/test-selected", {
+        method: "POST",
+        body: JSON.stringify({ account_id: account?.id ?? null, provider_id: providerId, model }),
+      });
+      localStorage.setItem(`vx-ai-chat-model:${activeSession.id}`, model);
+      await updateSession(activeSession, { provider_id: providerId });
+      message.success(response.result?.slice(0, 100) || "模型配置可用，已应用");
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : "模型配置测试失败，未应用");
+    } finally {
+      setApplyingModel(false);
+    }
+  };
   const createCategory = () => {
     let name = timestampName("新分类");
     Modal.confirm({
@@ -429,6 +476,11 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const send = async () => {
     if (!activeSession || (!input.trim() && !attachments.length) || busy)
       return;
+    if (modelCategory !== "chat" && messages.length > 0) {
+      message.warning("当前对话已有历史消息，生图或生视频需要新建聊天窗口");
+      setModelCategory("chat");
+      return;
+    }
     const files = attachments.slice();
     const content = input.trim();
     setInput("");
@@ -688,6 +740,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           <Select
             value={providerId}
             placeholder="选择模型厂商"
+            onOpenChange={(open) => { if (open) void refreshProviderChoices(); }}
             onChange={(value) => {
               setProviderId(value);
               const provider = providers.find((item) => item.id === value);
@@ -695,7 +748,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
               setModelCategory("chat");
               setModelOptions(categoryModels(provider, "chat"));
             }}
-            options={providers.map((item) => ({
+            options={providers.filter((item) => item.is_enabled).map((item) => ({
               value: item.id,
               label: item.name,
             }))}
@@ -703,7 +756,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           <Select
             value={modelCategory}
             disabled={!providerId}
-            onChange={(value) => { setModelCategory(value); const provider = providers.find((item) => item.id === providerId); const options = categoryModels(provider, value); setModelOptions(options); setModel(options.includes(model) ? model : options[0] || ""); }}
+            onChange={changeModelCategory}
             options={[{ value: "chat", label: "聊天模型" }, { value: "image", label: "生图模型" }, { value: "video", label: "视频模型" }]}
           />
           <Select
@@ -714,12 +767,9 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
             options={modelOptions.map((item) => ({ value: item, label: item }))}
           />
           <Button
-            onClick={() => {
-              if (!activeSession) return;
-              if (model) localStorage.setItem(`vx-ai-chat-model:${activeSession.id}`, model);
-              void updateSession(activeSession, { provider_id: providerId });
-              message.success("模型已应用并写入本地配置");
-            }}
+            loading={applyingModel}
+            disabled={!activeSession || !providerId || !model}
+            onClick={() => void applyModel()}
           >
             应用模型
           </Button>

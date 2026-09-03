@@ -63,6 +63,7 @@ const BackupPage = lazy(() => import("./pages/BackupPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ImportsPage = lazy(() => import("./pages/ImportsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const MenuVisibilityPage = lazy(() => import("./pages/MenuVisibilityPage"));
 const UpdatesPage = lazy(() => import("./pages/UpdatesPage"));
 const VideosPage = lazy(() => import("./pages/VideosPage"));
 const DownloadPage = lazy(() => import("./pages/DownloadPage"));
@@ -113,6 +114,7 @@ const items = [
   { key: "/settings", icon: <Settings size={19} />, label: "系统设置" },
   { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
   { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
+  { key: "/settings/menu", icon: <Settings size={19} />, label: "菜单显示管理" },
   {
     key: "/usage",
     icon: <BookOpen size={19} />,
@@ -143,6 +145,7 @@ export default function App() {
   );
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [menuVisibility, setMenuVisibility] = useState<Record<string, boolean>>({});
   const [pendingRequests, setPendingRequests] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("正在加载");
   const location = useLocation();
@@ -157,6 +160,12 @@ export default function App() {
     }
   }, []);
   useEffect(() => { void checkUpdates(); }, [checkUpdates]);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void checkUpdates(); };
+    const timer = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [checkUpdates]);
   useEffect(() => {
     const start = (event: Event) => { setPendingRequests((value) => value + 1); setLoadingLabel((event as CustomEvent<{ label?: string }>).detail?.label || "正在加载"); };
     const end = () => setPendingRequests((value) => Math.max(0, value - 1));
@@ -179,6 +188,7 @@ export default function App() {
   useEffect(() => {
     void reloadAccounts();
   }, [reloadAccounts]);
+  useEffect(() => { if (user.role !== "admin") void api<Record<string, boolean>>("/api/settings/menu-visibility").then(setMenuVisibility).catch(() => undefined); }, [user.role]);
 
   const setAccountId = (id: number) => {
     setAccountIdState(id);
@@ -189,7 +199,10 @@ export default function App() {
   const visibleItems = user.role === "admin"
     ? items.filter((item) => item.key !== "/accounts")
     : items
+        .filter((item) => menuVisibility[item.key] !== false)
         .filter((item) => ["/users", "/ai-chat-menu", "/analysis", "/download", "/about", "/usage"].includes(item.key))
+        .map((item) => ({ ...item, children: item.children?.filter((child) => menuVisibility[child.key] !== false) }))
+        .filter((item) => !item.children || item.children.length > 0)
         .map((item) => item.key === "/users"
           ? { ...item, label: "视频号管理", children: item.children?.filter((child) => child.key === "/users/accounts").map((child) => ({ ...child, label: "视频号管理" })) }
           : item.key === "/ai-chat-menu"
@@ -197,8 +210,11 @@ export default function App() {
             : item);
   // A one-child group is a direct destination; only real groups keep a submenu.
   const menuItems = visibleItems.map((item) => {
-    if (item.children?.length !== 1) return item;
-    return { ...item, key: item.children[0].key, children: undefined };
+    const displayItem = item.key === "/updates" && updateCheck
+      ? { ...item, label: `${item.label}${updateCheck.has_update ? "（有可用更新）" : "（最新版）"}` }
+      : item;
+    if (displayItem.children?.length !== 1) return displayItem;
+    return { ...displayItem, key: displayItem.children[0].key, children: undefined };
   });
   const handleMenuClick: MenuProps["onClick"] = ({ key }) => {
     const parent = visibleItems.find((item) => item.key === key);
@@ -462,6 +478,7 @@ export default function App() {
                 />
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings/menu" element={user.role === "admin" ? <MenuVisibilityPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/updates" element={user.role === "admin" ? <UpdatesPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/profile" element={<ProfilePage />} />
                 <Route path="/usage/levels" element={<UsagePage />} />
