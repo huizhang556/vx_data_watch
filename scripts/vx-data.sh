@@ -73,7 +73,7 @@ install_docker() {
 }
 select_mirror() {
   [ "${VX_SKIP_MIRROR_PROMPT:-0}" = 1 ] && return
-  [ "$DETECTED_COUNTRY" = CN ] || [ "${VX_FORCE_MIRROR_PROMPT:-0}" = 1 ] || return
+  [ "$DETECTED_COUNTRY" = CN ] || [ "${VX_FORCE_MIRROR_PROMPT:-0}" = 1 ] || return 0
   log '中国大陆服务器可选择 Docker Hub 镜像加速。公共地址可能失效，失败时请改用云服务器或配置代理。'
   log '1) 不配置  2) https://docker.m.daocloud.io  3) https://dockerproxy.net  4) 自定义'
   local choice mirror; read -r -p '请选择 [1-4，默认 1]：' choice || true
