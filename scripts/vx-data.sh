@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# VX Data Watch one-click operations. Supported: Ubuntu 24.04 and Debian 12.
+# VX Data Watch one-click operations. Supported: Ubuntu 22.04/24.04/26.04 and Debian 11/12/13.
 PROJECT_DIR="/opt/vx-data-watch"
 DATA_VOLUME="vx-data"
 POSTGRES_VOLUME="vx-postgres"
@@ -55,7 +55,10 @@ select_download_source() {
 
 check_os() {
   [ -r /etc/os-release ] || die '无法识别操作系统。'; . /etc/os-release
-  case "${ID}:${VERSION_ID}" in ubuntu:24.04|debian:12) ;; *) die "仅支持 Ubuntu 24.04 或 Debian 12，当前为 ${PRETTY_NAME:-$ID $VERSION_ID}。" ;; esac
+  case "${ID}:${VERSION_ID}" in
+    ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:11|debian:12|debian:13) ;;
+    *) die "仅支持 Ubuntu 22.04、24.04、26.04 或 Debian 11、12、13，当前为 ${PRETTY_NAME:-$ID $VERSION_ID}。" ;;
+  esac
 }
 ensure_dependencies() {
   local missing=() cmd; for cmd in curl openssl rsync; do command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd"); done

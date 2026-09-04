@@ -42,7 +42,7 @@ HG工具站（VX Data Watch）是一个多功能、综合性的工具类网站�
 
 | 项目 | 最低要求 | 推荐配置 |
 | --- | --- | --- |
-| 操作系统 | Ubuntu 24.04 / Debian 12，64 位 | Ubuntu 24.04，64 位 |
+| 操作系统 | Ubuntu 22.04/24.04/26.04、Debian 11/12/13，64 位 | Ubuntu 24.04 或 Debian 12，64 位 |
 | CPU | 2 核 x86_64 | 4 核 x86_64 |
 | 内存 | 2 GB | 4 GB 或更多 |
 | 可用磁盘 | 5 GB | 10 GB 或更多，并定期备份 |
@@ -149,7 +149,7 @@ sudo /opt/vx-data-watch/vx-data.sh uninstall           # 选择保留数据或�
 
 ### 1. 安装 Docker
 
-先按照 Docker 官方文档为 [Ubuntu](https://docs.docker.com/engine/install/ubuntu/) 或 [Debian](https://docs.docker.com/engine/install/debian/) 安装 Docker Engine 和 Compose 插件。安装完成后检查：
+先按照 Docker 官方文档为 [Ubuntu](https://docs.docker.com/engine/install/ubuntu/) 或 [Debian](https://docs.docker.com/engine/install/debian/) 安装 Docker Engine 和 Compose 插件。本项目一键脚本支持 Ubuntu 22.04、24.04、26.04 以及 Debian 11、12、13（均为 64 位）；安装完成后检查：
 
 ```bash
 docker --version
