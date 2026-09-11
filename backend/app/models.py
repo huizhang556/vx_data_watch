@@ -242,6 +242,7 @@ class AIProviderConfig(Base):
     model: Mapped[str] = mapped_column(String(200))
     models_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_categories_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_protocols_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     protocol: Mapped[str] = mapped_column(String(30), default="chat_completions")
     interface_type: Mapped[str] = mapped_column(String(20), default="compatible", server_default="compatible")
     encrypted_api_key: Mapped[bytes] = mapped_column(LargeBinary)

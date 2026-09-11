@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     update_env_file: Path = Path("/project/.env")
     update_project: str = "vx-data-watch"
     update_service: str = "app"
+    deployment_method: str = "source"
     registration_enabled: bool = False
     smtp_host: str | None = None
     smtp_port: int = 587

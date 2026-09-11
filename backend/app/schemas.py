@@ -199,6 +199,7 @@ class AIProviderInput(BaseModel):
     timeout_seconds: int = Field(default=60, ge=5, le=300)
     models: list[str] = Field(default_factory=list, max_length=500)
     model_categories: dict[str, list[str]] = Field(default_factory=dict)
+    model_protocols: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("base_url")
     @classmethod

@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
-  Avatar,
   Button,
   Empty,
   Form,
@@ -12,15 +11,18 @@ import {
   Switch,
   Table,
   Tag,
+  Tree,
   Typography,
   Upload,
   message,
 } from "antd";
 import { Ban, CheckCircle2, ImagePlus, Pencil, Plus, Trash2, UserPlus } from "lucide-react";
+import { UserAvatar, userLevelLabel } from "../components/UserAvatar";
 import dayjs from "dayjs";
 import { api } from "../api";
 import { useAccount } from "../account";
 import { useAuth } from "../auth";
+import { useTheme, type ThemeMode } from "../theme";
 import type { Account } from "../types";
 
 interface LocalUser {
@@ -53,6 +55,14 @@ interface AuthSettings {
   captcha_secret_key?: string;
   captcha_secret_key_set?: boolean;
 }
+interface SiteSettings { site_name: string; site_subtitle: string; logo_path: string; logo_url: string; browser_title: string; footer_text: string }
+interface StyleSettings { default_theme: ThemeMode; default_font_family: string; default_font_size: "small" | "medium" | "large" }
+const settingsTree = [
+  { key: "site", title: "站点信息" },
+  { key: "email", title: "邮箱与注册" },
+  { key: "captcha", title: "人机验证" },
+  { key: "style", title: "系统样式", children: [{ key: "theme", title: "主题设置" }, { key: "font", title: "字体设置" }] },
+];
 const usernameRules = [
   { required: true, message: "请输入用户名" },
   { min: 3, max: 80, message: "用户名长度应为 3-80 个字符" },
@@ -85,6 +95,7 @@ export default function SettingsPage({
 }) {
   const { accounts, reloadAccounts } = useAccount();
   const { user } = useAuth();
+  const { setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const [editAccountOpen, setEditAccountOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -93,6 +104,9 @@ export default function SettingsPage({
   const [editingUser, setEditingUser] = useState<LocalUser | null>(null);
   const [users, setUsers] = useState<LocalUser[]>([]);
   const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
+  const [activeSetting, setActiveSetting] = useState("site");
+  const [settingsNavWidth, setSettingsNavWidth] = useState(() => Number(localStorage.getItem("vx_settings_nav_width")) || 220);
   const [testRecipient, setTestRecipient] = useState("");
   const [loading, setLoading] = useState(false);
   const loadUsers = () =>
@@ -101,6 +115,8 @@ export default function SettingsPage({
       : Promise.resolve();
   const [authForm] = Form.useForm<AuthSettings>();
   const [captchaForm] = Form.useForm<AuthSettings>();
+  const [siteForm] = Form.useForm<SiteSettings>();
+  const [styleForm] = Form.useForm<StyleSettings>();
   const [userForm] = Form.useForm();
   const [editUserForm] = Form.useForm();
   const [accountForm] = Form.useForm();
@@ -110,12 +126,16 @@ export default function SettingsPage({
           setAuthSettings(value);
           authForm.setFieldsValue(value);
           captchaForm.setFieldsValue(value);
-        })
+      })
       : Promise.resolve();
+  const loadSiteSettings = () => user.role === "admin" ? api<SiteSettings>("/api/settings/site").then((value) => { setSiteSettings(value); siteForm.setFieldsValue(value); }) : Promise.resolve();
+  const loadStyleSettings = () => user.role === "admin" ? api<StyleSettings>("/api/settings/style").then((value) => { styleForm.setFieldsValue(value); }) : Promise.resolve();
   useEffect(() => {
     if (user.role === "admin") {
       void loadUsers();
       void loadAuthSettings();
+      void loadSiteSettings();
+      void loadStyleSettings();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -189,6 +209,35 @@ export default function SettingsPage({
     // 人机验证使用独立表单，但后端配置存储仍是一个加密配置对象。
     // 以已保存的邮箱配置作为基线，避免提交人机验证时覆盖 SMTP 设置。
     await saveAuthSettings(values, true, "人机验证配置已保存");
+  };
+  const saveSiteSettings = async (values: SiteSettings) => {
+    setLoading(true);
+    try { const { site_name, site_subtitle, browser_title, footer_text } = values; const saved = await api<SiteSettings>("/api/settings/site", { method: "PUT", body: JSON.stringify({ site_name, site_subtitle, browser_title, footer_text }) }); setSiteSettings(saved); siteForm.setFieldsValue(saved); message.success("站点信息已保存"); window.dispatchEvent(new Event("vx:site-config-updated")); }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : "站点信息保存失败"); }
+    finally { setLoading(false); }
+  };
+  const uploadSiteLogo = async (file: File) => {
+    const body = new FormData(); body.append("file", file);
+    try { const saved = await api<SiteSettings>("/api/settings/site/logo", { method: "POST", body }); setSiteSettings(saved); siteForm.setFieldsValue(saved); message.success("站点 Logo 已保存"); window.dispatchEvent(new Event("vx:site-config-updated")); }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : "Logo 上传失败"); }
+    return false;
+  };
+  const deleteSiteLogo = async () => {
+    try { await api<void>("/api/settings/site/logo", { method: "DELETE" }); const saved = await api<SiteSettings>("/api/settings/site"); setSiteSettings(saved); siteForm.setFieldsValue(saved); message.success("站点 Logo 已恢复默认"); }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : "Logo 删除失败"); }
+  };
+  const saveStyleSettings = async (values: StyleSettings) => {
+    setLoading(true);
+    try { const saved = await api<StyleSettings>("/api/settings/style", { method: "PUT", body: JSON.stringify(values) }); styleForm.setFieldsValue(saved); setTheme(saved.default_theme); document.documentElement.style.setProperty("--vx-font-family", saved.default_font_family === "system" ? '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif' : saved.default_font_family === "microsoft-yahei" ? '"Microsoft YaHei", sans-serif' : saved.default_font_family === "source-han-sans" ? '"Source Han Sans SC", sans-serif' : saved.default_font_family === "pingfang" ? '"PingFang SC", sans-serif' : 'ui-monospace, SFMono-Regular, Consolas, monospace'); document.documentElement.style.setProperty("--vx-font-scale", saved.default_font_size === "small" ? "0.94" : saved.default_font_size === "large" ? "1.06" : "1"); message.success("系统样式已保存"); }
+    catch (cause) { message.error(cause instanceof Error ? cause.message : "系统样式保存失败"); }
+    finally { setLoading(false); }
+  };
+  const jumpSetting = (key: string) => { setActiveSetting(key); document.getElementById(`settings-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  const resizeSettingsNav = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const move = (moveEvent: PointerEvent) => { const next = Math.max(180, Math.min(360, moveEvent.clientX - 32)); localStorage.setItem("vx_settings_nav_width", String(next)); setSettingsNavWidth(next); };
+    const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
   };
   const createAccount = async (values: {
     name: string;
@@ -321,11 +370,11 @@ export default function SettingsPage({
       <div className="page-heading">
         <div>
           <Typography.Title level={2}>
-            {section === "settings" ? "系统设置" : section === "accounts" && user.role !== "admin" ? "视频号管理" : "用户管理"}
+            {section === "settings" ? "基础系统设置" : section === "accounts" && user.role !== "admin" ? "视频号管理" : "用户管理"}
           </Typography.Title>
           <Typography.Text type="secondary">
             {section === "settings"
-              ? "账号、数据安全与备份"
+              ? "站点信息、邮箱注册、人机验证与系统样式配置"
               : section === "accounts" && user.role !== "admin"
                 ? "管理当前用户的视频号账号"
                 : "管理视频号账号和注册用户管理"}
@@ -333,7 +382,21 @@ export default function SettingsPage({
         </div>
       </div>
       {section === "settings" && (
-        <section className="section-band auth-settings-section">
+        <div className="settings-workspace" style={{ gridTemplateColumns: `${settingsNavWidth}px minmax(0, 1fr)` }}>
+          <aside className="settings-tree-nav" aria-label="基础系统设置导航"><Tree blockNode treeData={settingsTree} selectedKeys={[activeSetting]} defaultExpandAll onSelect={(keys) => { if (keys[0]) jumpSetting(String(keys[0])); }} /><div className="settings-tree-resizer" role="separator" aria-label="调整设置导航宽度" onPointerDown={resizeSettingsNav} /></aside>
+          <div className="settings-workspace-content">
+        <section className="section-band auth-settings-section" id="settings-site">
+          <div className="section-heading"><div><Typography.Title level={3}>站点信息</Typography.Title><Typography.Text type="secondary">配置登录页和系统界面使用的站点品牌信息。</Typography.Text></div></div>
+          {user.role === "admin" && <Form form={siteForm} layout="vertical" onFinish={saveSiteSettings} requiredMark={false} className="settings-form-grid">
+            <Form.Item name="site_name" label="站点名称" rules={[{ required: true, message: "请输入站点名称" }, { max: 120, message: "站点名称不能超过120个字符" }]}><Input placeholder="例如：视频号数据分析" /></Form.Item>
+            <Form.Item name="site_subtitle" label="站点副标题" rules={[{ max: 120, message: "副标题不能超过120个字符" }]}><Input placeholder="用于登录页和品牌区域" /></Form.Item>
+            <Form.Item name="browser_title" label="浏览器标题" rules={[{ max: 120, message: "浏览器标题不能超过120个字符" }]}><Input placeholder="留空时使用站点名称" /></Form.Item>
+            <Form.Item name="footer_text" label="页脚信息" rules={[{ max: 120, message: "页脚信息不能超过120个字符" }]}><Input placeholder="可选" /></Form.Item>
+            <Form.Item label="站点 Logo"><div className="site-logo-setting">{siteSettings?.logo_url ? <img src={`${siteSettings.logo_url}?t=${encodeURIComponent(siteSettings.logo_path)}`} alt="站点 Logo" /> : <span className="site-logo-placeholder">未设置</span>}<div><Upload accept="image/png,image/jpeg,image/webp" showUploadList={false} beforeUpload={(file) => { void uploadSiteLogo(file); return false; }}><Button icon={<ImagePlus size={15} />}>上传 Logo</Button></Upload>{siteSettings?.logo_url && <Button type="link" onClick={() => void deleteSiteLogo()}>恢复默认</Button>}<Typography.Text type="secondary">支持 PNG、JPG、WEBP，最大 2 MB</Typography.Text></div></div></Form.Item>
+            <div className="settings-actions"><Button type="primary" htmlType="submit" loading={loading}>保存站点信息</Button></div>
+          </Form>}
+        </section>
+        <section className="section-band auth-settings-section" id="settings-email">
           <div className="section-heading">
             <div>
               <Typography.Title level={3}>邮箱与注册</Typography.Title>
@@ -471,7 +534,7 @@ export default function SettingsPage({
               requiredMark={false}
               className="captcha-settings-form"
             >
-              <Typography.Title level={3}>人机验证</Typography.Title>
+              <Typography.Title level={3} id="settings-captcha">人机验证</Typography.Title>
               <Typography.Text type="secondary">
                 登录、注册和重置密码的人机验证配置
               </Typography.Text>
@@ -519,6 +582,16 @@ export default function SettingsPage({
             </Form>
           )}
         </section>
+        <section className="section-band auth-settings-section" id="settings-style">
+          <div className="section-heading"><div><Typography.Title level={3}>系统样式</Typography.Title><Typography.Text type="secondary">设置系统默认主题和字体。用户已主动选择的个人样式优先于系统默认值。</Typography.Text></div></div>
+          {user.role === "admin" && <Form form={styleForm} layout="vertical" onFinish={saveStyleSettings} requiredMark={false} className="settings-form-grid">
+            <div id="settings-theme"><Form.Item name="default_theme" label="默认主题"><Select options={[{ value: "system", label: "跟随系统" }, { value: "morning", label: "晨曦模式" }, { value: "rose", label: "玫瑰柔和模式" }, { value: "lavender", label: "薰衣草模式" }, { value: "mist", label: "雾蓝模式" }, { value: "mint", label: "薄荷模式" }, { value: "cream", label: "奶油模式" }]} /></Form.Item></div>
+            <div id="settings-font"><Form.Item name="default_font_family" label="字体系列"><Select options={[{ value: "system", label: "系统默认" }, { value: "microsoft-yahei", label: "微软雅黑" }, { value: "source-han-sans", label: "思源黑体" }, { value: "pingfang", label: "苹方/系统字体" }, { value: "monospace", label: "等宽字体" }]} /></Form.Item><Form.Item name="default_font_size" label="字号"><Select options={[{ value: "small", label: "小" }, { value: "medium", label: "标准" }, { value: "large", label: "大" }]} /></Form.Item></div>
+            <div className="settings-actions"><Button type="primary" htmlType="submit" loading={loading}>保存系统样式</Button></div>
+          </Form>}
+        </section>
+          </div>
+        </div>
       )}
       {(section === "users" || section === "accounts") && (
         <section className="section-band">
@@ -592,9 +665,7 @@ export default function SettingsPage({
                   title: "头像",
                   dataIndex: "avatar",
                   render: (value, row) => (
-                    <Avatar src={value !== "default" ? value : undefined}>
-                      {row.username.slice(0, 1).toUpperCase()}
-                    </Avatar>
+                    <UserAvatar username={row.username} avatar={value} role={row.role} level={row.level} size={36} />
                   ),
                 },
                 { title: "用户名", dataIndex: "username" },
@@ -611,9 +682,9 @@ export default function SettingsPage({
                 {
                   title: "等级",
                   dataIndex: "level",
-                  render: (value) => (
-                    <Tag color={value ? "blue" : "default"}>
-                      {value === 0 ? "未开通 AI" : `等级 ${value}`}
+                  render: (value, row) => (
+                    <Tag color={row.role === "admin" ? "purple" : value === 2 ? "gold" : value === 1 ? "blue" : "default"}>
+                      {userLevelLabel(row.role, value)}
                     </Tag>
                   ),
                 },

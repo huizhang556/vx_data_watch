@@ -134,11 +134,51 @@ async def fetch_registry_versions(repository: str, registry: str = "docker.io") 
                 "version": name,
                 "published_at": row.get("last_updated"),
                 "digest": row.get("digest"),
+                "size_bytes": row.get("full_size") or row.get("size"),
             }
         )
+    missing = [row for row in versions if not isinstance(row.get("size_bytes"), (int, float))]
+    if missing:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+            for row in missing:
+                try:
+                    row["size_bytes"] = await _fetch_manifest_size(client, repository, registry, row["version"])
+                except (httpx.HTTPError, ValueError, TypeError, UpdateRegistryError):
+                    row["size_bytes"] = None
     versions.sort(key=lambda row: version_key(row["version"]), reverse=True)
     _version_cache[(registry, repository)] = (time.monotonic(), versions)
     return versions
+
+
+async def _fetch_manifest_size(client: httpx.AsyncClient, repository: str, registry: str, version: str) -> int:
+    host = "registry-1.docker.io" if registry == "docker.io" else registry
+    url = f"https://{host}/v2/{repository}/manifests/{version}"
+    headers = {"Accept": "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json"}
+    response = await client.get(url, headers=headers)
+    if response.status_code == 401:
+        challenge = response.headers.get("www-authenticate", "")
+        match = re.match(r"Bearer\s+(.+)", challenge, re.IGNORECASE)
+        if not match:
+            response.raise_for_status()
+        values = dict(re.findall(r'(\w+)="([^"]+)"', match.group(1)))
+        realm = values.get("realm")
+        if not realm:
+            response.raise_for_status()
+        token_response = await client.get(realm, params={key: value for key, value in values.items() if key in {"service", "scope"}})
+        token_response.raise_for_status()
+        token_payload = token_response.json()
+        token = token_payload.get("token") or token_payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise UpdateRegistryError("镜像仓库认证响应缺少访问令牌")
+        headers["Authorization"] = f"Bearer {token}"
+        response = await client.get(url, headers=headers)
+    response.raise_for_status()
+    payload = response.json()
+    layers = payload.get("layers", []) if isinstance(payload, dict) else []
+    sizes = [item.get("size") for item in layers if isinstance(item, dict) and isinstance(item.get("size"), int)]
+    if not sizes:
+        raise ValueError("镜像 manifest 未返回有效层大小")
+    return sum(sizes)
 
 
 def version_payload(versions: list[dict[str, Any]], registry: str | None = None) -> dict[str, Any]:
@@ -220,6 +260,24 @@ def update_paths() -> tuple[Path, Path, Path]:
     return directory / "request.json", directory / "processing.json", directory / "status.json"
 
 
+def update_history_dir() -> Path:
+    path = _update_dir() / "history"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def read_update_history() -> list[dict[str, Any]]:
+    rows = []
+    for path in update_history_dir().glob("*.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict): rows.append(value)
+        except (OSError, json.JSONDecodeError):
+            continue
+    rows.sort(key=lambda item: str(item.get("started_at") or item.get("updated_at") or ""), reverse=True)
+    return rows[:100]
+
+
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -242,11 +300,23 @@ def queue_update(version: str, backup_filename: str, registry: str = "docker.io"
     status = read_update_status()
     if request_path.exists() or processing_path.exists() or status.get("state") in ACTIVE_STATES:
         raise UpdateBusyError("已有更新任务正在执行")
+    settings = get_settings()
+    configured_image = ""
+    try:
+        env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
+        content = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
+        match = re.search(r"(?m)^VX_IMAGE=(.+)$", content)
+        configured_image = match.group(1).strip() if match else ""
+    except (OSError, UnicodeError):
+        pass
     request = {
         "id": uuid.uuid4().hex,
         "version": version,
         "repository": REGISTRY_REPOSITORIES.get(registry, get_settings().update_repository),
         "registry": registry,
+        "image": configured_image or f"{registry}/{REGISTRY_REPOSITORIES.get(registry, settings.update_repository)}:latest",
+        "current_version": __version__,
+        "deployment_method": settings.deployment_method,
         "backup_filename": backup_filename,
         "requested_at": datetime.now(UTC).isoformat(),
     }
@@ -263,8 +333,30 @@ def queue_update(version: str, backup_filename: str, registry: str = "docker.io"
             "state": "queued",
             "target_version": version,
             "current_version": __version__,
+            "registry": request["registry"],
+            "repository": request["repository"],
+            "image": request["image"],
+            "deployment_method": request["deployment_method"],
+            "backup_filename": request["backup_filename"],
+            "requested_at": request["requested_at"],
             "message": "更新任务已排队",
             "updated_at": datetime.now(UTC).isoformat(),
         },
     )
+    return request
+
+
+def queue_config_migration(backup_path: str, compose_backup_path: str | None, deployment_method: str) -> dict[str, Any]:
+    request_path, processing_path, status_path = update_paths()
+    status = read_update_status()
+    if request_path.exists() or processing_path.exists() or status.get("state") in ACTIVE_STATES:
+        raise UpdateBusyError("已有更新任务正在执行")
+    request = {"id": uuid.uuid4().hex, "type": "config_migration", "deployment_method": deployment_method, "backup_path": backup_path, "compose_backup_path": compose_backup_path, "requested_at": datetime.now(UTC).isoformat()}
+    try:
+        descriptor = os.open(request_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise UpdateBusyError("已有更新任务正在排队") from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(request, handle, ensure_ascii=False)
+    write_json_atomic(status_path, {"id": request["id"], "type": request["type"], "state": "queued", "message": "配置迁移任务已排队", "updated_at": datetime.now(UTC).isoformat()})
     return request

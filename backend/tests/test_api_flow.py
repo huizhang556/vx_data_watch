@@ -48,13 +48,27 @@ def test_menu_visibility_normalizes_hidden_parent_groups(client: TestClient, aut
     saved = client.put("/api/settings/menu-visibility", headers=auth, json=payload)
     assert saved.status_code == 200, saved.text
     values = saved.json()
-    # Fixed administrator entries remain enabled; only configurable ordinary
-    # user entries participate in parent visibility derivation.
-    assert values["/users"] is True
-    assert values["/ai-chat-menu"] is True
+    # Administrator-only entries do not keep an ordinary-user parent visible.
+    assert values["/users"] is False
+    assert values["/ai-chat-menu"] is False
     assert values["/analysis"] is False
     unknown = client.put("/api/settings/menu-visibility", headers=auth, json={"/unknown": False})
     assert unknown.status_code == 422
+
+
+def test_admin_can_customize_menu_labels_and_clear_to_default(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    saved = client.put("/api/settings/menu-labels", headers=auth, json={"/users": "成员中心"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["/users"] == "成员中心"
+    labels = client.get("/api/settings/menu-labels")
+    assert labels.status_code == 200
+    assert labels.json()["/users"] == "成员中心"
+
+    cleared = client.put("/api/settings/menu-labels", headers=auth, json={"/users": ""})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["/users"] == ""
 
 
 def test_user_accounts_are_private_from_administrator(
@@ -204,7 +218,7 @@ def test_admin_can_check_and_queue_system_update(
 
     async def versions(_repository: str, _registry: str = "docker.io") -> list[dict[str, str]]:
         return [
-                {"version": "0.5.5", "published_at": "2026-09-11T00:00:00Z"},
+                {"version": "0.5.6", "published_at": "2026-09-11T00:00:00Z"},
                 {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z"},
             {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z"},
             {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
@@ -219,7 +233,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.5.5"
+    assert checked.json()["current_version"] == "0.5.6"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.5.3", "0.4.3", "0.4.2", "0.4.0", "0.3.4"]
 
     queued = client.post(

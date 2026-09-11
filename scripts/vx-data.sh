@@ -192,6 +192,7 @@ generate_env() {
   else
     printf '\nVX_DATABASE_MODE=sqlite\n' >> "$PROJECT_DIR/.env"
   fi
+  printf '\nVX_DEPLOYMENT_METHOD=script\n' >> "$PROJECT_DIR/.env"
   chmod 600 "$PROJECT_DIR/.env"; log '.env 已生成，宿主机默认端口为 10000，容器内部端口固定为 8000。'
 }
 load_env() { [ -f "$PROJECT_DIR/.env" ] || die "缺少 $PROJECT_DIR/.env。"; set -a; . "$PROJECT_DIR/.env"; set +a; IMAGE="${VX_IMAGE:-$DEFAULT_IMAGE}"; }
@@ -348,19 +349,38 @@ rollback_cmd() {
   log "rollback completed: v$version; data volume $DATA_VOLUME was preserved"
 }
 
+config_migrate_cmd() {
+  need_root; [ -d "$PROJECT_DIR" ] || die "project directory missing: $PROJECT_DIR"; load_env
+  local stamp backup compose_backup
+  stamp="$(date +%Y%m%d-%H%M%S)"; backup="$PROJECT_DIR/.env.migration-$stamp.bak"; compose_backup="$PROJECT_DIR/docker-compose.yaml.migration-$stamp.bak"
+  cp -p "$PROJECT_DIR/.env" "$backup" || die 'unable to back up .env'
+  [ -f "$PROJECT_DIR/docker-compose.yaml" ] && cp -p "$PROJECT_DIR/docker-compose.yaml" "$compose_backup"
+  grep -q '^VX_DEPLOYMENT_METHOD=' "$PROJECT_DIR/.env" || printf '\nVX_DEPLOYMENT_METHOD=script\n' >> "$PROJECT_DIR/.env"
+  grep -q '^VX_UPDATE_ENV_FILE=' "$PROJECT_DIR/.env" || printf 'VX_UPDATE_ENV_FILE=/project/.env\n' >> "$PROJECT_DIR/.env"
+  grep -q '^VX_UPDATE_PROJECT=' "$PROJECT_DIR/.env" || printf 'VX_UPDATE_PROJECT=vx-data-watch\n' >> "$PROJECT_DIR/.env"
+  grep -q '^VX_UPDATE_SERVICE=' "$PROJECT_DIR/.env" || printf 'VX_UPDATE_SERVICE=app\n' >> "$PROJECT_DIR/.env"
+  if ! compose config --quiet; then
+    cp -p "$backup" "$PROJECT_DIR/.env"; [ -f "$compose_backup" ] && cp -p "$compose_backup" "$PROJECT_DIR/docker-compose.yaml"; die 'Compose 配置校验失败，已恢复迁移前配置'
+  fi
+  compose up -d --force-recreate app updater || { cp -p "$backup" "$PROJECT_DIR/.env"; [ -f "$compose_backup" ] && cp -p "$compose_backup" "$PROJECT_DIR/docker-compose.yaml"; compose up -d --force-recreate app updater || true; die '服务重建失败，已尝试恢复原配置'; }
+  wait_healthy || die '迁移后健康检查失败，请使用备份文件恢复配置'
+  success "配置迁移完成；.env 备份：$backup"
+}
+
 usage() { cat <<'EOF'
-用法：sudo ./scripts/vx-data.sh <install|stop|update|backup|migrate|uninstall> [参数]
+用法：sudo ./scripts/vx-data.sh <install|stop|update|rollback|backup|migrate|migrate-config|uninstall> [参数]
 
 install             安装依赖、下载 Compose、生成随机 .env 并启动
 stop                停止 app、updater 和数据库容器，保留数据卷和镜像
 update [版本]       先备份，再拉取 latest 或指定版本并健康检查，失败自动回滚
 backup [目录]       备份 vx-data 数据卷，默认 /home/vx_backed
 migrate             导出数据卷后用 rsync 断点续传到另一台服务器
+migrate-config      备份并补齐部署配置，校验 Compose 后重建服务
 uninstall           选择保留数据或完全删除，并单独选择是否删除镜像
 
 安装时会先显示公网 IP、国家代码和镜像建议，再由用户确认。仅中国大陆默认询问 Docker 镜像加速；海外如确有需要可设置 VX_FORCE_MIRROR_PROMPT=1。
 环境变量：VX_DOWNLOAD_BASE_URL、VX_RETRY_COUNT、VX_SKIP_MIRROR_PROMPT=1、VX_FORCE_MIRROR_PROMPT=1、VX_ASSUME_YES=1
 EOF
 }
-main() { local command="${1:-}"; shift || true; case "$command" in install) section '一键安装'; install_cmd_v2 "$@" ;; stop) section '停止服务'; stop_cmd "$@" ;; update) section '在线更新'; update_cmd "$@" ;; rollback) section '版本回滚'; rollback_cmd "$@" ;; backup) section '数据备份'; backup_cmd "$@" ;; migrate) section '数据迁移'; migrate_cmd "$@" ;; uninstall) section '卸载项目'; uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
+main() { local command="${1:-}"; shift || true; case "$command" in install) section '一键安装'; install_cmd_v2 "$@" ;; stop) section '停止服务'; stop_cmd "$@" ;; update) section '在线更新'; update_cmd "$@" ;; rollback) section '版本回滚'; rollback_cmd "$@" ;; backup) section '数据备份'; backup_cmd "$@" ;; migrate) section '数据迁移'; migrate_cmd "$@" ;; migrate-config) section '配置迁移'; config_migrate_cmd "$@" ;; uninstall) section '卸载项目'; uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
 main "$@"

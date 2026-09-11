@@ -27,6 +27,17 @@ def _endpoint(base_url: str, suffix: str) -> str:
     return base_url.rstrip("/") + suffix
 
 
+def _configured_protocol(config: AIProviderConfig, model: str | None = None) -> str:
+    try:
+        mappings = json.loads(config.model_protocols_json) if config.model_protocols_json else {}
+    except (TypeError, ValueError):
+        mappings = {}
+    selected = mappings.get(model or config.model) if isinstance(mappings, dict) else None
+    if selected in {"chat_completions", "responses", "anthropic", "gemini", "grok"}:
+        return selected
+    return "chat_completions" if config.interface_type == "compatible" else config.protocol
+
+
 def build_prompt(snapshot: dict[str, Any]) -> str:
     return "请分析以下视频号数据：\n" + json.dumps(snapshot, ensure_ascii=False)
 
@@ -184,7 +195,7 @@ async def _call_native_provider(base_url: str, model: str, protocol: str, timeou
 
 
 async def call_provider(config: AIProviderConfig, snapshot: dict[str, Any]) -> str:
-    protocol = "chat_completions" if config.interface_type == "compatible" else config.protocol
+    protocol = _configured_protocol(config)
     return await _call_provider(
         base_url=config.base_url,
         model=config.model,
@@ -224,9 +235,9 @@ async def stream_chat_provider(
     config: AIProviderConfig, messages: list[dict[str, Any]]
 ) -> AsyncGenerator[str, None]:
     """Yield assistant text from an OpenAI-compatible chat completion stream."""
-    protocol = "chat_completions" if config.interface_type == "compatible" else config.protocol
+    protocol = _configured_protocol(config)
     if protocol in {"anthropic", "gemini", "grok"}:
-        async for part in _stream_native_provider(config, messages):
+        async for part in _stream_native_provider(config, messages, protocol):
             yield part
         return
     api_key = decrypt_secret(config.encrypted_api_key)
@@ -275,16 +286,17 @@ async def stream_chat_provider(
             break
 
 
-async def _stream_native_provider(config: AIProviderConfig, messages: list[dict[str, Any]]) -> AsyncGenerator[str, None]:
+async def _stream_native_provider(config: AIProviderConfig, messages: list[dict[str, Any]], protocol: str | None = None) -> AsyncGenerator[str, None]:
     api_key = decrypt_secret(config.encrypted_api_key)
+    selected_protocol = protocol or config.protocol
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
-        if config.protocol == "anthropic":
+        if selected_protocol == "anthropic":
             system = next((str(item["content"]) for item in messages if item.get("role") == "system"), None)
             body: dict[str, Any] = {"model": config.model, "max_tokens": 4096, "stream": True, "messages": [{**item, "content": _anthropic_content(item.get("content"))} for item in messages if item.get("role") != "system"]}
             if system:
                 body["system"] = system
             stream_request = client.stream("POST", _endpoint(config.base_url, "/v1/messages"), headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}, json=body)
-        elif config.protocol == "gemini":
+        elif selected_protocol == "gemini":
             contents = [{"role": "model" if item.get("role") == "assistant" else "user", "parts": _gemini_parts(item.get("content"))} for item in messages]
             stream_request = client.stream("POST", _endpoint(config.base_url, f"/v1beta/models/{config.model}:streamGenerateContent"), params={"alt": "sse", "key": api_key}, json={"contents": contents})
         else:
@@ -301,9 +313,9 @@ async def _stream_native_provider(config: AIProviderConfig, messages: list[dict[
                     payload = json.loads(value)
                 except json.JSONDecodeError:
                     continue
-                if config.protocol == "anthropic":
+                if selected_protocol == "anthropic":
                     text = payload.get("delta", {}).get("text", "")
-                elif config.protocol == "gemini":
+                elif selected_protocol == "gemini":
                     text = payload.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
                 else:
                     text = payload.get("choices", [{}])[0].get("delta", {}).get("content", "")

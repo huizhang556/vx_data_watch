@@ -22,6 +22,7 @@ services:
       VX_UPDATER_ENABLED: "true"
       VX_UPDATE_REPOSITORY: ${VX_UPDATE_REPOSITORY:-litehub/vx-data-watch}
       VX_UPDATE_REGISTRY: ${VX_UPDATE_REGISTRY:-docker.io}
+      VX_DEPLOYMENT_METHOD: ${VX_DEPLOYMENT_METHOD:-compose}
       VX_REGISTRATION_ENABLED: ${VX_REGISTRATION_ENABLED:-false}
       VX_SMTP_HOST: ${VX_SMTP_HOST:-}
       VX_SMTP_PORT: ${VX_SMTP_PORT:-587}
@@ -79,6 +80,7 @@ services:
       VX_UPDATE_ENV_FILE: /project/.env
       VX_UPDATE_PROJECT: vx-data-watch
       VX_UPDATE_SERVICE: app
+      VX_DEPLOYMENT_METHOD: ${VX_DEPLOYMENT_METHOD:-compose}
       VX_APP_UID: "10001"
       VX_APP_GID: "10001"
     volumes:

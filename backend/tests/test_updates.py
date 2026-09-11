@@ -46,7 +46,7 @@ def test_version_payload_offers_all_other_semver_versions(monkeypatch) -> None: 
             {"version": "0.2.1"},
         ]
     )
-    assert payload["current_version"] == "0.5.5"
+    assert payload["current_version"] == "0.5.6"
     assert [row["version"] for row in payload["versions"]] == ["0.5.3", "0.5.1", "0.4.3", "0.4.2", "0.3.4", "0.3.3", "0.3.2", "0.3.0", "0.2.1"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
@@ -78,7 +78,7 @@ def test_acr_registry_token_authentication(monkeypatch) -> None:  # type: ignore
                     )
                 if "auth.example.test" in url:
                     return httpx.Response(200, json={"token": "test-token"}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.5", "0.5.4", "0.5.3", "latest"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.6", "0.5.5", "0.5.4", "0.5.3", "latest"]}, request=httpx.Request("GET", url))
 
         fake = FakeClient()
         monkeypatch.setattr(updates.httpx, "AsyncClient", lambda *args, **kwargs: fake)
@@ -108,7 +108,7 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
                     return httpx.Response(200, json={"results": [{"name": "0.4.0"}]}, request=httpx.Request("GET", url))
                 if "registry-1.docker.io" in url:
                     return httpx.Response(200, json={"tags": ["0.4.0"]}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.5", "0.5.4", "0.5.3"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]}, request=httpx.Request("GET", url))
 
         monkeypatch.setattr(updates.httpx, "AsyncClient", FakeClient)
         updates._version_cache.clear()

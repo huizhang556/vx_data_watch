@@ -110,6 +110,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const [search, setSearch] = useState("");
   const [messageSearch, setMessageSearch] = useState("");
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [chatHovered, setChatHovered] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
   const [selectedSessions, setSelectedSessions] = useState<number[]>([]);
   const [dragCategoryId, setDragCategoryId] = useState<number | null>(null);
@@ -188,6 +189,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   const openSession = async (session: Session, providerList = providers) => {
     const requestId = ++messageRequestRef.current;
     setActiveSession(session);
+    setMessageSearch("");
+    setHighlightedMessageId(null);
     setContextInfo(null);
     setProviderId(session.provider_id || undefined);
     const sessionProvider = providerList.find((item) => item.id === session.provider_id);
@@ -406,6 +409,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     if (activeSession?.id === session.id) {
       setActiveSession(null);
       setMessages([]);
+      setMessageSearch("");
+      setHighlightedMessageId(null);
     }
   };
   const editMessage = (item: ChatMessage) => {
@@ -469,6 +474,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     if (activeSession && selectedSessions.includes(activeSession.id)) {
       setActiveSession(null);
       setMessages([]);
+      setMessageSearch("");
+      setHighlightedMessageId(null);
     }
     setSelectedSessions([]);
     message.success("已删除选中的对话");
@@ -607,6 +614,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
   );
   const searchActive = search.trim().length > 0;
   const messageSearchTerm = messageSearch.trim().toLowerCase();
+  const messageSearchEnabled = Boolean(activeSession && messages.length);
   const messageMatches = messageSearchTerm
     ? messages.filter((item) => item.content.toLowerCase().includes(messageSearchTerm))
     : [];
@@ -647,25 +655,6 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           >
             全选
           </Button>
-          <div className="ai-chat-message-search">
-            <Input
-              prefix={<Search size={15} />}
-              value={messageSearch}
-              onChange={(event) => setMessageSearch(event.target.value)}
-              placeholder="搜索对话内容"
-              allowClear
-            />
-            {messageSearchTerm && (
-              <div className="ai-chat-message-search-results" role="listbox" aria-label="消息搜索结果">
-                {messageMatches.length ? messageMatches.map((item) => (
-                  <button key={item.id} type="button" role="option" className="ai-chat-message-search-result" onClick={() => jumpToMessage(item)}>
-                    <span>{item.content.replace(/\s+/g, " ").slice(0, 100)}</span>
-                    <time>{formatMessageTime(item.created_at)}</time>
-                  </button>
-                )) : <span className="ai-chat-message-search-empty">未找到匹配消息</span>}
-              </div>
-            )}
-          </div>
           <Button
             size="small"
             danger
@@ -735,9 +724,10 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           resizingChatRef.current = true;
         }}
       />
-      <main className="ai-chat-main">
+      <main className="ai-chat-main" onMouseEnter={() => setChatHovered(true)} onMouseLeave={() => setChatHovered(false)}>
         <div className="ai-chat-toolbar">
           <Select
+            placement="bottomLeft"
             value={providerId}
             placeholder="选择模型厂商"
             onOpenChange={(open) => { if (open) void refreshProviderChoices(); }}
@@ -754,12 +744,14 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
             }))}
           />
           <Select
+            placement="bottomLeft"
             value={modelCategory}
             disabled={!providerId}
             onChange={changeModelCategory}
             options={[{ value: "chat", label: "聊天模型" }, { value: "image", label: "生图模型" }, { value: "video", label: "视频模型" }]}
           />
           <Select
+            placement="bottomLeft"
             value={model || undefined}
             placeholder="选择具体模型"
             disabled={!providerId}
@@ -773,6 +765,27 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           >
             应用模型
           </Button>
+          <div className="ai-chat-message-search">
+            <Input
+              prefix={<Search size={15} />}
+              value={messageSearch}
+              onChange={(event) => setMessageSearch(event.target.value)}
+              placeholder="搜索当前对话内容"
+              allowClear
+              disabled={!messageSearchEnabled}
+              aria-label="搜索当前对话内容"
+            />
+            {messageSearchEnabled && messageSearchTerm && (
+              <div className="ai-chat-message-search-results" role="listbox" aria-label="消息搜索结果">
+                {messageMatches.length ? messageMatches.map((item) => (
+                  <button key={item.id} type="button" role="option" className="ai-chat-message-search-result" onClick={() => jumpToMessage(item)}>
+                    <span>{item.content.replace(/\s+/g, " ").slice(0, 100) || "（图片或附件消息）"}</span>
+                    <time>{formatMessageTime(item.created_at)}</time>
+                  </button>
+                )) : <span className="ai-chat-message-search-empty">未找到匹配消息</span>}
+              </div>
+            )}
+          </div>
           <Space className="ai-chat-export-actions" size={8}>
             <Button
               icon={<Download size={15} />}
@@ -794,6 +807,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           <Empty description="请选择或新建一个对话" />
         ) : (
           <>
+            <div className="ai-chat-message-stage">
             <div className="ai-chat-messages" ref={messagesRef}>
               {messages.map((item) => (
                 <div key={item.id} ref={(element) => { messageRefs.current[item.id] = element; }} className={`ai-chat-message ${item.role} ${highlightedMessageId === item.id ? "search-highlight" : ""}`}>
@@ -846,6 +860,18 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
               </div>
             </div>
               ))}
+            </div>
+            {chatHovered && showScrollToBottom && messages.length > 0 && (
+              <Button
+                className="ai-chat-scroll-bottom"
+                type="text"
+                shape="circle"
+                icon={<ArrowDownToLine size={17} />}
+                aria-label="置底"
+                title="置底"
+                onClick={() => messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" })}
+              />
+            )}
             </div>
             <div className="ai-chat-composer">
               <div className="ai-chat-attachments">
@@ -933,7 +959,6 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                 placeholder="输入消息，Enter 发送，Shift+Enter 换行"
               />
               <Space>
-                {showScrollToBottom && <Button type="text" icon={<ArrowDownToLine size={16} />} aria-label="置底" title="置底" onClick={() => messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" })} />}
                 <Button
                   type="text"
                   danger

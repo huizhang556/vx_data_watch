@@ -84,6 +84,7 @@ export interface SystemVersion {
   version: string
   published_at?: string
   digest?: string
+  size_bytes?: number | null
 }
 
 export interface SystemVersionInfo {
@@ -98,6 +99,57 @@ export interface SystemVersionInfo {
   deployment: 'docker' | 'source'
 }
 
+export interface DeploymentInfo {
+  deployment_method: string
+  image_path: string
+  service_runtime: { project_dir: string; env_file: { path: string; exists: boolean; readable: boolean; content: string }; compose_file: { path: string; exists: boolean; readable: boolean; content: string } }
+  data_storage: {
+    database_type: string
+    database_file_dir: string | { path: string; exists: boolean; readable: boolean; writable: boolean; size_bytes: number | null }
+    user_data_dir: { path: string; exists: boolean; readable: boolean; writable: boolean; size_bytes: number | null }
+    backup_dir: { path: string; exists: boolean; readable: boolean; writable: boolean; size_bytes: number | null; backup_count: number; latest_backup_at: string | null }
+    disk_free_bytes: number | null
+  }
+}
+
+export interface ConfigMigrationPlan {
+  env_path: string
+  compose_path: string
+  deployment_method: 'script' | 'compose' | 'source' | null
+  changes: string[]
+  compose_mount_ok: boolean
+  compose_readable: boolean
+  compose_validation?: string
+  ready: boolean
+  applied?: boolean
+  backup_path?: string
+  compose_backup_path?: string | null
+  restart_required?: boolean
+}
+
+export interface UpdateHistoryRecord {
+  id: string
+  state: string
+  target_version?: string
+  current_version?: string
+  message?: string
+  started_at?: string
+  updated_at?: string
+  requested_at?: string
+  registry?: string
+  repository?: string
+  image?: string
+  deployment_method?: string
+  backup_filename?: string
+  duration_seconds?: number
+  rollback?: boolean
+  final_version?: string
+  target_digest?: string | null
+  latest_digest?: string | null
+  app_updater_digest_match?: boolean
+  stages?: { state: string; message: string; at: string }[]
+}
+
 export interface UpdateHealthInfo {
   registry: string
   repository: string
@@ -108,6 +160,7 @@ export interface UpdateHealthInfo {
   config_status: 'ok' | 'warning'
   message: string
   versions: Record<string, 'ok' | 'warning'>
+  registries: Record<string, { status: 'ok' | 'warning'; latency_ms: number; message: string }>
   checks: Array<{ key: string; label: string; status: 'ok' | 'warning'; message: string }>
 }
 

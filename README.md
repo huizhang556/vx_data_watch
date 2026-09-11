@@ -24,6 +24,7 @@ HG工具站（VX Data Watch）是一个多功能、综合性的工具类网站�
 - **主题界面**：提供晨曦、玫瑰柔和、薰衣草、雾蓝、薄荷和奶油六套主题，支持手动选择、保存到浏览器本地；跟随系统时根据系统浅色/深色偏好实时应用。新增功能区域统一使用 CSS Variables，覆盖背景、卡片、文字、边框、按钮、链接及成功/警告/错误状态。
 - **部署与运维**：支持一键安装/更新/备份迁移/卸载、Docker Compose 和 Ubuntu/Debian 源码部署；数据库可选择 SQLite 或 PostgreSQL，代码源支持 GitHub/Gitee，镜像源支持 Docker Hub/阿里云 ACR。
 - **在线更新**：管理员可检测版本、选择受信任镜像源并执行更新；页面每 60 秒刷新版本与更新链路状态，显示镜像源、配置、updater、app/updater 版本一致性和任务状态。更新前自动备份，失败时回滚，普通用户无更新权限。
+- **配置迁移更新**：管理员可检查旧部署配置、备份 `.env` 与 Compose 文件并补齐新架构字段；Docker 部署由 updater 执行重建和健康检查，一键脚本也可执行 `sudo /opt/vx-data-watch/vx-data.sh migrate-config`，源码部署仅执行配置检查。
 
 各版本的详细功能请查看 [版本功能记录](VERSIONS.md)。
 
@@ -165,19 +166,20 @@ sudo systemctl enable --now docker
 ```bash
 sudo apt update
 sudo apt install -y git
-git clone https://github.com/huizhang556/vx_data_watch.git
+sudo git clone https://github.com/huizhang556/vx_data_watch.git /opt/vx-data-watch
 ```
 
 如果服务器无法访问 GitHub，请改用 Gitee 同步仓库：
 
 ```bash
-git clone https://gitee.com/huizhang556/vx_data_watch.git
+sudo git clone https://gitee.com/huizhang556/vx_data_watch.git /opt/vx-data-watch
 ```
 
 然后进入目录并创建配置文件：
 
 ```bash
-cd vx_data_watch
+sudo chown -R "$USER":"$USER" /opt/vx-data-watch
+cd /opt/vx-data-watch
 cp .env.example .env
 ```
 
@@ -247,22 +249,22 @@ docker compose -f docker-compose.yaml exec app python -m app.cli backup
 仅停止服务并保留数据库、主密钥、备份和导入数据：
 
 ```bash
-cd /path/to/vx_data_watch
+cd /opt/vx-data-watch
 docker compose -f docker-compose.yaml down --remove-orphans
 ```
 
 确认已经备份且不再需要项目数据后，删除 Compose 容器、命名卷和本地构建镜像：
 
 ```bash
-cd /path/to/vx_data_watch
+cd /opt/vx-data-watch
 docker compose -f docker-compose.yaml down --volumes --remove-orphans --rmi local
 ```
 
 最后再删除源码目录：
 
 ```bash
-cd ..
-rm -rf vx_data_watch
+cd /opt
+sudo rm -rf vx-data-watch
 ```
 
 `--volumes` 会删除 `vx-data` 数据卷，可能造成数据库、主密钥和备份永久丢失。
@@ -307,8 +309,9 @@ npm --version
 使用 Git 克隆最新版：
 
 ```bash
-git clone https://github.com/huizhang556/vx_data_watch.git
-cd vx_data_watch
+sudo git clone https://github.com/huizhang556/vx_data_watch.git /opt/vx-data-watch
+sudo chown -R "$USER":"$USER" /opt/vx-data-watch
+cd /opt/vx-data-watch
 cp .env.example .env
 ```
 
@@ -320,8 +323,10 @@ cp .env.example .env
 VERSION=0.4.2
 curl -L -o vx-data-watch-v${VERSION}.tar.gz \
   https://github.com/huizhang556/vx_data_watch/archive/refs/tags/v${VERSION}.tar.gz
-tar -xzf vx-data-watch-v${VERSION}.tar.gz
-cd vx_data_watch-${VERSION}
+sudo tar -xzf vx-data-watch-v${VERSION}.tar.gz -C /opt
+sudo mv /opt/vx_data_watch-${VERSION} /opt/vx-data-watch
+sudo chown -R "$USER":"$USER" /opt/vx-data-watch
+cd /opt/vx-data-watch
 cp .env.example .env
 ```
 
@@ -370,9 +375,9 @@ After=network.target
 [Service]
 Type=simple
 User=<Linux用户名>
-WorkingDirectory=/home/<Linux用户名>/vx_data_watch
+WorkingDirectory=/opt/vx-data-watch
 Environment="PATH=/home/<Linux用户名>/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/bin/sh /home/<Linux用户名>/vx_data_watch/scripts/start-local.sh
+ExecStart=/bin/sh /opt/vx-data-watch/scripts/start-local.sh
 Restart=on-failure
 RestartSec=5
 
@@ -399,14 +404,14 @@ sudo journalctl -u vx-data-watch -f
 再次启动仍执行：
 
 ```bash
-cd vx_data_watch
+cd /opt/vx-data-watch
 sh scripts/start-local.sh
 ```
 
 使用 Git 部署时可更新源码：
 
 ```bash
-cd vx_data_watch
+cd /opt/vx-data-watch
 git pull --ff-only origin main
 sudo systemctl restart vx-data-watch
 sudo systemctl status vx-data-watch
@@ -429,15 +434,15 @@ sudo systemctl daemon-reload
 只清理源码环境并保留 `data/` 数据：
 
 ```bash
-cd /path/to/vx_data_watch
+cd /opt/vx-data-watch
 rm -rf .venv frontend/node_modules frontend/dist .pytest_cache .ruff_cache
 ```
 
 确认已经备份且不再需要数据库、主密钥、备份和导入数据后，删除整个源码目录：
 
 ```bash
-cd ..
-rm -rf vx_data_watch
+cd /opt
+sudo rm -rf vx-data-watch
 ```
 
 源码卸载不会自动删除系统级的 Python、Node.js、uv、Nginx 或其他共享软件。删除前请确认 Nginx 配置不再引用本项目，并执行 `sudo nginx -t` 检查配置。

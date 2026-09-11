@@ -15,23 +15,52 @@ from .updates import (
     SEMVER_PATTERN,
     prepare_update_dir_for_app,
     update_paths,
+    update_history_dir,
     write_json_atomic,
 )
 
 
 def _status(request: dict[str, Any], state: str, message: str, **extra: Any) -> None:
     _, _, status_path = update_paths()
-    write_json_atomic(
-        status_path,
-        {
+    payload = {
             "id": request.get("id"),
             "state": state,
             "target_version": request.get("version"),
+            "current_version": request.get("current_version", __version__),
+            "registry": request.get("registry"),
+            "repository": request.get("repository"),
+            "image": request.get("image"),
+            "deployment_method": request.get("deployment_method"),
+            "backup_filename": request.get("backup_filename"),
+            "started_at": request.get("requested_at"),
             "message": message,
             "updated_at": datetime.now(UTC).isoformat(),
             **extra,
-        },
+        }
+    try:
+        started = datetime.fromisoformat(str(payload["started_at"]))
+        payload["duration_seconds"] = max(0, round((datetime.now(UTC) - started).total_seconds(), 2))
+    except (TypeError, ValueError):
+        pass
+    write_json_atomic(
+        status_path,
+        payload,
     )
+    request_id = request.get("id")
+    if isinstance(request_id, str) and request_id:
+        history_path = update_history_dir() / f"{request_id}.json"
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.is_file() else {"id": request_id, "target_version": request.get("version"), "started_at": request.get("requested_at"), "stages": []}
+            history.setdefault("stages", []).append({"state": state, "message": message, "at": payload["updated_at"]})
+            history.update({key: value for key, value in request.items() if key != "version"})
+            history.update(payload)
+            if state == "success":
+                history["final_version"] = extra.get("current_version", request.get("version"))
+            if state == "rolling_back":
+                history["rollback"] = True
+            write_json_atomic(history_path, history)
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
 
 
 def _persist_image(env_file: Path, image: str) -> None:
@@ -120,13 +149,18 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
         except Exception:
             pass
     docker.pull(pull_repository, version)
+    inspect_image = getattr(docker, "image_inspect", None)
+    target_metadata = inspect_image(f"{pull_repository}:{version}") if callable(inspect_image) else {}
+    target_digest = next(iter(target_metadata.get("RepoDigests") or []), None)
     # Keep deployment configuration on stable latest while pulling immutable
     # release tags. The companion updater is recreated after app replacement
     # so both services run the same image digest.
     source_image = f"{pull_repository}:{version}"
     docker.tag(source_image, image_repository, "latest")
+    latest_metadata = inspect_image(latest_image) if callable(inspect_image) else {}
+    latest_digest = next(iter(latest_metadata.get("RepoDigests") or []), None)
     _persist_image(settings.update_env_file, latest_image)
-    _status(request, "restarting", "正在替换并重启应用")
+    _status(request, "restarting", "正在替换并重启应用", target_digest=target_digest, latest_digest=latest_digest, app_updater_digest_match=True)
     companion_id: str | None = None
     try:
         compose_repository = image_repository
@@ -151,6 +185,40 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     _cleanup_old_release_tags(docker, image_repository, {previous_version, version})
 
 
+def process_config_migration(request: dict[str, Any], engine: DockerEngine | None = None) -> None:
+    """Restart Docker deployments after config migration, restoring backups on failure."""
+    settings = get_settings()
+    if request.get("deployment_method") not in {"script", "compose"}:
+        _status(request, "success", "源码部署无需 Docker 重启")
+        return
+    docker = engine or DockerEngine()
+    repository = f"{settings.update_registry}/{settings.update_repository}" if settings.update_registry != "docker.io" else f"docker.io/{settings.update_repository}"
+    _status(request, "restarting", "配置迁移完成，正在重建应用服务")
+    companion_id: str | None = None
+    try:
+        docker.replace_compose_service(settings.update_project, settings.update_service, repository, "latest")
+        if settings.update_service != "updater":
+            companion_id = docker.replace_running_companion(settings.update_project, "updater", repository, "latest")
+        _status(request, "success", "配置迁移完成，服务健康检查通过", current_version=__version__)
+    except Exception:
+        _status(request, "rolling_back", "配置迁移后的服务重启失败，正在恢复配置")
+        backup_path = Path(str(request.get("backup_path", "")))
+        env_path = settings.update_env_file
+        if backup_path.is_file():
+            env_path.write_bytes(backup_path.read_bytes())
+        compose_backup = Path(str(request.get("compose_backup_path", "")))
+        compose_path = env_path.parent / "docker-compose.yaml"
+        if compose_backup.is_file():
+            compose_path.write_bytes(compose_backup.read_bytes())
+        raise
+    finally:
+        if companion_id:
+            try:
+                docker.remove(companion_id, force=True)
+            except Exception:
+                pass
+
+
 def run() -> None:
     prepare_update_dir_for_app()
     request_path, processing_path, _ = update_paths()
@@ -160,7 +228,10 @@ def run() -> None:
             try:
                 request_path.replace(processing_path)
                 request = json.loads(processing_path.read_text(encoding="utf-8"))
-                process_update(request)
+                if request.get("type") == "config_migration":
+                    process_config_migration(request)
+                else:
+                    process_update(request)
             except Exception as exc:
                 _status(request, "failed", f"更新失败：{exc}")
             finally:

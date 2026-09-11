@@ -7,7 +7,6 @@ import {
   useState,
 } from "react";
 import {
-  Avatar,
   Button,
   Dropdown,
   Layout,
@@ -54,6 +53,7 @@ import { AccountContext } from "./account";
 import { useAuth } from "./auth";
 import { THEME_LABELS, useTheme, type ThemeMode } from "./theme";
 import type { Account } from "./types";
+import { UserAvatar } from "./components/UserAvatar";
 
 type UpdateCheck = { current_version: string; latest_version?: string; has_update: boolean };
 const versionCompare = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true });
@@ -64,6 +64,7 @@ const BackupPage = lazy(() => import("./pages/BackupPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ImportsPage = lazy(() => import("./pages/ImportsPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const DatabaseSettingsPage = lazy(() => import("./pages/DatabaseSettingsPage"));
 const MenuVisibilityPage = lazy(() => import("./pages/MenuVisibilityPage"));
 const UpdatesPage = lazy(() => import("./pages/UpdatesPage"));
 const VideosPage = lazy(() => import("./pages/VideosPage"));
@@ -112,7 +113,7 @@ const items = [
       { key: "/download/content", label: "下载内容" },
     ],
   },
-  { key: "/settings", icon: <Settings size={19} />, label: "系统设置", children: [{ key: "/settings/auth", label: "系统设置" }, { key: "/settings/menu", label: "菜单显示管理" }] },
+  { key: "/settings", icon: <Settings size={19} />, label: "系统设置", children: [{ key: "/settings/auth", label: "基础系统设置" }, { key: "/settings/database", label: "数据库设置" }, { key: "/settings/menu", label: "菜单显示管理" }] },
   { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
   { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
   {
@@ -146,8 +147,12 @@ export default function App() {
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [menuVisibility, setMenuVisibility] = useState<Record<string, boolean>>({});
+  const [siteInfo, setSiteInfo] = useState<{ site_name: string; site_subtitle: string; logo_url: string }>({ site_name: "视频号数据分析", site_subtitle: "", logo_url: "" });
+  const [menuLabels, setMenuLabels] = useState<Record<string, string>>({});
+  const [menuOrder, setMenuOrder] = useState<Record<string, string[]>>({});
   const [menuRevision, setMenuRevision] = useState(0);
   const [menuNotice, setMenuNotice] = useState(false);
+  const [menuNoticeSeconds, setMenuNoticeSeconds] = useState(10);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("正在加载");
   const location = useLocation();
@@ -175,6 +180,7 @@ export default function App() {
     window.addEventListener("vx:request-end", end);
     return () => { window.removeEventListener("vx:request-start", start); window.removeEventListener("vx:request-end", end); };
   }, []);
+  useEffect(() => { const refreshOrder = () => { void api<Record<string, string[]>>("/api/settings/menu-order").then(setMenuOrder).catch(() => undefined); }; refreshOrder(); window.addEventListener("vx:menu-config-updated", refreshOrder); return () => window.removeEventListener("vx:menu-config-updated", refreshOrder); }, []);
 
   const reloadAccounts = useCallback(async () => {
     const rows = await api<Account[]>("/api/accounts");
@@ -190,6 +196,17 @@ export default function App() {
   useEffect(() => {
     void reloadAccounts();
   }, [reloadAccounts]);
+  useEffect(() => { const loadSite = () => { void api<{ site_name: string; site_subtitle: string; logo_url: string }>("/api/settings/site").then(setSiteInfo).catch(() => undefined); }; loadSite(); window.addEventListener("vx:site-config-updated", loadSite); return () => window.removeEventListener("vx:site-config-updated", loadSite); }, []);
+  useEffect(() => {
+    if (localStorage.getItem("vx_theme_explicit") === "true") return;
+    void api<{ default_theme: ThemeMode }>("/api/settings/style").then(({ default_theme }) => setTheme(default_theme)).catch(() => undefined);
+  }, [setTheme]);
+  useEffect(() => {
+    const refreshLabels = () => { void api<Record<string, string>>("/api/settings/menu-labels").then(setMenuLabels).catch(() => undefined); };
+    refreshLabels();
+    window.addEventListener("vx:menu-config-updated", refreshLabels);
+    return () => window.removeEventListener("vx:menu-config-updated", refreshLabels);
+  }, []);
   useEffect(() => {
     if (user.role === "admin") return;
     void api<Record<string, boolean>>("/api/settings/menu-visibility").then(setMenuVisibility).catch(() => undefined);
@@ -205,8 +222,10 @@ export default function App() {
   }, [user.role, menuRevision]);
   useEffect(() => {
     if (!menuNotice) return;
-    const timer = window.setTimeout(() => window.location.reload(), 10000);
-    return () => window.clearTimeout(timer);
+    setMenuNoticeSeconds(10);
+    const countdown = window.setInterval(() => setMenuNoticeSeconds((value) => Math.max(0, value - 1)), 1000);
+    const refresh = window.setTimeout(() => window.location.reload(), 10000);
+    return () => { window.clearInterval(countdown); window.clearTimeout(refresh); };
   }, [menuNotice]);
 
   const setAccountId = (id: number) => {
@@ -215,23 +234,36 @@ export default function App() {
   };
   const account = accounts.find((row) => row.id === accountId) || null;
   const isAnalysisRoute = location.pathname === "/analysis" || location.pathname.startsWith("/analysis/");
+  const applyMenuLabels = (item: typeof items[number]) => ({
+    ...item,
+    label: menuLabels[item.key] || item.label,
+    children: item.children?.map((child) => ({ ...child, label: menuLabels[child.key] || child.label })),
+  });
+  const applyMenuOrder = (item: typeof items[number]) => {
+    const order = menuOrder[item.key];
+    if (!order || !item.children) return item;
+    const children = [...item.children].sort((left, right) => order.indexOf(left.key) - order.indexOf(right.key));
+    return { ...item, children };
+  };
   const visibleItems = user.role === "admin"
-    ? items.filter((item) => item.key !== "/accounts")
+    ? items.filter((item) => item.key !== "/accounts").map(applyMenuOrder).map(applyMenuLabels)
     : items
         .filter((item) => menuVisibility[item.key] !== false)
         .filter((item) => ["/users", "/ai-chat-menu", "/analysis", "/download", "/about", "/usage"].includes(item.key))
         .map((item) => ({ ...item, children: item.children?.filter((child) => menuVisibility[child.key] !== false) }))
         .filter((item) => !item.children || item.children.length > 0)
         .map((item) => item.key === "/users"
-          ? { ...item, label: "视频号管理", children: item.children?.filter((child) => child.key === "/users/accounts").map((child) => ({ ...child, label: "视频号管理" })) }
+          ? { ...item, children: item.children?.filter((child) => child.key === "/users/accounts") }
           : item.key === "/ai-chat-menu"
             ? { ...item, children: item.children?.filter((child) => child.key === "/ai-chat") }
-            : item);
+            : item)
+        .map(applyMenuOrder)
+        .map(applyMenuLabels);
   // A one-child group is a direct destination; only real groups keep a submenu.
   const menuItems = visibleItems.map((item) => {
     const displayItem = item;
     if (displayItem.children?.length !== 1) return displayItem;
-    return { ...displayItem, key: displayItem.children[0].key, children: undefined };
+    return { ...displayItem, key: displayItem.children[0].key, label: displayItem.children[0].label, children: undefined };
   });
   const handleMenuClick: MenuProps["onClick"] = ({ key }) => {
     const parent = visibleItems.find((item) => item.key === key);
@@ -281,8 +313,8 @@ export default function App() {
           theme="light"
         >
           <div className="brand">
-            <span className="brand-mark small">VX</span>
-            {!siderCollapsed && <span>视频号数据</span>}
+            {siteInfo.logo_url ? <img className="brand-logo" src={`${siteInfo.logo_url}?app=1`} alt={siteInfo.site_name} /> : <span className="brand-mark small">VX</span>}
+            {!siderCollapsed && <span>{siteInfo.site_name}</span>}
           </div>
           <Button
             className="sider-toggle"
@@ -371,7 +403,7 @@ export default function App() {
               data-theme-mode={theme}
               onClick={toggleTheme}
             />
-            <Dropdown className="theme-picker" menu={{ items: themeMenu, selectedKeys: [theme], onClick: handleThemeMenu }} trigger={["click"]} placement="bottomRight">
+            <Dropdown className="theme-picker" menu={{ items: themeMenu, selectedKeys: [theme], onClick: handleThemeMenu }} trigger={["click"]} placement="bottomLeft">
               <Button className="theme-picker-button" type="text" icon={themeIcons[theme]} aria-label="选择主题" title="选择主题" />
             </Dropdown>
             <Space className="quick-links" size={4}>
@@ -393,6 +425,7 @@ export default function App() {
               </Button>
             </Space>
             <Select
+              placement="bottomLeft"
               aria-label="当前视频号"
               className={`account-select ${isAnalysisRoute ? "" : "account-select-hidden"}`}
               placeholder="请先创建视频号"
@@ -407,24 +440,21 @@ export default function App() {
               overlayClassName="profile-dropdown"
               menu={{ items: profileMenu, onClick: handleProfileMenu }}
               trigger={["click"]}
-              placement="bottomRight"
+              placement="bottomLeft"
             >
               <button
                 type="button"
                 className="profile-trigger"
                 aria-label="打开用户菜单"
               >
-                <Avatar
+                <UserAvatar
                   size={36}
                   className="profile-avatar"
-                  src={
-                    user.avatar && user.avatar !== "default"
-                      ? user.avatar
-                      : undefined
-                  }
-                >
-                  {user.username.slice(0, 1).toUpperCase()}
-                </Avatar>
+                  username={user.username}
+                  avatar={user.avatar}
+                  role={user.role}
+                  level={user.level}
+                />
               </button>
             </Dropdown>
             <Button
@@ -504,6 +534,7 @@ export default function App() {
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/settings/auth" element={<SettingsPage />} />
+                <Route path="/settings/database" element={user.role === "admin" ? <DatabaseSettingsPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/settings/menu" element={user.role === "admin" ? <MenuVisibilityPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/updates" element={user.role === "admin" ? <UpdatesPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/profile" element={<ProfilePage />} />
@@ -534,7 +565,7 @@ export default function App() {
         </Layout>
       </Layout>
       <Modal open={menuNotice} title="菜单配置已更新" okText="立即更新" cancelText="暂不更新" onOk={() => { setMenuNotice(false); window.location.reload(); }} onCancel={() => setMenuNotice(false)}>
-        <Typography.Paragraph>管理员更新了普通用户可见菜单。请先保存当前工作，10 秒后未操作将自动更新页面。</Typography.Paragraph>
+        <Typography.Paragraph>管理员更新了普通用户可见菜单。请先保存当前工作，{menuNoticeSeconds} 秒后未操作将自动更新页面。</Typography.Paragraph>
       </Modal>
     </AccountContext.Provider>
   );

@@ -90,6 +90,11 @@ class DockerEngine:
     def remove_image(self, image: str) -> None:
         self._request("DELETE", f"/images/{quote(image, safe='')}", expected={200, 201, 204})
 
+    def image_inspect(self, image: str) -> dict[str, Any]:
+        """Return Docker's local image metadata, including RepoDigests when available."""
+        payload = self._request("GET", f"/images/{quote(image, safe='')}/json", expected={200})
+        return payload if isinstance(payload, dict) else {}
+
     def find_compose_container(self, project: str, service: str) -> dict[str, Any]:
         filters = quote(
             json.dumps(

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Checkbox, DatePicker, Dropdown, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
+import { Alert, Button, Checkbox, DatePicker, Dropdown, Empty, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
 import { Bot, CheckSquare, Eye, History, PlugZap, Plus, Power, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
@@ -12,7 +12,7 @@ import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../
 import { useAuth } from '../auth'
 import type { RangeAnalytics } from '../types'
 
-interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; models?: string[]; model_categories?: Record<string, string[]>; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean; is_enabled: boolean }
+interface Provider { id: number; account_id: number | null; name: string; base_url: string; model: string; models?: string[]; model_categories?: Record<string, string[]>; model_protocols?: Record<string, string>; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key_configured: boolean; is_active: boolean; is_enabled: boolean; updated_at: string }
 interface QuickConfig { id: number; name: string; provider_id: number; model: string; created_at: string; associated_count?: number }
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
@@ -38,6 +38,8 @@ const officialPresets = [
   { label: 'DeepSeek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
   { label: '智谱', name: '智谱 AI', base_url: 'https://open.bigmodel.cn/api/paas', model: 'glm-4-flash' },
   { label: '通义千问', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode', model: 'qwen-plus' },
+  { label: 'NVIDIA NIM', name: 'NVIDIA NIM', base_url: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-70b-instruct' },
+  { label: 'Moonshot AI（国内）', name: 'Moonshot AI（国内）', base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
 ]
 
 export default function AIPage({ configOnly = false }: { configOnly?: boolean }) {
@@ -64,6 +66,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [configMode, setConfigMode] = useState<'official' | 'compatible'>('official')
   const [models, setModels] = useState<string[]>([])
   const [modelCategories, setModelCategories] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
+  const [modelProtocols, setModelProtocols] = useState<Record<string, string>>({})
   const [modelCategoryChecked, setModelCategoryChecked] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
   const [tested, setTested] = useState(false)
   const [modelLoading, setModelLoading] = useState(false)
@@ -96,11 +99,19 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     ])
     setProviders(rows)
     setProvider(active)
-    if (active) { form.setFieldsValue({ ...active, account_id: accountId ?? null, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]); setModelCategories(active.model_categories || { chat: active.models || [active.model], image: [], video: [] }); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
-    else { form.resetFields(); form.setFieldsValue({ account_id: accountId ?? null, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]); setModelCategories({ chat: [], image: [], video: [] }); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
+    if (active) { form.setFieldsValue({ ...active, account_id: accountId ?? null, provider_id: active.id, api_key: undefined }); setModels(active.models?.length ? active.models : [active.model]); setModelCategories(active.model_categories || { chat: active.models || [active.model], image: [], video: [] }); setModelProtocols(active.model_protocols || {}); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
+    else { form.resetFields(); form.setFieldsValue({ account_id: accountId ?? null, protocol: 'chat_completions', timeout_seconds: 60 }); setModels([]); setModelCategories({ chat: [], image: [], video: [] }); setModelProtocols({}); setModelCategoryChecked({ chat: [], image: [], video: [] }) }
   }
   const refreshProviderChoices = async () => {
     await loadProviders(providerAccountId)
+  }
+  const protocolOptions = () => {
+    if (configMode === 'compatible') return [{ label: 'Chat Completions（兼容协议）', value: 'chat_completions' }]
+    const name = String(form.getFieldValue('name') || '').toLowerCase()
+    if (name.includes('anthropic') || name.includes('claude')) return [{ label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Anthropic Messages（兼容协议）', value: 'chat_completions' }]
+    if (name.includes('gemini')) return [{ label: 'Gemini Generate Content', value: 'gemini' }, { label: 'OpenAI Chat Completions（兼容协议）', value: 'chat_completions' }]
+    if (name.includes('openai')) return [{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Chat Completions（兼容协议）', value: 'chat_completions' }]
+    return [{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses（兼容协议）', value: 'responses' }]
   }
   const loadHistories = () => !configOnly && account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
@@ -161,7 +172,9 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setSaveLoading(true); setConfigError('')
     try {
       const values = await form.validateFields()
-      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, model_categories: modelCategories, account_id: providerAccountId ?? null, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
+      const selectedModel = String(values.model || '')
+      const protocols = selectedModel && values.protocol ? { ...modelProtocols, [selectedModel]: values.protocol } : modelProtocols
+      await api('/api/ai/provider', { method: 'PUT', body: JSON.stringify({ ...values, models, model_categories: modelCategories, model_protocols: protocols, account_id: providerAccountId ?? null, provider_id: form.getFieldValue('provider_id'), interface_type: configMode }) })
       await loadProviders(providerAccountId); setConfigOpen(false); message.success('接口配置已保存')
     } catch (cause) { setConfigError(cause instanceof Error ? cause.message : '保存失败') }
     finally { setSaveLoading(false) }
@@ -172,6 +185,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     form.setFieldsValue({ account_id: providerAccountId ?? null, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 })
     setModels([])
     setModelCategories({ chat: [], image: [], video: [] })
+    setModelProtocols({})
     setModelCategoryChecked({ chat: [], image: [], video: [] })
     setTested(false)
     setConfigError('')
@@ -184,6 +198,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     form.setFieldsValue({ ...item, account_id: item.account_id ?? null, provider_id: item.id, api_key: undefined })
     setModels(item.models?.length ? item.models : item.model ? [item.model] : [])
     setModelCategories(item.model_categories || { chat: item.models || [item.model], image: [], video: [] })
+    setModelProtocols(item.model_protocols || {})
     setModelCategoryChecked({ chat: [], image: [], video: [] })
     setTested(false)
     setConfigError('')
@@ -334,7 +349,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
       {configOnly && <section className="ai-provider-registry">
         <div className="section-heading"><Typography.Title level={3}>已配置接口</Typography.Title><Typography.Text type="secondary">可随时编辑或删除已保存的模型接口</Typography.Text></div>
         {!providers.length ? <Empty description="暂无已配置接口，请先新增配置" /> : <div className="ai-provider-registry-list">{providers.map((item) => <article className={`ai-provider-registry-row ${item.is_active ? 'active' : ''}`} key={item.id}>
-          <div className="ai-provider-registry-main"><strong>{item.name}</strong><span>{item.model || '未设置模型'}</span><small>{item.base_url}</small></div>
+          <div className="ai-provider-registry-main"><strong>{item.name}</strong><span>{item.model || '未设置模型'}</span><small>{item.base_url}</small><small>最后修改：{item.updated_at ? dayjs(item.updated_at).format('YYYY-MM-DD HH:mm') : '暂无记录'}</small></div>
           <div className="ai-provider-registry-meta"><span>{item.protocol}</span><span className={item.is_enabled ? 'provider-active' : 'provider-disabled'}>{item.is_enabled ? '已启用' : '已禁用'}</span>{item.is_active && <span className="provider-active">当前使用</span>}</div>
           <Button type="text" size="small" icon={<Power size={15} />} aria-label={item.is_enabled ? '禁用配置' : '启用配置'} title={item.is_enabled ? '禁用配置' : '启用配置'} onClick={() => void api<Provider>(`/api/ai/provider/${item.id}/enabled?${query({ account_id: account.id, enabled: item.is_enabled ? 0 : 1 })}`, { method: 'PATCH' }).then((row) => setProviders((rows) => rows.map((current) => current.id === row.id ? row : current))).catch((cause) => setError(cause instanceof Error ? cause.message : '配置状态修改失败'))} />
           <Button type="text" size="small" icon={<Settings2 size={15} />} aria-label="编辑配置" title="编辑配置" onClick={() => editProvider(item)} />
@@ -388,12 +403,12 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           { key: 'official', label: '官方接口', children: <Typography.Text type="secondary">选择官方厂商预置并填写对应 API Key。</Typography.Text> },
           { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
         ]} />
-        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model }); setModels([preset.model]); setTested(false) } }} />}
+        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model, protocol: 'chat_completions' }); setModels([preset.model]); setTested(false) } }} />}
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
           <Form.Item name="api_key" label="API Key（已有配置可留空保持不变）" rules={[({ getFieldValue }) => ({ validator: async (_rule, value) => { if (value || getFieldValue('provider_id')) return; throw new Error('新建配置必须填写 API Key') } })]}><Input.Password autoComplete="new-password" /></Form.Item>
-          <div className="model-row"><Form.Item name="model" label="模型" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
+          <div className="model-row"><Form.Item name="model" label="模型" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} onChange={(value) => { const next = modelProtocols[String(value)] || protocolOptions()[0]?.value || 'chat_completions'; form.setFieldValue('protocol', next) }} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
           <div className="model-category-editor">
             {([['chat', '聊天模型'], ['image', '生图模型'], ['video', '视频模型']] as const).map(([key, label]) => {
               const selected = modelCategories[key] || []
@@ -420,7 +435,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
               </div>
             })}
           </div>
-          {configMode === 'official' && <Form.Item name="protocol" label="协议"><Radio.Group optionType="button" options={[{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Gemini', value: 'gemini' }, { label: 'Grok', value: 'grok' }]} /></Form.Item>}
+          <Form.Item name="protocol" label="当前模型请求协议" extra="协议决定测试、模型查询和对话请求所使用的接口格式"><Select options={protocolOptions()} onChange={(value) => { const selectedModel = String(form.getFieldValue('model') || ''); if (selectedModel) setModelProtocols((current) => ({ ...current, [selectedModel]: String(value) })) }} /></Form.Item>
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>

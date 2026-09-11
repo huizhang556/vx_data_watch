@@ -16,6 +16,7 @@ function initialTheme(): ThemeMode {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>(initialTheme)
+  const chooseTheme = (next: ThemeMode) => { localStorage.setItem('vx_theme_explicit', 'true'); setTheme(next) }
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
     const apply = () => {
@@ -30,8 +31,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme])
   const value = useMemo(() => ({
     theme,
-    setTheme,
-    toggleTheme: () => setTheme((current) => { const modes: ThemeMode[] = ['morning', 'rose', 'lavender', 'mist', 'mint', 'cream']; const index = modes.indexOf(current); return modes[(index + 1) % modes.length] }),
+    setTheme: chooseTheme,
+    toggleTheme: () => chooseTheme((['morning', 'rose', 'lavender', 'mist', 'mint', 'cream'] as ThemeMode[])[Math.max(0, ['morning', 'rose', 'lavender', 'mist', 'mint', 'cream'].indexOf(theme) + 1) % 6]),
   }), [theme])
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }

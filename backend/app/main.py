@@ -1,9 +1,14 @@
 ﻿from __future__ import annotations
 
 import gc
+import asyncio
 import base64
+import ipaddress
 import json
+import os
+import re
 import shutil
+import subprocess
 import tempfile
 import time
 import urllib.error
@@ -32,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,6 +51,7 @@ from .ai_service import (
     test_provider,
     test_provider_values,
     stream_chat_provider,
+    _configured_protocol,
 )
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
@@ -148,7 +154,9 @@ from .updates import (
     fetch_registry_versions,
     configured_registry,
     queue_update,
+    queue_config_migration,
     read_update_status,
+    read_update_history,
     save_update_registry,
     version_key,
     version_payload,
@@ -156,6 +164,11 @@ from .updates import (
 
 settings = get_settings()
 MENU_VISIBILITY_KEY = "ui.menu_visibility"
+MENU_LABELS_KEY = "ui.menu_labels"
+MENU_ORDER_KEY = "ui.menu_order"
+DATABASE_SETTINGS_KEY = "system.database"
+SITE_SETTINGS_KEY = "site.settings"
+STYLE_SETTINGS_KEY = "system.style"
 MENU_VISIBILITY_REVISION_KEY = "ui.menu_visibility_revision"
 DEFAULT_MENU_VISIBILITY = {
     "/users": True, "/users/accounts": True, "/users/local": True,
@@ -166,6 +179,24 @@ DEFAULT_MENU_VISIBILITY = {
     "/settings": True, "/backups": True, "/updates": True,
     "/usage": True, "/usage/levels": True, "/about": True,
     "/about/architecture": True, "/about/technology": True, "/about/team": True,
+}
+DEFAULT_MENU_LABELS = {
+    "/users": "\u7528\u6237\u7ba1\u7406", "/users/accounts": "\u89c6\u9891\u53f7\u7ba1\u7406", "/users/local": "\u6ce8\u518c\u7528\u6237\u7ba1\u7406",
+    "/ai-chat-menu": "AI \u901f\u95ee", "/ai-chat/config": "AI \u914d\u7f6e", "/ai-chat": "AI \u804a\u5929",
+    "/analysis": "\u6570\u636e\u5206\u6790", "/analysis/dashboard": "\u6570\u636e\u6982\u89c8", "/analysis/videos": "\u89c6\u9891\u8d21\u732e", "/analysis/imports": "\u6570\u636e\u5bfc\u5165", "/analysis/ai": "AI \u5efa\u8bae",
+    "/download": "\u89c6\u9891\u4e0b\u8f7d", "/download/config": "\u4e0b\u8f7d\u914d\u7f6e", "/download/content": "\u4e0b\u8f7d\u5185\u5bb9",
+    "/settings": "\u7cfb\u7edf\u8bbe\u7f6e", "/settings/auth": "\u57fa\u7840\u7cfb\u7edf\u8bbe\u7f6e", "/settings/database": "\u6570\u636e\u5e93\u8bbe\u7f6e", "/settings/menu": "\u83dc\u5355\u663e\u793a\u7ba1\u7406",
+    "/backups": "\u52a0\u5bc6\u5907\u4efd", "/updates": "\u5728\u7ebf\u66f4\u65b0", "/usage": "\u4f7f\u7528\u8bf4\u660e", "/usage/levels": "\u7b49\u7ea7\u8bf4\u660e",
+    "/about": "\u5173\u4e8e\u5f00\u53d1", "/about/architecture": "\u9879\u76ee\u67b6\u6784", "/about/technology": "\u5f00\u53d1\u6280\u672f", "/about/team": "\u5173\u4e8e\u6211\u4eec",
+}
+DEFAULT_SITE_SETTINGS = {"site_name": "视频号数据分析", "site_subtitle": "数据驱动内容运营", "logo_path": "", "browser_title": "视频号数据分析", "footer_text": ""}
+DEFAULT_STYLE_SETTINGS = {"default_theme": "system", "default_font_family": "system", "default_font_size": "medium"}
+DEFAULT_MENU_ORDER = {
+    "/users": ["/users/accounts", "/users/local"], "/ai-chat-menu": ["/ai-chat/config", "/ai-chat"],
+    "/settings": ["/settings/auth", "/settings/database", "/settings/menu"],
+    "/analysis": ["/analysis/dashboard", "/analysis/videos", "/analysis/imports", "/analysis/ai"],
+    "/download": ["/download/config", "/download/content"], "/usage": ["/usage/levels"],
+    "/about": ["/about/architecture", "/about/technology", "/about/team"],
 }
 # Only these entries are allowed to affect the ordinary-user sidebar. Parent
 # values are derived from their children; administrator-only entries remain
@@ -402,25 +433,51 @@ def test_download_proxy(payload: DownloadProxyTest, user: CsrfUser) -> dict[str,
     return {"valid": True, "message": "代理连接正常"}
 
 
+def _fetch_text(url: str, timeout: float) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "VX-Data-Watch/1.0"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("utf-8", errors="replace").strip()
+
+
+def _detect_server_ip_and_country() -> tuple[str | None, str | None]:
+    """Use the same resilient public-IP and country fallbacks as the installer."""
+    detected_ip: str | None = None
+    for endpoint in ("https://api.ipify.org", "https://ifconfig.me", "https://icanhazip.com", "https://ident.me"):
+        try:
+            candidate = _fetch_text(endpoint, 7)
+            address = ipaddress.ip_address(candidate)
+            if address.version == 4:
+                detected_ip = str(address)
+                break
+        except (OSError, urllib.error.URLError, ValueError):
+            continue
+
+    country_code: str | None = None
+    for endpoint in ("https://ipapi.co/country/", "https://ipinfo.io/country"):
+        try:
+            candidate = _fetch_text(endpoint, 8).upper()
+            if len(candidate) == 2 and candidate.isalpha():
+                country_code = candidate
+                break
+        except (OSError, urllib.error.URLError, ValueError):
+            continue
+    return detected_ip, country_code
+
+
 @app.get("/api/download/proxy/status")
 def download_proxy_status(user: CurrentUser) -> dict[str, Any]:
     """Report the server's public region before asking users to configure a proxy."""
-    try:
-        with urllib.request.urlopen("https://ipapi.co/json/", timeout=8) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        country_code = str(payload.get("country_code") or "").upper()
-        country = str(payload.get("country_name") or country_code or "未知")
-        ip = str(payload.get("ip") or "未知")
-    except (OSError, urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=502, detail=f"无法查询服务器公网 IP 和地区：{exc}") from exc
+    ip, country_code = _detect_server_ip_and_country()
+    if not ip and not country_code:
+        raise HTTPException(status_code=502, detail="无法查询服务器公网 IP 和地区，请检查服务器出口网络")
     blocked = {"CN", "KP", "IR", "SY", "TM", "SD", "CU"}
-    supported = country_code not in blocked
+    supported = country_code not in blocked if country_code else False
     return {
-        "ip": ip,
-        "country_code": country_code,
-        "country": country,
+        "ip": ip or "未知",
+        "country_code": country_code or "",
+        "country": country_code or "未知",
         "youtube_supported": supported,
-        "message": "当前服务器所在地区原生支持 YouTube，无需代理" if supported else "当前服务器所在地区访问 YouTube 可能受限，请配置可用代理",
+        "message": "当前服务器所在地区原生支持 YouTube，无需代理" if supported else "当前服务器所在地区访问 YouTube 可能受限，请配置可用代理" if country_code else "已获取服务器 IP，但暂时无法识别所在地区",
     }
 
 
@@ -542,11 +599,15 @@ def setup_status(db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
 @app.get("/api/auth/config")
 def auth_config(db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     values = auth_settings(db)
+    site = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
     return {
         "registration_enabled": values["registration_enabled"],
         "captcha_enabled": values["captcha_enabled"],
         "captcha_provider": values["captcha_provider"],
         "captcha_site_key": values["captcha_site_key"],
+        "site_name": site["site_name"],
+        "site_subtitle": site["site_subtitle"],
+        "logo_url": "/api/settings/site/logo" if site.get("logo_path") else "",
     }
 
 
@@ -598,6 +659,110 @@ def read_menu_visibility_revision(user: CurrentUser, db: Annotated[Session, Depe
     return {"revision": revision}
 
 
+@app.get("/api/settings/menu-labels")
+def read_menu_labels(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_LABELS_KEY))
+    try:
+        stored = json.loads(row.value.decode("utf-8")) if row else {}
+    except (UnicodeDecodeError, TypeError, ValueError):
+        stored = {}
+    return {key: str(stored.get(key, "")) if isinstance(stored.get(key, ""), str) else "" for key in DEFAULT_MENU_LABELS}
+
+
+@app.put("/api/settings/menu-labels")
+def save_menu_labels(payload: dict[str, str], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    if not isinstance(payload, dict) or any(key not in DEFAULT_MENU_LABELS for key in payload):
+        raise HTTPException(status_code=422, detail="包含未知的菜单项")
+    current_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_LABELS_KEY))
+    try:
+        stored = json.loads(current_row.value.decode("utf-8")) if current_row else {}
+    except (UnicodeDecodeError, TypeError, ValueError):
+        stored = {}
+    before = {key: str(stored.get(key, "")) if isinstance(stored.get(key, ""), str) else "" for key in DEFAULT_MENU_LABELS}
+    values = dict(before)
+    for key, value in payload.items():
+        if not isinstance(value, str):
+            raise HTTPException(status_code=422, detail="菜单名称必须是文本")
+        normalized = value.strip()
+        if len(normalized) > 20:
+            raise HTTPException(status_code=422, detail="菜单名称不能超过20个字符")
+        values[key] = normalized
+    encoded = json.dumps({key: value for key, value in values.items() if value}, ensure_ascii=False).encode("utf-8")
+    if current_row:
+        current_row.value = encoded
+    else:
+        db.add(AppSetting(key=MENU_LABELS_KEY, value=encoded))
+    if values != before:
+        revision_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_REVISION_KEY))
+        try:
+            revision = int(revision_row.value.decode("utf-8")) if revision_row else 0
+        except (AttributeError, UnicodeDecodeError, ValueError):
+            revision = 0
+        if revision_row:
+            revision_row.value = str(revision + 1).encode("utf-8")
+        else:
+            db.add(AppSetting(key=MENU_VISIBILITY_REVISION_KEY, value=b"1"))
+    db.commit()
+    return values
+
+
+@app.get("/api/settings/menu-order")
+def read_menu_order(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, list[str]]:
+    return _json_app_setting(db, MENU_ORDER_KEY, DEFAULT_MENU_ORDER)
+
+
+@app.put("/api/settings/menu-order")
+def save_menu_order(payload: dict[str, list[str]], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, list[str]]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    if not isinstance(payload, dict) or any(key not in DEFAULT_MENU_ORDER for key in payload):
+        raise HTTPException(status_code=422, detail="包含未知的菜单分组")
+    values = _json_app_setting(db, MENU_ORDER_KEY, DEFAULT_MENU_ORDER)
+    for parent, order in payload.items():
+        if not isinstance(order, list) or set(order) != set(DEFAULT_MENU_ORDER[parent]) or len(order) != len(DEFAULT_MENU_ORDER[parent]):
+            raise HTTPException(status_code=422, detail="菜单顺序包含无效或重复的子菜单")
+        values[parent] = [str(item) for item in order]
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_ORDER_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=MENU_ORDER_KEY, value=encoded))
+    revision_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_REVISION_KEY))
+    try:
+        revision = int(revision_row.value.decode("utf-8")) if revision_row else 0
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        revision = 0
+    if revision_row:
+        revision_row.value = str(revision + 1).encode("utf-8")
+    else:
+        db.add(AppSetting(key=MENU_VISIBILITY_REVISION_KEY, value=b"1"))
+    db.commit()
+    return values
+
+
+@app.get("/api/settings/database")
+def read_database_settings(user: CurrentUser) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    url = str(settings.database_url)
+    scheme, _, remainder = url.partition(":")
+    return {"engine": "PostgreSQL" if scheme.startswith("postgres") else "SQLite", "database_url": url.split("@")[-1] if "@" in url else url, "data_dir": str(settings.data_dir), "active": True, "sqlite_path": str(settings.data_dir / "vx_data.db"), "postgresql": {"configured": scheme.startswith("postgres"), "endpoint": remainder.split("/")[-1] if scheme.startswith("postgres") else ""}}
+
+
+@app.post("/api/settings/database/test")
+def test_database_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "message": "当前数据库连接正常"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"数据库连接失败：{exc}") from exc
+
+
 @app.put("/api/settings/menu-visibility")
 def save_menu_visibility(payload: dict[str, bool], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
     if user.role != Role.admin:
@@ -616,8 +781,10 @@ def save_menu_visibility(payload: dict[str, bool], user: CsrfUser, db: Annotated
     # Parent visibility is derived from its children so an all-hidden group
     # cannot remain visible in the ordinary-user sidebar.
     for parent, children in {
-        "/users": ("/users/accounts", "/users/local"),
-        "/ai-chat-menu": ("/ai-chat/config", "/ai-chat"),
+        # Administrator-only children are intentionally excluded: they are
+        # never shown to ordinary users and must not keep a parent visible.
+        "/users": ("/users/accounts",),
+        "/ai-chat-menu": ("/ai-chat",),
         "/analysis": ("/analysis/dashboard", "/analysis/videos", "/analysis/imports", "/analysis/ai"),
         "/download": ("/download/config", "/download/content"),
         "/usage": ("/usage/levels",),
@@ -1035,6 +1202,128 @@ def create_account(
         "is_enabled": account.is_enabled,
         "created_at": account.created_at,
     }
+
+
+def _json_app_setting(db: Session, key: str, defaults: dict[str, Any]) -> dict[str, Any]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == key))
+    try:
+        stored = json.loads(row.value.decode("utf-8")) if row else {}
+    except (UnicodeDecodeError, TypeError, ValueError):
+        stored = {}
+    return {name: stored.get(name, default) for name, default in defaults.items()}
+
+
+@app.get("/api/settings/site")
+def read_site_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+    values["logo_url"] = "/api/settings/site/logo" if values.get("logo_path") else ""
+    return values
+
+
+@app.put("/api/settings/site")
+def save_site_settings(payload: dict[str, Any], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    allowed = {"site_name", "site_subtitle", "browser_title", "footer_text"}
+    if not isinstance(payload, dict) or any(key not in allowed for key in payload):
+        raise HTTPException(status_code=422, detail="包含未知的站点配置")
+    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+    for key, value in payload.items():
+        if not isinstance(value, str) or len(value.strip()) > 120:
+            raise HTTPException(status_code=422, detail="站点信息必须是120个字符以内的文本")
+        values[key] = value.strip()
+    row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
+    db.commit()
+    values["logo_url"] = "/api/settings/site/logo" if values.get("logo_path") else ""
+    return values
+
+
+@app.post("/api/settings/site/logo")
+async def upload_site_logo(file: UploadFile, user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    allowed_types = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+    suffix = allowed_types.get(file.content_type or "")
+    if not suffix:
+        raise HTTPException(status_code=422, detail="Logo 只支持 PNG、JPG 或 WEBP 格式")
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Logo 文件不能超过 2 MB")
+    logo_dir = get_settings().data_dir / "site-assets"
+    logo_dir.mkdir(parents=True, exist_ok=True)
+    for old in logo_dir.glob("logo.*"):
+        old.unlink(missing_ok=True)
+    path = logo_dir / f"logo{suffix}"
+    path.write_bytes(content)
+    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+    values["logo_path"] = str(path.relative_to(get_settings().data_dir))
+    row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
+    db.commit()
+    return {**values, "logo_url": "/api/settings/site/logo"}
+
+
+@app.delete("/api/settings/site/logo", status_code=204)
+def delete_site_logo(user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> None:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+    if values.get("logo_path"):
+        (get_settings().data_dir / values["logo_path"]).unlink(missing_ok=True)
+    values["logo_path"] = ""
+    row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
+    db.commit()
+
+
+@app.get("/api/settings/site/logo")
+def get_site_logo(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
+    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+    if not values.get("logo_path"):
+        raise HTTPException(status_code=404, detail="未配置站点 Logo")
+    path = (get_settings().data_dir / values["logo_path"]).resolve()
+    data_root = get_settings().data_dir.resolve()
+    if data_root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="站点 Logo 不存在")
+    return FileResponse(path)
+
+
+@app.get("/api/settings/style")
+def read_style_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    return _json_app_setting(db, STYLE_SETTINGS_KEY, DEFAULT_STYLE_SETTINGS)
+
+
+@app.put("/api/settings/style")
+def save_style_settings(payload: dict[str, Any], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    themes = {"system", "morning", "rose", "lavender", "mist", "mint", "cream"}
+    fonts = {"system", "microsoft-yahei", "source-han-sans", "pingfang", "monospace"}
+    sizes = {"small", "medium", "large"}
+    if payload.get("default_theme") not in themes or payload.get("default_font_family") not in fonts or payload.get("default_font_size") not in sizes:
+        raise HTTPException(status_code=422, detail="系统样式配置值无效")
+    values = {"default_theme": payload["default_theme"], "default_font_family": payload["default_font_family"], "default_font_size": payload["default_font_size"]}
+    row = db.scalar(select(AppSetting).where(AppSetting.key == STYLE_SETTINGS_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=STYLE_SETTINGS_KEY, value=encoded))
+    db.commit()
+    return values
 
 
 @app.patch("/api/accounts/{account_id}")
@@ -1504,6 +1793,12 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
             else:
                 categories["chat"].append(model_name)
     categories = {key: [str(item) for item in value if str(item).strip()] for key, value in categories.items() if isinstance(value, list)}
+    try:
+        protocols = json.loads(config.model_protocols_json) if config.model_protocols_json else {}
+    except (TypeError, ValueError):
+        protocols = {}
+    if not isinstance(protocols, dict):
+        protocols = {}
     return {
         "id": config.id,
         "account_id": config.account_id,
@@ -1512,12 +1807,14 @@ def _provider_payload(config: AIProviderConfig) -> dict[str, Any]:
         "model": config.model,
         "models": models,
         "model_categories": categories,
+        "model_protocols": {str(key): str(value) for key, value in protocols.items() if str(key).strip() and str(value).strip()},
         "protocol": config.protocol,
         "interface_type": config.interface_type,
         "timeout_seconds": config.timeout_seconds,
         "api_key_configured": bool(config.encrypted_api_key),
         "is_active": config.is_active,
         "is_enabled": config.is_enabled,
+        "updated_at": config.updated_at,
     }
 
 
@@ -1942,7 +2239,7 @@ async def list_ai_provider_models(
             base_url=config.base_url,
             timeout_seconds=config.timeout_seconds,
             api_key=decrypt_secret(config.encrypted_api_key),
-            protocol=config.protocol,
+            protocol=_configured_protocol(config),
         )
     except Exception:
         # Keep the configured default usable when a provider's model listing is unavailable.
@@ -2002,6 +2299,10 @@ def save_ai_provider(
         allowed = set(json.loads(config.models_json) if config.models_json else [])
         categories = {key: list(dict.fromkeys(item for item in values if item in allowed)) for key, values in payload.model_categories.items() if isinstance(values, list)}
         config.model_categories_json = json.dumps(categories, ensure_ascii=False)
+    allowed_models = set(json.loads(config.models_json) if config.models_json else [])
+    protocols = {str(model): str(protocol) for model, protocol in payload.model_protocols.items() if str(model) in allowed_models and str(protocol) in {"chat_completions", "responses", "anthropic", "gemini", "grok"}}
+    if protocols:
+        config.model_protocols_json = json.dumps(protocols, ensure_ascii=False)
     # OPENAI-compatible endpoints use the Chat Completions contract. Older
     # records may contain ``responses`` from the former UI, so normalize them
     # when saving as well as at call time.
@@ -2050,12 +2351,16 @@ def select_ai_provider(
         raise HTTPException(status_code=409, detail="该 AI 接口已被禁用")
     if config.account_id is not None and user.role.value != "admin":
         raise HTTPException(status_code=403, detail="仅可选择管理员发布的全局接口配置")
+    # Selecting the active provider is a runtime choice, not a configuration
+    # edit. Preserve the provider's last configuration-change timestamp.
+    last_modified = config.updated_at
     db.execute(
         AIProviderConfig.__table__.update()
         .where(AIProviderConfig.account_id.is_(None))
         .values(is_active=False)
     )
     config.is_active = True
+    config.updated_at = last_modified
     write_audit(db, "ai.provider.select", user, "ai_provider", config.id)
     db.commit()
     return _provider_payload(config)
@@ -2156,9 +2461,13 @@ def set_ai_provider_enabled(
     config = db.scalar(select(AIProviderConfig).where(AIProviderConfig.id == provider_id, (AIProviderConfig.account_id == account_id) | AIProviderConfig.account_id.is_(None)))
     if not config:
         raise HTTPException(status_code=404, detail="接口配置不存在或不属于当前视频号")
+    # Enabling/disabling controls availability only and must not change the
+    # displayed last-modified time of the provider configuration.
+    last_modified = config.updated_at
     config.is_enabled = enabled
     if not enabled and config.is_active:
         config.is_active = False
+    config.updated_at = last_modified
     write_audit(db, "ai.provider.enabled", user, "ai_provider", provider_id, {"enabled": enabled})
     db.commit()
     return _provider_payload(config)
@@ -2251,7 +2560,7 @@ async def test_selected_ai_provider(
         result = await test_provider_values(
             base_url=config.base_url,
             model=payload.model,
-            protocol=config.protocol,
+            protocol=_configured_protocol(config, payload.model),
             timeout_seconds=config.timeout_seconds,
             api_key=decrypt_secret(config.encrypted_api_key),
         )
@@ -2572,15 +2881,26 @@ async def system_update_health(
     selected_registry = registry or configured_registry()
     if selected_registry not in ALLOWED_REGISTRIES:
         raise HTTPException(status_code=400, detail="不支持的镜像仓库")
+    async def check_registry(registry_name: str) -> tuple[str, list[dict[str, Any]], float, str]:
+        repository_name = REGISTRY_REPOSITORIES.get(registry_name, settings.update_repository)
+        started = time.perf_counter()
+        try:
+            registry_versions = await fetch_registry_versions(repository_name, registry_name)
+            return registry_name, registry_versions, round((time.perf_counter() - started) * 1000, 1), "镜像仓库可访问，版本标签读取正常"
+        except UpdateRegistryError as exc:
+            return registry_name, [], round((time.perf_counter() - started) * 1000, 1), str(exc)
+
+    registry_results = await asyncio.gather(*(check_registry(name) for name in ALLOWED_REGISTRIES))
+    registry_health = {
+        name: {"status": "ok" if versions else "warning", "latency_ms": latency, "message": message}
+        for name, versions, latency, message in registry_results
+    }
+
+
+    selected_result = next((result for result in registry_results if result[0] == selected_registry), (selected_registry, [], 0.0, "镜像仓库不可用"))
+    _, versions, _, registry_message = selected_result
     repository = REGISTRY_REPOSITORIES.get(selected_registry, settings.update_repository)
-    try:
-        versions = await fetch_registry_versions(repository, selected_registry)
-        registry_status = "ok"
-        registry_message = "镜像仓库可访问，版本标签读取正常"
-    except UpdateRegistryError as exc:
-        versions = []
-        registry_status = "warning"
-        registry_message = str(exc)
+    registry_status = registry_health[selected_registry]["status"]
     config_status = "ok" if settings.update_env_file.is_file() or Path(".env").is_file() else "warning"
     updater_status = "ok" if settings.updater_enabled else "warning"
     manifest_status = "ok" if versions else "warning"
@@ -2601,6 +2921,7 @@ async def system_update_health(
     return {
         "registry": selected_registry,
         "repository": f"{selected_registry}/{repository}:latest",
+        "registries": registry_health,
         "status": overall_status,
         "registry_status": registry_status,
         "manifest_status": manifest_status,
@@ -2612,11 +2933,179 @@ async def system_update_health(
     }
 
 
+def _deployment_file_content(path: Path, redact: bool = False) -> dict[str, Any]:
+    if not path.is_file():
+        return {"path": str(path), "exists": False, "readable": False, "content": ""}
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return {"path": str(path), "exists": True, "readable": False, "content": "", "error": str(exc)}
+    if redact:
+        secret_keys = ("KEY", "PASSWORD", "SECRET", "TOKEN", "COOKIE", "MASTER")
+        content = "\n".join(
+            f"{key}=********" if separator and value and any(token in key.upper() for token in secret_keys) else line
+            for line in content.splitlines()
+            for key, separator, value in [line.partition("=")]
+        )
+    return {"path": str(path), "exists": True, "readable": True, "content": content}
+
+
+@app.get("/api/system/deployment-info")
+def system_deployment_info(user: Annotated[User, Depends(require_admin)]) -> dict[str, Any]:
+    settings = get_settings()
+    env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
+    project_dir = env_path.parent if env_path.parent != Path(".") else Path.cwd()
+    compose_path = project_dir / "docker-compose.yaml"
+    database_url = str(settings.database_url)
+    is_postgres = database_url.startswith(("postgres://", "postgresql://"))
+    try:
+        env_content = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
+    except (OSError, UnicodeError):
+        env_content = ""
+    method_match = re.search(r"(?m)^VX_DEPLOYMENT_METHOD=(script|compose|source)\s*$", env_content)
+    explicit_method = os.environ.get("VX_DEPLOYMENT_METHOD") or (method_match.group(1) if method_match else None)
+    deployment_method = {"script": "一键脚本", "compose": "Docker Compose", "source": "源码部署"}.get(explicit_method or "", "部署方式未记录，无法确认")
+    image_path = "源码部署，无镜像" if explicit_method == "source" else "镜像路径未记录"
+    if explicit_method in {"script", "compose"}:
+        image_match = re.search(r"(?m)^VX_IMAGE=(.+)$", env_content)
+        if image_match and image_match.group(1).strip():
+            image_path = image_match.group(1).strip()
+
+    def directory_stats(path: Path) -> dict[str, Any]:
+        exists = path.exists()
+        result: dict[str, Any] = {"path": str(path), "exists": exists, "readable": os.access(path, os.R_OK) if exists else False, "writable": os.access(path, os.W_OK) if exists else False, "size_bytes": None}
+        if exists and path.is_dir():
+            try:
+                result["size_bytes"] = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+            except OSError:
+                pass
+        elif exists:
+            try:
+                result["size_bytes"] = path.stat().st_size
+            except OSError:
+                pass
+        return result
+
+    data_dir = settings.data_dir
+    backup_dir = data_dir / "backups"
+    backup_files = sorted(backup_dir.glob("*.vxbackup"), key=lambda item: item.stat().st_mtime, reverse=True) if backup_dir.is_dir() else []
+    storage = {
+        "database_type": "PostgreSQL" if is_postgres else "SQLite",
+        "database_file_dir": "PostgreSQL 由数据库服务管理" if is_postgres else directory_stats(data_dir / "vx_data.db"),
+        "user_data_dir": directory_stats(data_dir),
+        "backup_dir": {**directory_stats(backup_dir), "backup_count": len(backup_files), "latest_backup_at": datetime.fromtimestamp(backup_files[0].stat().st_mtime, UTC).isoformat() if backup_files else None},
+        "disk_free_bytes": shutil.disk_usage(data_dir).free if data_dir.exists() else None,
+    }
+    return {
+        "deployment_method": deployment_method,
+        "image_path": image_path,
+        "service_runtime": {"project_dir": str(project_dir), "env_file": _deployment_file_content(env_path, redact=True), "compose_file": _deployment_file_content(compose_path)},
+        "data_storage": storage,
+    }
+
+
+@app.get("/api/system/deployment-file")
+def system_deployment_file(file: str = Query(..., pattern="^(env|compose)$"), user: Annotated[User, Depends(require_admin)] = None) -> dict[str, Any]:
+    settings = get_settings()
+    env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
+    path = env_path if file == "env" else env_path.parent / "docker-compose.yaml"
+    return _deployment_file_content(path, redact=file == "env")
+
+
+def _deployment_migration_plan() -> dict[str, Any]:
+    settings = get_settings()
+    env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
+    compose_path = env_path.parent / "docker-compose.yaml"
+    try:
+        env_content = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
+    except (OSError, UnicodeError):
+        env_content = ""
+    method_match = re.search(r"(?m)^VX_DEPLOYMENT_METHOD=(script|compose|source)\s*$", env_content)
+    method = method_match.group(1) if method_match else None
+    defaults = {
+        "VX_DEPLOYMENT_METHOD": method,
+        "VX_UPDATE_ENV_FILE": "/project/.env",
+        "VX_UPDATE_PROJECT": "vx-data-watch",
+        "VX_UPDATE_SERVICE": "app",
+    }
+    changes = [key for key, value in defaults.items() if value is None or not re.search(rf"(?m)^{re.escape(key)}=", env_content)]
+    compose = _deployment_file_content(compose_path)
+    mount_ok = compose.get("readable", False) and "/project/.env" in str(compose.get("content", ""))
+    compose_validation = "未执行"
+    if method in {"script", "compose"} and compose.get("readable"):
+        compose_validation = "通过基础结构检查" if "services:" in str(compose.get("content", "")) else "缺少 services 定义"
+        docker = shutil.which("docker")
+        if docker:
+            try:
+                subprocess.run([docker, "compose", "-f", str(compose_path), "config", "--quiet"], check=True, capture_output=True, text=True, timeout=20)
+                compose_validation = "docker compose config 校验通过"
+            except (OSError, subprocess.SubprocessError):
+                compose_validation = "docker compose config 校验失败"
+    return {"env_path": str(env_path), "compose_path": str(compose_path), "deployment_method": method, "changes": changes, "compose_mount_ok": mount_ok, "compose_readable": compose.get("readable", False), "compose_validation": compose_validation, "ready": bool(method) and env_path.is_file() and (method == "source" or (mount_ok and compose_validation not in {"缺少 services 定义", "docker compose config 校验失败"}))}
+
+
+@app.get("/api/system/config-migration")
+def system_config_migration_preview(user: Annotated[User, Depends(require_admin)]) -> dict[str, Any]:
+    return _deployment_migration_plan()
+
+
+@app.post("/api/system/config-migration")
+def system_config_migration_apply(user: Annotated[User, Depends(require_csrf_admin)], db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
+    plan = _deployment_migration_plan()
+    if not plan["deployment_method"]:
+        raise HTTPException(status_code=409, detail="旧部署未记录部署方式，请先确认是脚本、Docker Compose 还是源码部署")
+    env_path = Path(plan["env_path"])
+    if not env_path.is_file() or not os.access(env_path, os.W_OK):
+        raise HTTPException(status_code=409, detail="部署配置文件不存在或不可写，无法执行迁移")
+    backup_dir = get_settings().data_dir / "updates" / "config-migrations"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f".env.{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.bak"
+    compose_path = Path(plan["compose_path"])
+    compose_backup_path = backup_dir / f"docker-compose.{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.bak"
+    try:
+        shutil.copy2(env_path, backup_path)
+        if compose_path.is_file():
+            shutil.copy2(compose_path, compose_backup_path)
+        content = env_path.read_text(encoding="utf-8")
+        additions = {
+            "VX_DEPLOYMENT_METHOD": plan["deployment_method"],
+            "VX_UPDATE_ENV_FILE": "/project/.env",
+            "VX_UPDATE_PROJECT": "vx-data-watch",
+            "VX_UPDATE_SERVICE": "app",
+        }
+        for key, value in additions.items():
+            if not re.search(rf"(?m)^{re.escape(key)}=", content):
+                content = content.rstrip("\r\n") + f"\n{key}={value}\n"
+        env_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"配置迁移失败，原配置备份位置：{backup_path}；原因：{exc}") from exc
+    write_audit(db, "system.config_migration", user, "deployment_config", str(env_path), {"backup": str(backup_path), "deployment_method": plan["deployment_method"]})
+    db.commit()
+    migration_request = None
+    if plan["deployment_method"] in {"script", "compose"}:
+        try:
+            migration_request = queue_config_migration(str(backup_path), str(compose_backup_path) if compose_backup_path.exists() else None, plan["deployment_method"])
+        except UpdateBusyError as exc:
+            try:
+                shutil.copy2(backup_path, env_path)
+            except OSError:
+                pass
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    result = _deployment_migration_plan()
+    result.update({"applied": True, "backup_path": str(backup_path), "compose_backup_path": str(compose_backup_path) if compose_backup_path.exists() else None, "restart_required": bool(migration_request), "task_id": migration_request.get("id") if migration_request else None})
+    return result
+
+
 @app.get("/api/system/update-status")
 def system_update_status(
     user: Annotated[User, Depends(require_admin)],
 ) -> dict[str, Any]:
     return read_update_status()
+
+
+@app.get("/api/system/update-history")
+def system_update_history(user: Annotated[User, Depends(require_admin)]) -> list[dict[str, Any]]:
+    return read_update_history()
 
 
 @app.put("/api/system/update-registry")
