@@ -18,14 +18,29 @@ SELECTED_IMAGE="$DOCKERHUB_IMAGE"
 DETECTED_COUNTRY=""
 DETECTED_IP=""
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  COLOR_RESET=$'\033[0m'; COLOR_BLUE=$'\033[1;34m'; COLOR_CYAN=$'\033[1;36m'
+  COLOR_GREEN=$'\033[1;32m'; COLOR_YELLOW=$'\033[1;33m'; COLOR_RED=$'\033[1;31m'
+else
+  COLOR_RESET=''; COLOR_BLUE=''; COLOR_CYAN=''; COLOR_GREEN=''; COLOR_YELLOW=''; COLOR_RED=''
+fi
+
+section() {
+  local title="$1" line='----------------------------------------'
+  printf '\n%s\n' "${COLOR_CYAN}${line}${COLOR_RESET}"
+  printf '%s%s%s\n' "$COLOR_CYAN" "        VX Data Watch - $title" "$COLOR_RESET"
+  printf '%s\n\n' "${COLOR_CYAN}${line}${COLOR_RESET}"
+}
+success() { printf '%s[vx-data] 成功：%s%s\n' "$COLOR_GREEN" "$*" "$COLOR_RESET"; }
+
 log() {
   # The legacy install message contains a literal "IP:" placeholder; the
   # install wrapper prints the detected address after health checks.
   case "$*" in *"IP:"*) return 0 ;; esac
-  printf '[vx-data] %s\n' "$*"
+  printf '%s[vx-data] 信息：%s%s\n' "$COLOR_BLUE" "$*" "$COLOR_RESET"
 }
-warn() { printf '[vx-data] 警告：%s\n' "$*" >&2; }
-die() { printf '[vx-data] 错误：%s\n' "$*" >&2; exit 1; }
+warn() { printf '%s[vx-data] 警告：%s%s\n' "$COLOR_YELLOW" "$*" "$COLOR_RESET" >&2; }
+die() { printf '%s[vx-data] 错误：%s%s\n' "$COLOR_RED" "$*" "$COLOR_RESET" >&2; exit 1; }
 need_root() { [ "$(id -u)" -eq 0 ] || die '请使用 sudo 或 root 执行。'; }
 confirm() { [ "$ASSUME_YES" = 1 ] && return 0; local answer; read -r -p "$1 [y/N] " answer || true; [[ "$answer" =~ ^[Yy]$ ]]; }
 
@@ -347,5 +362,5 @@ uninstall           选择保留数据或完全删除，并单独选择是否删
 环境变量：VX_DOWNLOAD_BASE_URL、VX_RETRY_COUNT、VX_SKIP_MIRROR_PROMPT=1、VX_FORCE_MIRROR_PROMPT=1、VX_ASSUME_YES=1
 EOF
 }
-main() { local command="${1:-}"; shift || true; case "$command" in install) install_cmd_v2 "$@" ;; stop) stop_cmd "$@" ;; update) update_cmd "$@" ;; rollback) rollback_cmd "$@" ;; backup) backup_cmd "$@" ;; migrate) migrate_cmd "$@" ;; uninstall) uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
+main() { local command="${1:-}"; shift || true; case "$command" in install) section '一键安装'; install_cmd_v2 "$@" ;; stop) section '停止服务'; stop_cmd "$@" ;; update) section '在线更新'; update_cmd "$@" ;; rollback) section '版本回滚'; rollback_cmd "$@" ;; backup) section '数据备份'; backup_cmd "$@" ;; migrate) section '数据迁移'; migrate_cmd "$@" ;; uninstall) section '卸载项目'; uninstall_cmd "$@" ;; -h|--help|help) usage ;; *) usage; exit 2 ;; esac; }
 main "$@"

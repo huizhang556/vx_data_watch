@@ -97,6 +97,7 @@ from .models import (
 from .ocr import OCRUnavailableError, deduplicate_candidates, extract_screenshot_candidates
 from .schemas import (
     AccountCreate,
+    AccountUpdate,
     AuthSettingsUpdate,
     SMTPTestRequest,
     AIAnalyzeRequest,
@@ -155,6 +156,7 @@ from .updates import (
 
 settings = get_settings()
 MENU_VISIBILITY_KEY = "ui.menu_visibility"
+MENU_VISIBILITY_REVISION_KEY = "ui.menu_visibility_revision"
 DEFAULT_MENU_VISIBILITY = {
     "/users": True, "/users/accounts": True, "/users/local": True,
     "/ai-chat-menu": True, "/ai-chat/config": True, "/ai-chat": True,
@@ -164,6 +166,14 @@ DEFAULT_MENU_VISIBILITY = {
     "/settings": True, "/backups": True, "/updates": True,
     "/usage": True, "/usage/levels": True, "/about": True,
     "/about/architecture": True, "/about/technology": True, "/about/team": True,
+}
+# Only these entries are allowed to affect the ordinary-user sidebar. Parent
+# values are derived from their children; administrator-only entries remain
+# visible to administrators and are intentionally not configurable.
+CONFIGURABLE_MENU_VISIBILITY = {
+    "/users/accounts", "/ai-chat", "/analysis/dashboard", "/analysis/videos",
+    "/analysis/imports", "/analysis/ai", "/download/config", "/download/content",
+    "/usage/levels", "/about/architecture", "/about/technology", "/about/team",
 }
 _login_attempts: dict[str, list[float]] = {}
 
@@ -262,7 +272,7 @@ def _read_upload(file: UploadFile) -> bytes:
     return content
 
 
-def _get_account(db: Session, account_id: int, user: User | None = None) -> ChannelsAccount:
+def _get_account(db: Session, account_id: int, user: User | None = None, *, allow_disabled: bool = False) -> ChannelsAccount:
     account = db.get(ChannelsAccount, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="视频号账号不存在")
@@ -273,6 +283,8 @@ def _get_account(db: Session, account_id: int, user: User | None = None) -> Chan
             raise HTTPException(status_code=404, detail="视频号账号不存在")
         if user.role != Role.admin and account.user_id != user.id:
             raise HTTPException(status_code=404, detail="视频号账号不存在")
+    if not account.is_enabled and not allow_disabled:
+        raise HTTPException(status_code=409, detail="视频号账号已禁用")
     return account
 
 
@@ -576,13 +588,31 @@ def read_menu_visibility(user: CurrentUser, db: Annotated[Session, Depends(get_d
     return {key: bool(stored.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
 
 
+@app.get("/api/settings/menu-visibility/revision")
+def read_menu_visibility_revision(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, int]:
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_REVISION_KEY))
+    try:
+        revision = int(row.value.decode("utf-8")) if row else 0
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        revision = 0
+    return {"revision": revision}
+
+
 @app.put("/api/settings/menu-visibility")
 def save_menu_visibility(payload: dict[str, bool], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
     if user.role != Role.admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     if not isinstance(payload, dict) or any(key not in DEFAULT_MENU_VISIBILITY for key in payload):
         raise HTTPException(status_code=422, detail="包含未知的菜单项")
-    values = {key: bool(payload.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
+    current_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_KEY))
+    try:
+        stored = json.loads(current_row.value.decode("utf-8")) if current_row else {}
+    except (UnicodeDecodeError, TypeError, ValueError):
+        stored = {}
+    values = {key: bool(stored.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
+    for key in CONFIGURABLE_MENU_VISIBILITY:
+        if key in payload:
+            values[key] = bool(payload[key])
     # Parent visibility is derived from its children so an all-hidden group
     # cannot remain visible in the ordinary-user sidebar.
     for parent, children in {
@@ -594,12 +624,23 @@ def save_menu_visibility(payload: dict[str, bool], user: CsrfUser, db: Annotated
         "/about": ("/about/architecture", "/about/technology", "/about/team"),
     }.items():
         values[parent] = any(values[child] for child in children)
-    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_KEY))
+    before = {key: bool(stored.get(key, default)) for key, default in DEFAULT_MENU_VISIBILITY.items()}
+    row = current_row
     encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
     if row:
         row.value = encoded
     else:
         db.add(AppSetting(key=MENU_VISIBILITY_KEY, value=encoded))
+    if values != before:
+        revision_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_REVISION_KEY))
+        try:
+            revision = int(revision_row.value.decode("utf-8")) if revision_row else 0
+        except (AttributeError, UnicodeDecodeError, ValueError):
+            revision = 0
+        if revision_row:
+            revision_row.value = str(revision + 1).encode("utf-8")
+        else:
+            db.add(AppSetting(key=MENU_VISIBILITY_REVISION_KEY, value=b"1"))
     db.commit()
     return values
 
@@ -853,6 +894,12 @@ def list_users(
     db: Annotated[Session, Depends(get_db)],
 ) -> list[dict[str, Any]]:
     rows = db.scalars(select(User).order_by(User.created_at)).all()
+    activity_rows = db.execute(
+        select(LoginSession.user_id, func.max(LoginSession.last_seen_at))
+        .group_by(LoginSession.user_id)
+    ).all()
+    latest_activity = {user_id: timestamp for user_id, timestamp in activity_rows}
+    online_cutoff = datetime.now(UTC).timestamp() - 120
     return [
         {
             "id": row.id,
@@ -864,6 +911,15 @@ def list_users(
             "created_at": row.created_at,
             "last_login_at": row.last_login_at,
             "avatar": row.avatar or "default",
+            "last_seen_at": latest_activity.get(row.id),
+            "is_online": bool(
+                latest_activity.get(row.id)
+                and (
+                    latest_activity[row.id].replace(tzinfo=UTC).timestamp()
+                    if latest_activity[row.id].tzinfo is None
+                    else latest_activity[row.id].timestamp()
+                ) >= online_cutoff
+            ),
         }
         for row in rows
     ]
@@ -952,6 +1008,7 @@ def list_accounts(
             "id": row.id,
             "name": row.name,
             "description": row.description,
+            "is_enabled": row.is_enabled,
             "created_at": row.created_at,
         }
         for row in rows
@@ -975,8 +1032,61 @@ def create_account(
         "id": account.id,
         "name": account.name,
         "description": account.description,
+        "is_enabled": account.is_enabled,
         "created_at": account.created_at,
     }
+
+
+@app.patch("/api/accounts/{account_id}")
+def update_account(
+    account_id: int,
+    payload: AccountUpdate,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    account = _get_account(db, account_id, user, allow_disabled=True)
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        name = (updates["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="账号名称不能为空")
+        duplicate = db.scalar(select(ChannelsAccount).where(ChannelsAccount.name == name, ChannelsAccount.id != account_id))
+        if duplicate:
+            raise HTTPException(status_code=409, detail="账号名称已存在")
+        account.name = name
+    if "description" in updates:
+        account.description = updates["description"]
+    write_audit(db, "account.update", user, "account", account.id, updates)
+    db.commit()
+    return {"id": account.id, "name": account.name, "description": account.description, "is_enabled": account.is_enabled, "created_at": account.created_at}
+
+
+@app.patch("/api/accounts/{account_id}/status")
+def update_account_status(
+    account_id: int,
+    payload: dict[str, bool],
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    account = _get_account(db, account_id, user, allow_disabled=True)
+    if "is_enabled" not in payload:
+        raise HTTPException(status_code=422, detail="缺少账号状态")
+    account.is_enabled = bool(payload["is_enabled"])
+    write_audit(db, "account.status", user, "account", account.id, {"is_enabled": account.is_enabled})
+    db.commit()
+    return {"id": account.id, "name": account.name, "description": account.description, "is_enabled": account.is_enabled, "created_at": account.created_at}
+
+
+@app.delete("/api/accounts/{account_id}", status_code=204)
+def delete_account(
+    account_id: int,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    account = _get_account(db, account_id, user, allow_disabled=True)
+    write_audit(db, "account.delete", user, "account", account.id, {"name": account.name})
+    db.delete(account)
+    db.commit()
 
 
 def _account_metric_values(row: Any) -> dict[str, Any]:
@@ -2452,6 +2562,54 @@ async def system_versions(
     except UpdateRegistryError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return version_payload(versions, selected_registry)
+
+
+@app.get("/api/system/update-health")
+async def system_update_health(
+    user: CurrentUser,
+    registry: str | None = Query(default=None),
+) -> dict[str, Any]:
+    selected_registry = registry or configured_registry()
+    if selected_registry not in ALLOWED_REGISTRIES:
+        raise HTTPException(status_code=400, detail="不支持的镜像仓库")
+    repository = REGISTRY_REPOSITORIES.get(selected_registry, settings.update_repository)
+    try:
+        versions = await fetch_registry_versions(repository, selected_registry)
+        registry_status = "ok"
+        registry_message = "镜像仓库可访问，版本标签读取正常"
+    except UpdateRegistryError as exc:
+        versions = []
+        registry_status = "warning"
+        registry_message = str(exc)
+    config_status = "ok" if settings.update_env_file.is_file() or Path(".env").is_file() else "warning"
+    updater_status = "ok" if settings.updater_enabled else "warning"
+    manifest_status = "ok" if versions else "warning"
+    overall_status = "ok" if all(value == "ok" for value in (registry_status, config_status, updater_status, manifest_status)) else "warning"
+    version_status = {row["version"]: ("ok" if overall_status == "ok" else "warning") for row in versions}
+    update_status = read_update_status()
+    task_state = update_status.get("state", "idle")
+    task_status = "ok" if task_state in {"idle", "success"} else "warning"
+    checks = [
+        {"key": "update_service", "label": "更新服务", "status": "ok" if settings.updater_enabled else "warning", "message": "当前部署支持在线更新" if settings.updater_enabled else "当前为源码部署，不支持自动拉取和重启"},
+        {"key": "registry", "label": "镜像源连接", "status": registry_status, "message": registry_message},
+        {"key": "version_info", "label": "版本信息获取", "status": manifest_status, "message": "已读取正式版本标签" if versions else "未读取到可用版本标签"},
+        {"key": "deployment_config", "label": "部署配置", "status": config_status, "message": "更新配置文件可读取" if config_status == "ok" else "找不到更新部署配置文件"},
+        {"key": "updater", "label": "updater 服务", "status": updater_status, "message": "updater 已启用" if settings.updater_enabled else "updater 未启用"},
+        {"key": "app_updater", "label": "app/updater 版本", "status": updater_status, "message": "更新时会使用同一 latest 镜像重建 app 和 updater" if settings.updater_enabled else "源码部署无 updater 容器"},
+        {"key": "task", "label": "更新任务", "status": task_status, "message": "当前没有更新任务" if task_state == "idle" else (update_status.get("message") or f"当前状态：{task_state}")},
+    ]
+    return {
+        "registry": selected_registry,
+        "repository": f"{selected_registry}/{repository}:latest",
+        "status": overall_status,
+        "registry_status": registry_status,
+        "manifest_status": manifest_status,
+        "updater_status": updater_status,
+        "config_status": config_status,
+        "message": registry_message if registry_status != "ok" else ("在线更新链路正常" if overall_status == "ok" else "版本源可访问，但本地更新服务或配置需要检查"),
+        "versions": version_status,
+        "checks": checks,
+    }
 
 
 @app.get("/api/system/update-status")

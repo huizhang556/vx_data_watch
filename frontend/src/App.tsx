@@ -11,6 +11,7 @@ import {
   Button,
   Dropdown,
   Layout,
+  Modal,
   Menu,
   Select,
   Space,
@@ -78,7 +79,7 @@ const items = [
     label: "用户管理",
     children: [
       { key: "/users/accounts", label: "视频号账号" },
-      { key: "/users/local", label: "本地用户" },
+      { key: "/users/local", label: "注册用户管理" },
     ],
   },
   { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat/config", label: "AI 配置" }, { key: "/ai-chat", label: "AI 聊天" }] },
@@ -111,10 +112,9 @@ const items = [
       { key: "/download/content", label: "下载内容" },
     ],
   },
-  { key: "/settings", icon: <Settings size={19} />, label: "系统设置" },
+  { key: "/settings", icon: <Settings size={19} />, label: "系统设置", children: [{ key: "/settings/auth", label: "系统设置" }, { key: "/settings/menu", label: "菜单显示管理" }] },
   { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
   { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
-  { key: "/settings/menu", icon: <Settings size={19} />, label: "菜单显示管理" },
   {
     key: "/usage",
     icon: <BookOpen size={19} />,
@@ -146,6 +146,8 @@ export default function App() {
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [menuVisibility, setMenuVisibility] = useState<Record<string, boolean>>({});
+  const [menuRevision, setMenuRevision] = useState(0);
+  const [menuNotice, setMenuNotice] = useState(false);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("正在加载");
   const location = useLocation();
@@ -178,9 +180,9 @@ export default function App() {
     const rows = await api<Account[]>("/api/accounts");
     setAccounts(rows);
     setAccountIdState((current) => {
-      const next = rows.some((row) => row.id === current)
+      const next = rows.some((row) => row.id === current && row.is_enabled)
         ? current
-        : rows[0]?.id || 0;
+        : rows.find((row) => row.is_enabled)?.id || 0;
       if (next) localStorage.setItem("vx_account_id", String(next));
       return next;
     });
@@ -188,7 +190,24 @@ export default function App() {
   useEffect(() => {
     void reloadAccounts();
   }, [reloadAccounts]);
-  useEffect(() => { if (user.role !== "admin") void api<Record<string, boolean>>("/api/settings/menu-visibility").then(setMenuVisibility).catch(() => undefined); }, [user.role]);
+  useEffect(() => {
+    if (user.role === "admin") return;
+    void api<Record<string, boolean>>("/api/settings/menu-visibility").then(setMenuVisibility).catch(() => undefined);
+    void api<{ revision: number }>("/api/settings/menu-visibility/revision").then(({ revision }) => setMenuRevision(revision)).catch(() => undefined);
+    const timer = window.setInterval(async () => {
+      try {
+        const { revision } = await api<{ revision: number }>("/api/settings/menu-visibility/revision");
+        if (revision > menuRevision) setMenuNotice(true);
+        setMenuRevision(revision);
+      } catch { /* retain the current menu during a temporary outage */ }
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [user.role, menuRevision]);
+  useEffect(() => {
+    if (!menuNotice) return;
+    const timer = window.setTimeout(() => window.location.reload(), 10000);
+    return () => window.clearTimeout(timer);
+  }, [menuNotice]);
 
   const setAccountId = (id: number) => {
     setAccountIdState(id);
@@ -210,9 +229,7 @@ export default function App() {
             : item);
   // A one-child group is a direct destination; only real groups keep a submenu.
   const menuItems = visibleItems.map((item) => {
-    const displayItem = item.key === "/updates" && updateCheck
-      ? { ...item, label: `${item.label}${updateCheck.has_update ? "（有可用更新）" : "（最新版）"}` }
-      : item;
+    const displayItem = item;
     if (displayItem.children?.length !== 1) return displayItem;
     return { ...displayItem, key: displayItem.children[0].key, children: undefined };
   });
@@ -297,6 +314,14 @@ export default function App() {
             triggerSubMenuAction="hover"
           />
           <div className="sider-user">
+            <Button
+              className="sider-toggle-user"
+              type="text"
+              icon={siderCollapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+              title={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              aria-label={siderCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              onClick={() => setSiderCollapsed((value) => { localStorage.setItem("vx_sider_collapsed", String(!value)); return !value; })}
+            />
             {!siderCollapsed && (
               <div>
                 <Typography.Text strong>{user.username}</Typography.Text>
@@ -314,7 +339,7 @@ export default function App() {
               {updateCheck && <Typography.Text className={updateCheck.has_update ? "update-ready" : "update-current"}>
                 {updateCheck.has_update ? `v${updateCheck.latest_version}（可更新）` : `v${updateCheck.current_version}（最新版）`}
               </Typography.Text>}
-              <Button size="small" type="primary" className="sider-update-button" onClick={() => navigate("/updates")} disabled={!updateCheck?.has_update}>一键更新</Button>
+              <Button size="small" type="primary" className="sider-update-button" onClick={() => navigate("/updates", { state: { autoStart: true } })} disabled={!updateCheck?.has_update}>一键更新</Button>
             </div>}
             <Button
               type="text"
@@ -373,7 +398,7 @@ export default function App() {
               placeholder="请先创建视频号"
               value={accountId || undefined}
               onChange={setAccountId}
-              options={accounts.map((row) => ({
+              options={accounts.filter((row) => row.is_enabled).map((row) => ({
                 value: row.id,
                 label: row.name,
               }))}
@@ -478,6 +503,7 @@ export default function App() {
                 />
                 <Route path="/backups" element={<BackupPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings/auth" element={<SettingsPage />} />
                 <Route path="/settings/menu" element={user.role === "admin" ? <MenuVisibilityPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/updates" element={user.role === "admin" ? <UpdatesPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/profile" element={<ProfilePage />} />
@@ -507,6 +533,9 @@ export default function App() {
           </nav>
         </Layout>
       </Layout>
+      <Modal open={menuNotice} title="菜单配置已更新" okText="立即更新" cancelText="暂不更新" onOk={() => { setMenuNotice(false); window.location.reload(); }} onCancel={() => setMenuNotice(false)}>
+        <Typography.Paragraph>管理员更新了普通用户可见菜单。请先保存当前工作，10 秒后未操作将自动更新页面。</Typography.Paragraph>
+      </Modal>
     </AccountContext.Provider>
   );
 }

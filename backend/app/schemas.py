@@ -156,8 +156,14 @@ class AccountCreate(BaseModel):
     description: str | None = Field(default=None, max_length=500)
 
 
+class AccountUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+
 class AccountResponse(AccountCreate):
     id: int
+    is_enabled: bool = True
     created_at: datetime
 
 

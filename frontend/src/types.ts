@@ -18,6 +18,7 @@ export interface Account {
   name: string
   description?: string
   created_at: string
+  is_enabled: boolean
 }
 
 export interface DailyMetric {
@@ -95,6 +96,19 @@ export interface SystemVersionInfo {
   registries: { registry: string; label: string; repository: string }[]
   update_supported: boolean
   deployment: 'docker' | 'source'
+}
+
+export interface UpdateHealthInfo {
+  registry: string
+  repository: string
+  status: 'ok' | 'warning'
+  registry_status: 'ok' | 'warning'
+  manifest_status: 'ok' | 'warning'
+  updater_status: 'ok' | 'warning'
+  config_status: 'ok' | 'warning'
+  message: string
+  versions: Record<string, 'ok' | 'warning'>
+  checks: Array<{ key: string; label: string; status: 'ok' | 'warning'; message: string }>
 }
 
 export interface SystemUpdateStatus {

@@ -49,7 +49,6 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const location = useLocation()
   const navigate = useNavigate()
   const providerAccountId = configOnly ? undefined : account?.id
-  const providerAccountQuery = providerAccountId == null ? '' : `?${query({ account_id: providerAccountId })}`
   const [provider, setProvider] = useState<Provider | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [quickConfigs, setQuickConfigs] = useState<QuickConfig[]>([])
@@ -401,13 +400,21 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
               const checked = modelCategoryChecked[key] || []
               const allSelected = selected.length > 0 && checked.length === selected.length
               const addable = models.filter((item) => !selected.includes(item))
-              const saveCategory = () => void api<Provider>(`/api/ai/provider/${form.getFieldValue('provider_id')}/categories`, { method: 'PATCH', body: JSON.stringify({ account_id: providerAccountId ?? null, model_categories: modelCategories }) }).then((row) => { setModelCategories(row.model_categories || modelCategories); setModelCategoryChecked((current) => ({ ...current, [key]: [] })); message.success(`${label}已保存到本地配置`) }).catch((cause) => setConfigError(cause instanceof Error ? cause.message : '分类保存失败'))
+              const providerId = Number(form.getFieldValue('provider_id'))
+              const canSaveCategory = Number.isInteger(providerId) && providerId > 0
+              const saveCategory = () => {
+                if (!canSaveCategory) {
+                  setConfigError('请先保存接口配置，再保存模型分类。当前分类会随接口配置一并保存。')
+                  return
+                }
+                void api<Provider>(`/api/ai/provider/${providerId}/categories`, { method: 'PATCH', body: JSON.stringify({ account_id: providerAccountId ?? null, model_categories: modelCategories }) }).then((row) => { setModelCategories(row.model_categories || modelCategories); setModelCategoryChecked((current) => ({ ...current, [key]: [] })); message.success(`${label}已保存到本地配置`) }).catch((cause) => setConfigError(cause instanceof Error ? cause.message : '分类保存失败'))
+              }
               return <div className="model-category-card" key={key}>
                 <div className="model-category-card-header"><strong>{label}</strong><Space size={2}>
                   <Button type="text" size="small" icon={<CheckSquare size={15} />} title={allSelected ? '全不选' : '全选'} aria-label={`${label}${allSelected ? '全不选' : '全选'}`} onClick={() => setModelCategoryChecked((current) => ({ ...current, [key]: allSelected ? [] : [...selected] }))} />
                   <Dropdown trigger={['click']} disabled={!addable.length} menu={{ items: addable.map((item) => ({ key: item, label: item })), onClick: ({ key: value }) => setModelCategories((current) => ({ ...current, [key]: [...(current[key] || []), String(value)] })) }}><Button type="text" size="small" icon={<Plus size={15} />} title="添加模型" aria-label={`${label}添加模型`} /></Dropdown>
                   <Button type="text" size="small" danger disabled={!checked.length} icon={<Trash2 size={15} />} title="删除已勾选模型" aria-label={`${label}删除已勾选模型`} onClick={() => { setModelCategories((current) => ({ ...current, [key]: (current[key] || []).filter((item) => !checked.includes(item)) })); setModelCategoryChecked((current) => ({ ...current, [key]: [] })) }} />
-                  <Button type="text" size="small" icon={<Settings2 size={15} />} title="保存分类" aria-label={`${label}保存分类`} onClick={saveCategory} />
+                  <Button type="text" size="small" disabled={!canSaveCategory} icon={<Settings2 size={15} />} title={canSaveCategory ? '保存分类' : '请先保存接口配置'} aria-label={`${label}保存分类`} onClick={saveCategory} />
                 </Space></div>
                 <div className="model-category-list">{selected.length ? <Checkbox.Group value={checked} onChange={(values) => setModelCategoryChecked((current) => ({ ...current, [key]: values.map(String) }))} options={selected.map((item) => ({ label: item, value: item }))} /> : <Typography.Text type="secondary">暂无模型</Typography.Text>}</div>
               </div>

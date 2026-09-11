@@ -65,6 +65,28 @@ def _write_rollback_record(request: dict[str, Any], previous_env: str, image: st
     )
 
 
+def _cleanup_old_release_tags(
+    docker: DockerEngine, repository: str, keep_versions: set[str]
+) -> None:
+    """Keep latest and the current/rollback releases; remove older local tags.
+
+    Cleanup is best effort. A tag referenced by another container is left in
+    place by Docker, and cleanup failure must never turn a successful update
+    into a failed update.
+    """
+    try:
+        tags = docker.image_tags(repository)
+    except Exception:
+        return
+    for tag in tags:
+        if tag == "latest" or tag in keep_versions or not SEMVER_PATTERN.fullmatch(tag):
+            continue
+        try:
+            docker.remove_image(f"{repository}:{tag}")
+        except Exception:
+            continue
+
+
 def process_update(request: dict[str, Any], engine: DockerEngine | None = None) -> None:
     settings = get_settings()
     version = request.get("version")
@@ -87,21 +109,34 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     _write_rollback_record(request, previous_env, previous_image)
     _status(request, "pulling", "正在拉取目标镜像")
     pull_repository = repository if registry == "docker.io" else f"{registry}/{repository}"
+    image_repository = f"docker.io/{repository}" if registry == "docker.io" else pull_repository
+    latest_image = f"{image_repository}:latest"
+    previous_version = __version__
+    # Preserve the currently running release as the single local rollback tag
+    # before replacing latest with the target image.
+    if SEMVER_PATTERN.fullmatch(previous_version) and previous_version != version:
+        try:
+            docker.tag(latest_image, image_repository, previous_version)
+        except Exception:
+            pass
     docker.pull(pull_repository, version)
     # Keep deployment configuration on stable latest while pulling immutable
-    # release tags. The updater container is refreshed on the next compose
-    # restart, because replacing it while it runs would interrupt the update.
-    image_repository = f"docker.io/{repository}" if registry == "docker.io" else pull_repository
+    # release tags. The companion updater is recreated after app replacement
+    # so both services run the same image digest.
     source_image = f"{pull_repository}:{version}"
-    latest_image = f"{image_repository}:latest"
     docker.tag(source_image, image_repository, "latest")
     _persist_image(settings.update_env_file, latest_image)
     _status(request, "restarting", "正在替换并重启应用")
+    companion_id: str | None = None
     try:
         compose_repository = image_repository
         docker.replace_compose_service(
             settings.update_project, settings.update_service, compose_repository, "latest"
         )
+        if settings.update_service != "updater":
+            companion_id = docker.replace_running_companion(
+                settings.update_project, "updater", compose_repository, "latest"
+            )
     except Exception:
         _status(request, "rolling_back", "更新失败，正在恢复原版本")
         if env_existed:
@@ -111,6 +146,9 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
         raise
     _rollback_record_path().unlink(missing_ok=True)
     _status(request, "success", "更新完成", current_version=version)
+    if companion_id:
+        docker.remove(companion_id, force=True)
+    _cleanup_old_release_tags(docker, image_repository, {previous_version, version})
 
 
 def run() -> None:

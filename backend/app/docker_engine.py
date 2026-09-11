@@ -76,6 +76,20 @@ class DockerEngine:
         query = urlencode({"repo": repository, "tag": tag})
         self._request("POST", f"/images/{quote(source, safe='')}/tag?{query}", expected={201})
 
+    def image_tags(self, repository: str) -> list[str]:
+        """Return local tags for a repository without inspecting image layers."""
+        filters = quote(json.dumps({"reference": [f"{repository}:*"]}))
+        rows = self._request("GET", f"/images/json?all=1&filters={filters}", expected={200})
+        tags: list[str] = []
+        for row in rows or []:
+            for reference in row.get("RepoTags") or []:
+                if reference.startswith(f"{repository}:"):
+                    tags.append(reference.rsplit(":", 1)[1])
+        return tags
+
+    def remove_image(self, image: str) -> None:
+        self._request("DELETE", f"/images/{quote(image, safe='')}", expected={200, 201, 204})
+
     def find_compose_container(self, project: str, service: str) -> dict[str, Any]:
         filters = quote(
             json.dumps(
@@ -206,4 +220,33 @@ class DockerEngine:
                     pass
             self.rename(previous_id, name)
             self.start(previous_id)
+            raise
+
+    def replace_running_companion(
+        self, project: str, service: str, repository: str, version: str
+    ) -> str:
+        """Start a replacement for the running updater without killing its worker.
+
+        The caller runs inside the old updater container. Renaming it while it
+        is running leaves the worker alive long enough to persist final status
+        and remove itself after the replacement is healthy.
+        """
+        previous = self.find_compose_container(project, service)
+        previous_id = previous["Id"]
+        name = previous["Name"].lstrip("/")
+        rollback_name = f"{name}-rollback"
+        replacement_id: str | None = None
+        self.rename(previous_id, rollback_name)
+        try:
+            replacement_id = self.create_replacement(previous, f"{repository}:{version}", name)
+            self.start(replacement_id)
+            self.wait_healthy(replacement_id)
+            return previous_id
+        except Exception:
+            if replacement_id:
+                try:
+                    self.remove(replacement_id, force=True)
+                except DockerEngineError:
+                    pass
+            self.rename(previous_id, name)
             raise

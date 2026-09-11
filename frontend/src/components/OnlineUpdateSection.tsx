@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Modal, Select, Space, Typography, message } from 'antd'
+import { Alert, Button, Modal, Select, Space, Tooltip, Typography, message } from 'antd'
 import { CloudDownload, RefreshCw } from 'lucide-react'
 import { api } from '../api'
-import type { SystemUpdateStatus, SystemVersionInfo } from '../types'
+import type { SystemUpdateStatus, SystemVersionInfo, UpdateHealthInfo } from '../types'
 
 const compareVersions = (left: string, right: string) => {
   const a = left.split('.').map(Number); const b = right.split('.').map(Number)
@@ -10,9 +10,11 @@ const compareVersions = (left: string, right: string) => {
   return 0
 }
 const repositoryFor = (registry: string, info?: SystemVersionInfo | null) => info?.registries?.find((item) => item.registry === registry)?.repository || (registry === 'docker.io' ? 'docker.io/litehub/vx-data-watch:latest' : `${registry}/zhang_spaces/vx-data-watch:latest`)
+const registryFromError = (message: string) => message.match(/镜像仓库\s+([^（\s]+)/)?.[1]
 
-export default function OnlineUpdateSection() {
+export default function OnlineUpdateSection({ autoStart = false }: { autoStart?: boolean }) {
   const [versionInfo, setVersionInfo] = useState<SystemVersionInfo | null>(null)
+  const [healthInfo, setHealthInfo] = useState<UpdateHealthInfo | null>(null)
   const [versionError, setVersionError] = useState('')
   const [versionLoading, setVersionLoading] = useState(false)
   const [targetVersion, setTargetVersion] = useState<string>()
@@ -22,6 +24,7 @@ export default function OnlineUpdateSection() {
   const [updateStatus, setUpdateStatus] = useState<SystemUpdateStatus | null>(null)
   const [updateStarting, setUpdateStarting] = useState(false)
   const initialLoadRef = useRef(false); const requestIdRef = useRef(0)
+  const autoStartRef = useRef(false)
   const registryOptions = versionInfo?.registries?.map((item) => ({ value: item.registry, label: item.label })) || [{ value: 'docker.io', label: 'Docker Hub' }, { value: 'crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com', label: '阿里云 ACR' }]
   const selectedRepository = repositoryFor(registry || configuredRegistry || 'docker.io', versionInfo)
   const loadVersions = async (selectedRegistry?: string) => {
@@ -34,8 +37,21 @@ export default function OnlineUpdateSection() {
       const resolvedRegistry = result.registry || selectedRegistry || 'docker.io'
       setVersionError(''); setVersionInfo(result); setRegistry(resolvedRegistry); setConfiguredRegistry(result.configured_registry || resolvedRegistry); setTargetVersion(result.versions[0]?.version)
     } catch (cause) {
-      if (requestId === requestIdRef.current) { const failedRegistry = selectedRegistry || configuredRegistry || 'docker.io'; setRegistry(failedRegistry); setVersionError(`${repositoryFor(failedRegistry)} 不可用：${cause instanceof Error ? cause.message : '无法获取版本信息'}`) }
+      if (requestId === requestIdRef.current) {
+        const errorMessage = cause instanceof Error ? cause.message : '无法获取版本信息'
+        const failedRegistry = selectedRegistry || registryFromError(errorMessage) || configuredRegistry || 'docker.io'
+        setRegistry(failedRegistry)
+        setVersionError(`${repositoryFor(failedRegistry)} 不可用：${errorMessage}`)
+      }
     } finally { if (requestId === requestIdRef.current) setVersionLoading(false) }
+  }
+  const loadHealth = async (selectedRegistry?: string) => {
+    try {
+      const endpoint = selectedRegistry ? `/api/system/update-health?registry=${encodeURIComponent(selectedRegistry)}` : '/api/system/update-health'
+      setHealthInfo(await api<UpdateHealthInfo>(endpoint))
+    } catch {
+      setHealthInfo((current) => current ? { ...current, status: 'warning', message: '无法完成在线更新链路检测' } : null)
+    }
   }
   const saveRegistry = async () => {
     setRegistrySaving(true)
@@ -44,9 +60,9 @@ export default function OnlineUpdateSection() {
     finally { setRegistrySaving(false) }
   }
   const loadUpdateStatus = async () => { try { setUpdateStatus(await api<SystemUpdateStatus>('/api/system/update-status')) } catch { /* The app can restart during an update. */ } }
-  useEffect(() => { if (initialLoadRef.current) return; initialLoadRef.current = true; void loadVersions(); void loadUpdateStatus() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (initialLoadRef.current) return; initialLoadRef.current = true; void loadVersions(); void loadHealth(); void loadUpdateStatus() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const refresh = () => { if (document.visibilityState === 'visible') void loadVersions(configuredRegistry || undefined) }
+    const refresh = () => { if (document.visibilityState === 'visible') { void loadVersions(configuredRegistry || undefined); void loadHealth(configuredRegistry || undefined) } }
     const timer = window.setInterval(refresh, 60_000)
     document.addEventListener('visibilitychange', refresh)
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh) }
@@ -63,14 +79,23 @@ export default function OnlineUpdateSection() {
     } })
   }
   const updateActive = !!updateStatus && ['queued', 'pulling', 'restarting', 'verifying', 'rolling_back'].includes(updateStatus.state)
+  useEffect(() => {
+    if (!autoStart || autoStartRef.current || !versionInfo || versionError || !targetVersion || updateActive) return
+    autoStartRef.current = true
+    startUpdate()
+  }, [autoStart, versionInfo, versionError, targetVersion, updateActive]) // eslint-disable-line react-hooks/exhaustive-deps
   const statusType = updateStatus?.state === 'failed' ? 'error' : updateStatus?.state === 'success' ? 'success' : 'info'
-  const retryVersionCheck = () => { void loadVersions(configuredRegistry) }
-  return <section className="section-band">
+  const retryVersionCheck = () => { void loadVersions(configuredRegistry); void loadHealth(configuredRegistry) }
+  const healthBanner = healthInfo ? <>
+    <Alert className="update-health-summary" type={healthInfo.status === 'ok' ? 'success' : 'warning'} showIcon message={<span><i className={`update-health-dot ${healthInfo.status}`} />更新链路：{healthInfo.status === 'ok' ? '正常' : '异常'}</span>} description={healthInfo.message} />
+    <div className="update-health-panel"><Typography.Text className="update-health-title">更新服务状态</Typography.Text><div className="update-health-grid">{healthInfo.checks.map((check) => <Tooltip key={check.key} title={check.message} placement="top"><div className="update-health-check"><span><i className={`update-health-dot ${check.status}`} />{check.label}</span><strong>{check.status === 'ok' ? '正常' : '异常'}</strong></div></Tooltip>)}</div></div>
+  </> : null
+  return <section className="section-band">{healthBanner}
     <div className="section-heading"><div><Typography.Title level={3}>在线更新</Typography.Title><Typography.Text type="secondary">选择镜像源，检测正式版本并重启应用</Typography.Text></div><Button icon={<RefreshCw size={18} />} loading={versionLoading} onClick={() => void loadVersions()}>检测更新</Button></div>
     {versionError && <Alert type="error" showIcon message="版本检测失败" description={versionError} />}
     {versionError && <div className="update-actions update-error-actions"><div className="registry-picker"><Select aria-label="镜像源" value={registry} onChange={(value) => { setRegistry(value); void loadVersions(value) }} options={registryOptions} /><small>{selectedRepository}</small></div><div className="update-action-buttons"><Button icon={<RefreshCw size={18} />} loading={versionLoading} onClick={retryVersionCheck}>重新检测</Button><Button onClick={() => window.location.reload()}>刷新页面</Button></div></div>}
     {versionInfo && <div className="update-panel"><div className="version-summary"><div><span>当前版本</span><strong>v{versionInfo.current_version}</strong></div><div><span>最新版本</span><strong>{versionInfo.latest_version ? `v${versionInfo.latest_version}` : '暂未发布'}</strong></div><div><span>镜像仓库</span><strong>{selectedRepository}</strong></div></div>
-      {!versionInfo.update_supported ? <Alert type="warning" showIcon message="当前为源码部署" description="可以在线检测版本，但自动拉取和重启只在 Docker Compose 部署中启用。源码部署请在终端执行 git pull 后重新启动。" /> : versionInfo.versions.length ? <div className="update-actions"><div className="registry-picker"><Select aria-label="镜像源" value={registry} onChange={(value) => { setRegistry(value); void loadVersions(value) }} options={registryOptions} /><small>{selectedRepository}</small></div><Select aria-label="目标版本" value={targetVersion} onChange={setTargetVersion} options={versionInfo.versions.map((row) => ({ value: row.version, label: `v${row.version}${row.version === versionInfo.latest_version ? '（最新）' : ''}${compareVersions(row.version, versionInfo.current_version) < 0 ? '（回退）' : '（升级）'}` }))} /><div className="update-action-buttons"><Button type="primary" icon={<CloudDownload size={18} />} loading={updateStarting || updateActive} disabled={!targetVersion || !!versionError} onClick={startUpdate}>切换并重启</Button>{registry !== configuredRegistry && <Button loading={registrySaving} onClick={() => void saveRegistry()}>保存镜像源</Button>}</div></div> : <Alert type="success" showIcon message={versionInfo.latest_version ? '镜像库中没有其他可切换版本' : '镜像仓库暂时没有正式版本标签'} />}
+      {!versionInfo.update_supported ? <Alert type="warning" showIcon message="当前为源码部署" description="可以在线检测版本，但自动拉取和重启只在 Docker Compose 部署中启用。源码部署请在终端执行 git pull 后重新启动。" /> : versionInfo.versions.length ? <div className="update-actions"><div className="registry-picker"><Select aria-label="镜像源" value={registry} onChange={(value) => { setRegistry(value); void loadVersions(value); void loadHealth(value) }} options={registryOptions} /><small>{selectedRepository}</small></div><Select aria-label="目标版本" value={targetVersion} onChange={setTargetVersion} options={versionInfo.versions.map((row) => ({ value: row.version, label: <span className="version-option"><i className={`update-health-dot ${healthInfo?.versions[row.version] || 'warning'}`} />v{row.version}{row.version === versionInfo.latest_version ? '（最新）' : ''}{compareVersions(row.version, versionInfo.current_version) < 0 ? '（回退）' : '（升级）'}</span> }))} /><div className="update-action-buttons"><Button type="primary" icon={<CloudDownload size={18} />} loading={updateStarting || updateActive} disabled={!targetVersion || !!versionError} onClick={startUpdate}>切换并重启</Button>{registry !== configuredRegistry && <Button loading={registrySaving} onClick={() => void saveRegistry()}>保存镜像源</Button>}</div></div> : <Alert type="success" showIcon message={versionInfo.latest_version ? '镜像库中没有其他可切换版本' : '镜像仓库暂时没有正式版本标签'} />}
       {updateStatus && updateStatus.state !== 'idle' && <Alert className="update-status" type={statusType} showIcon message={updateStatus.state === 'success' && updateStatus.target_version === versionInfo.current_version ? `当前已是 v${versionInfo.current_version}` : (updateStatus.message || '正在处理更新')} description={<Space wrap><span>{updateStatus.target_version ? `目标版本：v${updateStatus.target_version}` : ''}</span>{updateStatus.state === 'success' && updateStatus.target_version !== versionInfo.current_version && <span>页面即将刷新</span>}</Space>} />}
     </div>}
   </section>

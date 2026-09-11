@@ -16,11 +16,12 @@ import {
   Upload,
   message,
 } from "antd";
-import { ImagePlus, Pencil, Plus, Trash2, UserPlus } from "lucide-react";
+import { Ban, CheckCircle2, ImagePlus, Pencil, Plus, Trash2, UserPlus } from "lucide-react";
 import dayjs from "dayjs";
 import { api } from "../api";
 import { useAccount } from "../account";
 import { useAuth } from "../auth";
+import type { Account } from "../types";
 
 interface LocalUser {
   id: number;
@@ -31,6 +32,8 @@ interface LocalUser {
   is_active: boolean;
   created_at: string;
   last_login_at?: string;
+  last_seen_at?: string;
+  is_online?: boolean;
   avatar?: string;
 }
 interface AuthSettings {
@@ -83,6 +86,8 @@ export default function SettingsPage({
   const { accounts, reloadAccounts } = useAccount();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  const [editAccountOpen, setEditAccountOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [userOpen, setUserOpen] = useState(false);
   const [editUserOpen, setEditUserOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<LocalUser | null>(null);
@@ -98,6 +103,7 @@ export default function SettingsPage({
   const [captchaForm] = Form.useForm<AuthSettings>();
   const [userForm] = Form.useForm();
   const [editUserForm] = Form.useForm();
+  const [accountForm] = Form.useForm();
   const loadAuthSettings = () =>
     user.role === "admin"
       ? api<AuthSettings>("/api/settings/auth").then((value) => {
@@ -112,6 +118,11 @@ export default function SettingsPage({
       void loadAuthSettings();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (user.role !== "admin" || section === "settings") return;
+    const timer = window.setInterval(() => void loadUsers(), 30000);
+    return () => window.clearInterval(timer);
+  }, [section, user.role]); // eslint-disable-line react-hooks/exhaustive-deps
   const saveAuthSettings = async (
     values: Partial<AuthSettings>,
     notify = true,
@@ -198,6 +209,38 @@ export default function SettingsPage({
       setLoading(false);
     }
   };
+  const updateAccount = async (values: { name: string; description?: string }) => {
+    if (!editingAccount) return;
+    setLoading(true);
+    try {
+      await api(`/api/accounts/${editingAccount.id}`, { method: "PATCH", body: JSON.stringify(values) });
+      await reloadAccounts();
+      setEditAccountOpen(false);
+      message.success("视频号账号已更新");
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : "更新视频号账号失败");
+    } finally { setLoading(false); }
+  };
+  const toggleAccount = async (account: Account) => {
+    setLoading(true);
+    try {
+      await api(`/api/accounts/${account.id}/status`, { method: "PATCH", body: JSON.stringify({ is_enabled: !account.is_enabled }) });
+      await reloadAccounts();
+      message.success(account.is_enabled ? "视频号账号已禁用" : "视频号账号已启用");
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : "更新视频号状态失败");
+    } finally { setLoading(false); }
+  };
+  const deleteAccount = async (account: Account) => {
+    setLoading(true);
+    try {
+      await api(`/api/accounts/${account.id}`, { method: "DELETE" });
+      await reloadAccounts();
+      message.success("视频号账号及关联数据已删除");
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : "删除视频号账号失败");
+    } finally { setLoading(false); }
+  };
   const createUser = async (values: {
     username: string;
     email: string;
@@ -211,7 +254,7 @@ export default function SettingsPage({
       await api("/api/users", { method: "POST", body: JSON.stringify(values) });
       await loadUsers();
       setUserOpen(false);
-      message.success("本地用户已创建");
+      message.success("注册用户管理已创建");
     } catch (cause) {
       message.error(cause instanceof Error ? cause.message : "创建失败");
     } finally {
@@ -285,7 +328,7 @@ export default function SettingsPage({
               ? "账号、数据安全与备份"
               : section === "accounts" && user.role !== "admin"
                 ? "管理当前用户的视频号账号"
-                : "管理视频号账号和本地用户"}
+                : "管理视频号账号和注册用户管理"}
           </Typography.Text>
         </div>
       </div>
@@ -505,7 +548,14 @@ export default function SettingsPage({
                     <strong>{account.name}</strong>
                     <span>{account.description || "暂无备注"}</span>
                   </div>
-                  <Tag color="green">使用中</Tag>
+                  <div className="account-actions">
+                    <Button type="text" size="small" icon={<Pencil size={16} />} aria-label="编辑账号" title="编辑账号" onClick={() => { setEditingAccount(account); accountForm.setFieldsValue(account); setEditAccountOpen(true); }} />
+                    <Popconfirm title="删除视频号账号" description={`确定删除 ${account.name} 及其全部关联数据吗？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void deleteAccount(account)}>
+                      <Button type="text" danger size="small" icon={<Trash2 size={16} />} aria-label="删除账号" title="删除账号" />
+                    </Popconfirm>
+                    <Button type="text" size="small" icon={account.is_enabled ? <Ban size={16} /> : <CheckCircle2 size={16} />} aria-label={account.is_enabled ? "禁用账号" : "启用账号"} title={account.is_enabled ? "禁用账号" : "启用账号"} onClick={() => void toggleAccount(account)} />
+                  </div>
+                  <Tag className={`account-status ${account.is_enabled ? "account-status-enabled" : "account-status-disabled"}`} icon={account.is_enabled ? <CheckCircle2 size={13} /> : <Ban size={13} />}>{account.is_enabled ? "正在使用" : "正在禁用"}</Tag>
                 </article>
               ))}
             </div>
@@ -516,7 +566,7 @@ export default function SettingsPage({
         <section className="section-band">
           <div className="section-heading">
             <div>
-              <Typography.Title level={3}>本地用户</Typography.Title>
+              <Typography.Title level={3}>注册用户管理</Typography.Title>
               <Typography.Text type="secondary">
                 当前用户：{user.username}（{user.role}）
               </Typography.Text>
@@ -590,6 +640,11 @@ export default function SettingsPage({
                       : "从未登录",
                 },
                 {
+                  title: "在线状态",
+                  dataIndex: "is_online",
+                  render: (value) => <span className={value ? "user-online" : "user-offline"}><i />{value ? "在线" : "不在线"}</span>,
+                },
+                {
                   title: "操作",
                   render: (_, row) => (
                     <>
@@ -644,8 +699,15 @@ export default function SettingsPage({
           </Button>
         </Form>
       </Modal>
+      <Modal title="编辑视频号账号" open={editAccountOpen} onCancel={() => setEditAccountOpen(false)} footer={null} destroyOnHidden>
+        <Form form={accountForm} layout="vertical" onFinish={updateAccount} requiredMark={false}>
+          <Form.Item name="name" label="账号名称" rules={[{ required: true, message: "请输入账号名称" }]}><Input maxLength={120} /></Form.Item>
+          <Form.Item name="description" label="备注"><Input.TextArea maxLength={500} rows={3} /></Form.Item>
+          <Button block type="primary" htmlType="submit" loading={loading}>保存</Button>
+        </Form>
+      </Modal>
       <Modal
-        title="新增本地用户"
+        title="新增注册用户管理"
         open={userOpen}
         onCancel={() => setUserOpen(false)}
         footer={null}

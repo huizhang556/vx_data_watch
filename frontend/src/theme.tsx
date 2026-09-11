@@ -17,9 +17,13 @@ function initialTheme(): ThemeMode {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>(initialTheme)
   useEffect(() => {
-    const apply = () => { document.documentElement.dataset.theme = theme === 'system' ? 'morning' : theme }
-    apply()
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    const apply = () => {
+      // Keep the removed night theme internal for system dark preference; it is
+      // never exposed as a user-selectable theme.
+      document.documentElement.dataset.theme = theme === 'system' ? (media?.matches ? 'dark' : 'morning') : theme
+    }
+    apply()
     media?.addEventListener('change', apply)
     localStorage.setItem('vx_theme', theme)
     return () => media?.removeEventListener('change', apply)

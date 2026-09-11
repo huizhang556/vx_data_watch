@@ -31,6 +31,10 @@ def get_session_and_user(request: Request, db: Db) -> tuple[LoginSession, User]:
     user = db.get(User, login_session.user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不可用")
+    now = datetime.now(UTC)
+    if (now - _aware(login_session.last_seen_at)).total_seconds() >= 30:
+        login_session.last_seen_at = now
+        db.commit()
     return login_session, user
 
 

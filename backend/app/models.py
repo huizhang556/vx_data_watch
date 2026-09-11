@@ -127,6 +127,7 @@ class ChannelsAccount(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
     description: Mapped[str | None] = mapped_column(String(500))
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
