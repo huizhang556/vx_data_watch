@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 export type ThemeMode = 'system' | 'morning' | 'rose' | 'lavender' | 'mist' | 'mint' | 'cream'
 
@@ -28,6 +28,7 @@ export function applyStyleSettings(settings: { default_font_family?: string; def
   document.documentElement.style.setProperty('--vx-font-family', family)
   document.documentElement.style.setProperty('--vx-font-scale', scale)
   document.documentElement.style.setProperty('--vx-font-size-base', `${14 * Number(scale)}px`)
+  document.documentElement.style.setProperty('--ant-font-size', `${14 * Number(scale)}px`)
   document.body.style.fontFamily = family
   document.body.style.fontSize = `calc(14px * ${scale})`
 }
@@ -46,7 +47,7 @@ function initialTheme(): ThemeMode {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<ThemeMode>(initialTheme)
-  const chooseTheme = (next: ThemeMode) => { localStorage.setItem('vx_theme_explicit', 'true'); setTheme(next) }
+  const chooseTheme = useCallback((next: ThemeMode) => { localStorage.setItem('vx_theme_explicit', 'true'); setTheme(next) }, [])
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)')
     const apply = () => {
@@ -63,7 +64,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     theme,
     setTheme: chooseTheme,
     toggleTheme: () => chooseTheme((['morning', 'rose', 'lavender', 'mist', 'mint', 'cream'] as ThemeMode[])[Math.max(0, ['morning', 'rose', 'lavender', 'mist', 'mint', 'cream'].indexOf(theme) + 1) % 6]),
-  }), [theme])
+  }), [theme, chooseTheme])
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }
 

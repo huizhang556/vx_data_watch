@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Alert, Button, Form, Input, Spin, Typography, message } from 'antd'
 import { LockKeyhole, Mail, UserRound } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api, setCsrfToken } from './api'
 import type { User } from './types'
 
@@ -22,14 +23,32 @@ function Captcha({ enabled, siteKey, onChange }: { enabled: boolean; siteKey?: s
   return enabled ? <div ref={setElement} className="captcha-widget" /> : null
 }
 
+type HomeSite = { site_name: string; site_subtitle: string; logo_url: string }
+function HomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
+  const navigate = useNavigate()
+  return <main className="home-page">
+    <header className="home-header">
+      <div className="home-brand">{site.logo_url ? <img className="auth-site-logo home-logo" src={`${site.logo_url}?home=1`} alt={site.site_name} /> : <span className="brand-mark small">VX</span>}<strong>{site.site_name}</strong></div>
+      <nav className="home-actions" aria-label="账户入口">{user ? <><span className="home-user">已登录：{user.username}</span><Button type="primary" onClick={() => navigate('/dashboard')}>进入系统</Button><Button onClick={onLogout}>退出登录</Button></> : <><Button type="text" onClick={() => navigate('/login')}>登录</Button><Button type="primary" onClick={() => navigate('/register')}>注册</Button></>}</nav>
+    </header>
+    <section className="home-hero"><Typography.Title>{site.site_name}</Typography.Title><Typography.Paragraph>{site.site_subtitle || '数据驱动内容运营'}</Typography.Paragraph>{!user && <Button type="primary" size="large" onClick={() => navigate('/login')}>开始使用</Button>}</section>
+  </main>
+}
+
 type Mode = 'login' | 'register' | 'reset'
+const modeForPath = (pathname: string): Mode => pathname === '/register' ? 'register' : pathname === '/reset-password' ? 'reset' : 'login'
 const usernameRule = { pattern: /^[A-Za-z0-9_.-]+$/, message: '用户名只能包含英文、数字、下划线、点和短横线' }
 const passwordRule = { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: '密码至少 10 位，并同时包含字母和数字' }
 export function AuthGate({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [loading, setLoading] = useState(true); const [initialized, setInitialized] = useState(false); const [user, setUser] = useState<User | null>(null); const [error, setError] = useState('')
   const [config, setConfig] = useState({ registration_enabled: false, captcha_enabled: false, captcha_site_key: '', site_name: '视频号数据分析', site_subtitle: '数据驱动内容运营', logo_url: '' }); const [mode, setMode] = useState<Mode>('login'); const [captcha, setCaptcha] = useState<string>(); const [email, setEmail] = useState(''); const [busy, setBusy] = useState(false)
   const [form] = Form.useForm()
   const captchaReady = !config.captcha_enabled || Boolean(captcha)
+  useEffect(() => { setMode(modeForPath(location.pathname)) }, [location.pathname])
+  useEffect(() => { if (user && ['/login', '/register', '/reset-password'].includes(location.pathname)) navigate('/dashboard', { replace: true }) }, [user, location.pathname, navigate])
+  useEffect(() => { if (!user && !['/', '/login', '/register', '/reset-password'].includes(location.pathname)) navigate('/', { replace: true }) }, [user, location.pathname, navigate])
   useEffect(() => {
     const button = document.querySelector<HTMLButtonElement>('.auth-panel form button[type="submit"]')
     if (!button) return
@@ -42,7 +61,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     void api<typeof config>('/api/auth/config').then(setConfig).catch(() => undefined)
   }, [user, initialized])
   useEffect(() => { const onUnauthorized = () => { setCsrfToken(); setUser(null); localStorage.removeItem('vx_account_id') }; window.addEventListener('vx:unauthorized', onUnauthorized); return () => window.removeEventListener('vx:unauthorized', onUnauthorized) }, [])
-  const switchMode = (next: Mode) => { setMode(next); setError(''); setCaptcha(undefined); form.resetFields(); setEmail('') }
+  const switchMode = (next: Mode) => { setMode(next); setError(''); setCaptcha(undefined); form.resetFields(); setEmail(''); navigate(next === 'register' ? '/register' : next === 'reset' ? '/reset-password' : '/login') }
   const finishLogin = (next: User) => { setCsrfToken(next.csrf_token); setUser(next); setInitialized(true); message.success('登录成功') }
   const submit = async (values: { username?: string; password: string; email?: string; code?: string }) => { setBusy(true); setError(''); try { if (mode === 'login') finishLogin(await api<User>(initialized ? '/api/auth/login' : '/api/setup', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else if (mode === 'register') finishLogin(await api<User>('/api/auth/register', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else finishLogin(await api<User>('/api/auth/password-reset', { method: 'POST', body: JSON.stringify({ email: values.email, code: values.code, new_password: values.password, captcha_token: captcha }) })) } catch (cause) { setError(cause instanceof Error ? cause.message : '操作失败') } finally { setBusy(false) } }
   const syncField = (name: string, value: string) => { form.setFieldValue(name, value); if (name === 'email') setEmail(value) }
@@ -51,7 +70,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const updateUser = (next: User) => { setUser(next); if (next.csrf_token) setCsrfToken(next.csrf_token) }
   const value = useMemo(() => user ? { user, logout, updateUser } : null, [user])
   if (loading) return <div className="center-screen"><Spin size="large" /></div>
-  if (user) return <AuthContext.Provider value={value!}>{children}</AuthContext.Provider>
+  if (user) return <AuthContext.Provider value={value!}>{location.pathname === '/' ? <HomePage user={user} onLogout={() => void logout()} site={config} /> : children}</AuthContext.Provider>
+  if (location.pathname === '/') return <HomePage site={config} />
   const isSetup = !initialized
   return <main className="auth-page"><section className="auth-panel">{config.logo_url ? <img className="auth-site-logo" src={`${config.logo_url}?auth=1`} alt={config.site_name} /> : <div className="brand-mark">VX</div>}<Typography.Title level={2}>{config.site_name}</Typography.Title><Typography.Paragraph type="secondary">{config.site_subtitle || (isSetup ? '创建首个本地管理员账号' : '使用账号进入数据工作台')}</Typography.Paragraph>{error && <Alert type="error" showIcon message={error} />}
     <Form form={form} layout="vertical" onFinish={submit} requiredMark={false} key={mode}>{(mode === 'login' || mode === 'register') && <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }, { min: 3, message: '用户名至少需要 3 个字符' }, usernameRule]}><Input prefix={<UserRound size={17} />} autoComplete="username" onChange={(event) => syncField('username', event.currentTarget.value)} onInput={(event) => syncField('username', event.currentTarget.value)} onBlur={(event) => syncField('username', event.currentTarget.value)} /></Form.Item>}{(mode === 'register' || mode === 'reset') && <Form.Item name="email" label="注册邮箱" rules={[{ required: true, type: 'email', message: '请输入有效邮箱' }]}><Input prefix={<Mail size={17} />} autoComplete="email" onChange={(event) => syncField('email', event.target.value)} onBlur={(event) => syncField('email', event.target.value)} /></Form.Item>}{mode !== 'login' && <Form.Item name="code" label="邮箱验证码" rules={[{ required: true, message: '请输入 6 位数字验证码' }, { len: 6, pattern: /^\d{6}$/, message: '验证码必须是 6 位数字' }]}><Input.Search enterButton="发送验证码" onSearch={() => { void sendCode(form.getFieldValue('email')) }} /></Form.Item>}<Form.Item name="password" label={mode === 'login' ? '密码' : '新密码'} rules={[{ required: true, message: '请输入密码' }, ...(mode === 'login' ? [] : [{ min: 10, message: '密码至少需要 10 个字符' }, passwordRule])]}><Input.Password prefix={<LockKeyhole size={17} />} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} onChange={(event) => syncField('password', event.currentTarget.value)} onInput={(event) => syncField('password', event.currentTarget.value)} onBlur={(event) => syncField('password', event.currentTarget.value)} /></Form.Item><Captcha enabled={config.captcha_enabled} siteKey={config.captcha_site_key} onChange={setCaptcha} /><Button block type="primary" htmlType="submit" size="large" loading={busy}>{isSetup ? '初始化系统' : mode === 'login' ? '登录' : mode === 'register' ? '注册并登录' : '重置密码并登录'}</Button></Form>

@@ -25,11 +25,15 @@ export default function MenuVisibilityPage() {
   const [values, setValues] = useState<Record<string, boolean>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [order, setOrder] = useState<Record<string, string[]>>(DEFAULT_ORDER);
+  const [shortcuts, setShortcuts] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const configurableKeys = useMemo(() => MENU_TREE.flatMap(configurableDescendants).map((node) => node.key), []);
   useEffect(() => {
     void Promise.all([api<Record<string, boolean>>("/api/settings/menu-visibility"), api<Record<string, string>>("/api/settings/menu-labels"), api<Record<string, string[]>>("/api/settings/menu-order")]).then(([visibility, names, ordering]) => { setValues(visibility); setLabels(names); setOrder(ordering); }).catch((cause) => message.error(cause instanceof Error ? cause.message : "加载菜单配置失败")).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => {
+    void api<Record<string, boolean>>("/api/settings/menu-shortcuts").then(setShortcuts).catch(() => undefined);
   }, []);
   const setNode = (node: MenuNode, visible: boolean) => setValues((current) => ({ ...current, ...Object.fromEntries(configurableDescendants(node).map((item) => [item.key, visible])) }));
   const save = async () => {
@@ -41,6 +45,8 @@ export default function MenuVisibilityPage() {
         api<Record<string, string>>("/api/settings/menu-labels", { method: "PUT", body: JSON.stringify(labels) }),
         api<Record<string, string[]>>("/api/settings/menu-order", { method: "PUT", body: JSON.stringify(order) }),
       ]);
+      const shortcutValues = await api<Record<string, boolean>>("/api/settings/menu-shortcuts", { method: "PUT", body: JSON.stringify(shortcuts) });
+      setShortcuts(shortcutValues);
       setValues(visibility); setLabels(names); setOrder(ordering); window.dispatchEvent(new Event("vx:menu-config-updated")); message.success("菜单显示、名称和顺序配置已保存");
     } catch (cause) { message.error(cause instanceof Error ? cause.message : "保存菜单配置失败"); }
     finally { setSaving(false); }
@@ -56,7 +62,7 @@ export default function MenuVisibilityPage() {
       <div className="menu-visibility-row menu-visibility-parent">
         <Checkbox className={checked ? "menu-visibility-hidden-checkbox" : undefined} disabled={!configurable.length} checked={checked} indeterminate={indeterminate} onChange={(event) => setNode(node, event.target.checked)}>{node.label}</Checkbox>
         <span className="menu-visibility-status"><Tag color={node.configurable ? "blue" : "default"}>{node.configurable ? "可配置" : "不可配置"}</Tag>{configurable.length > 0 && (indeterminate ? "部分隐藏" : checked ? "全部隐藏" : "全部显示")}</span>
-        {labelEditor(node)}
+        <span className="menu-visibility-quick-placeholder" aria-hidden="true" />{labelEditor(node)}
         <span className="menu-visibility-order-placeholder" aria-hidden="true" />
         <span className="menu-visibility-switch-placeholder" aria-hidden="true" />
       </div>
@@ -64,6 +70,7 @@ export default function MenuVisibilityPage() {
         <span>{child.label}</span>
         <span className="menu-visibility-status"><Tag color={child.configurable ? "blue" : "default"}>{child.configurable ? "可配置" : "不可配置"}</Tag></span>
         {labelEditor(child)}<span className="menu-order-actions"><Button type="text" size="small" icon={<ArrowUp size={14} />} disabled={index === 0} title="上移" aria-label={`${child.label}上移`} onClick={() => moveChild(node.key, child.key, -1)} /><Button type="text" size="small" icon={<ArrowDown size={14} />} disabled={index === children.length - 1} title="下移" aria-label={`${child.label}下移`} onClick={() => moveChild(node.key, child.key, 1)} /></span><span className="menu-visibility-switch-cell">{child.configurable && <Switch className="menu-visibility-switch" checked={values[child.key] === false} checkedChildren="禁止显示" unCheckedChildren="显示" onChange={(hiddenValue) => setValues((current) => ({ ...current, [child.key]: !hiddenValue }))} />}</span>
+        <span className="menu-visibility-quick-cell menu-visibility-quick-cell-appended"><Switch className="menu-visibility-quick-switch" checked={shortcuts[child.key] === true} checkedChildren="快捷" unCheckedChildren="设置" onChange={(enabled) => setShortcuts((current) => ({ ...current, [child.key]: enabled }))} /></span>
       </div>)}
     </div>;
   };

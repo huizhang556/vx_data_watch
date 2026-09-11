@@ -150,6 +150,7 @@ export default function App() {
   const [siteInfo, setSiteInfo] = useState<{ site_name: string; site_subtitle: string; logo_url: string }>({ site_name: "视频号数据分析", site_subtitle: "", logo_url: "" });
   const [menuLabels, setMenuLabels] = useState<Record<string, string>>({});
   const [menuOrder, setMenuOrder] = useState<Record<string, string[]>>({});
+  const [menuShortcuts, setMenuShortcuts] = useState<Record<string, boolean>>({});
   const [menuRevision, setMenuRevision] = useState(0);
   const [menuNotice, setMenuNotice] = useState(false);
   const [menuNoticeSeconds, setMenuNoticeSeconds] = useState(10);
@@ -181,6 +182,7 @@ export default function App() {
     return () => { window.removeEventListener("vx:request-start", start); window.removeEventListener("vx:request-end", end); };
   }, []);
   useEffect(() => { const refreshOrder = () => { void api<Record<string, string[]>>("/api/settings/menu-order").then(setMenuOrder).catch(() => undefined); }; refreshOrder(); window.addEventListener("vx:menu-config-updated", refreshOrder); return () => window.removeEventListener("vx:menu-config-updated", refreshOrder); }, []);
+  useEffect(() => { const refreshShortcuts = () => { void api<Record<string, boolean>>("/api/settings/menu-shortcuts").then(setMenuShortcuts).catch(() => undefined); }; refreshShortcuts(); window.addEventListener("vx:menu-config-updated", refreshShortcuts); return () => window.removeEventListener("vx:menu-config-updated", refreshShortcuts); }, []);
 
   const reloadAccounts = useCallback(async () => {
     const rows = await api<Account[]>("/api/accounts");
@@ -200,7 +202,7 @@ export default function App() {
   useEffect(() => {
     if (localStorage.getItem("vx_theme_explicit") === "true") return;
     void api<{ default_theme: ThemeMode; default_font_family: string; default_font_size: string }>("/api/settings/style").then((settings) => { setTheme(settings.default_theme); applyStyleSettings(settings); }).catch(() => undefined);
-  }, [setTheme]);
+  }, []); // Load server defaults once; changing themes must not reload font settings.
   useEffect(() => {
     const refreshLabels = () => { void api<Record<string, string>>("/api/settings/menu-labels").then(setMenuLabels).catch(() => undefined); };
     refreshLabels();
@@ -265,6 +267,11 @@ export default function App() {
     if (displayItem.children?.length !== 1) return displayItem;
     return { ...displayItem, key: displayItem.children[0].key, label: displayItem.children[0].label, children: undefined };
   });
+  const visibleShortcutKeys = new Set(visibleItems.flatMap((item) => item.children?.map((child) => child.key) || []));
+  const shortcutItems = items.flatMap((parent) => (parent.children || [])
+    .filter((child) => menuShortcuts[child.key] === true)
+    .filter((child) => user.role === "admin" || visibleShortcutKeys.has(child.key))
+    .map((child) => ({ ...child, label: menuLabels[child.key] || child.label })));
   const handleMenuClick: MenuProps["onClick"] = ({ key }) => {
     const parent = visibleItems.find((item) => item.key === key);
     if (parent?.children?.length) return;
@@ -407,6 +414,10 @@ export default function App() {
               <Button className="theme-picker-button" type="text" icon={themeIcons[theme]} aria-label="选择主题" title="选择主题" />
             </Dropdown>
             <Space className="quick-links" size={4}>
+              {shortcutItems.length > 0 && shortcutItems.map((item) => (
+                <Button key={item.key} type="text" icon={<MessageCircle size={17} />} onClick={() => navigate(item.key)} title={item.label}>{item.label}</Button>
+              ))}
+              {shortcutItems.length === 0 && <>
               <Button
                 type="text"
                 icon={<MessageCircle size={17} />}
@@ -423,6 +434,7 @@ export default function App() {
               >
                 下载内容
               </Button>
+              </>}
             </Space>
             <Select
               placement="bottomLeft"

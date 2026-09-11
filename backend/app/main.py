@@ -167,6 +167,7 @@ settings = get_settings()
 MENU_VISIBILITY_KEY = "ui.menu_visibility"
 MENU_LABELS_KEY = "ui.menu_labels"
 MENU_ORDER_KEY = "ui.menu_order"
+MENU_SHORTCUTS_KEY = "ui.menu_shortcuts"
 DATABASE_SETTINGS_KEY = "system.database"
 SITE_SETTINGS_KEY = "site.settings"
 STYLE_SETTINGS_KEY = "system.style"
@@ -207,6 +208,15 @@ DEFAULT_MENU_ORDER = {
     "/analysis": ["/analysis/dashboard", "/analysis/videos", "/analysis/imports", "/analysis/ai"],
     "/download": ["/download/config", "/download/content"], "/usage": ["/usage/levels"],
     "/about": ["/about/architecture", "/about/technology", "/about/team"],
+}
+DEFAULT_MENU_SHORTCUTS = {
+    "/users/accounts": False, "/users/local": False,
+    "/ai-chat/config": False, "/ai-chat": True,
+    "/analysis/dashboard": False, "/analysis/videos": False, "/analysis/imports": False, "/analysis/ai": False,
+    "/download/config": False, "/download/content": True,
+    "/settings/auth": False, "/settings/database": False, "/settings/menu": False,
+    "/usage/levels": False,
+    "/about/architecture": False, "/about/technology": False, "/about/team": False,
 }
 # Only these entries are allowed to affect the ordinary-user sidebar. Parent
 # values are derived from their children; administrator-only entries remain
@@ -721,6 +731,41 @@ def save_menu_labels(payload: dict[str, str], user: CsrfUser, db: Annotated[Sess
 @app.get("/api/settings/menu-order")
 def read_menu_order(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, list[str]]:
     return _json_app_setting(db, MENU_ORDER_KEY, DEFAULT_MENU_ORDER)
+
+
+@app.get("/api/settings/menu-shortcuts")
+def read_menu_shortcuts(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
+    values = _json_app_setting(db, MENU_SHORTCUTS_KEY, DEFAULT_MENU_SHORTCUTS)
+    return {key: bool(values.get(key, default)) for key, default in DEFAULT_MENU_SHORTCUTS.items()}
+
+
+@app.put("/api/settings/menu-shortcuts")
+def save_menu_shortcuts(payload: dict[str, bool], user: CsrfUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, bool]:
+    if user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    if not isinstance(payload, dict) or any(key not in DEFAULT_MENU_SHORTCUTS for key in payload) or any(not isinstance(value, bool) for value in payload.values()):
+        raise HTTPException(status_code=422, detail="包含无效的快捷菜单项")
+    before = _json_app_setting(db, MENU_SHORTCUTS_KEY, DEFAULT_MENU_SHORTCUTS)
+    values = {key: bool(before.get(key, default)) for key, default in DEFAULT_MENU_SHORTCUTS.items()}
+    values.update({key: bool(value) for key, value in payload.items()})
+    row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_SHORTCUTS_KEY))
+    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+    if row:
+        row.value = encoded
+    else:
+        db.add(AppSetting(key=MENU_SHORTCUTS_KEY, value=encoded))
+    if values != before:
+        revision_row = db.scalar(select(AppSetting).where(AppSetting.key == MENU_VISIBILITY_REVISION_KEY))
+        try:
+            revision = int(revision_row.value.decode("utf-8")) if revision_row else 0
+        except (AttributeError, UnicodeDecodeError, ValueError):
+            revision = 0
+        if revision_row:
+            revision_row.value = str(revision + 1).encode("utf-8")
+        else:
+            db.add(AppSetting(key=MENU_VISIBILITY_REVISION_KEY, value=b"1"))
+    db.commit()
+    return values
 
 
 @app.put("/api/settings/menu-order")

@@ -378,7 +378,7 @@ export default function SettingsPage({
     </Form.Item>
   );
   return (
-    <div className="page">
+    <div className={`page${section === "settings" ? " settings-page" : ""}`}>
       <div className="page-heading">
         <div>
           <Typography.Title level={2}>
