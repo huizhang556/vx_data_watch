@@ -27,6 +27,7 @@ export function applyStyleSettings(settings: { default_font_family?: string; def
   const scale = FONT_SCALE_VALUES[settings.default_font_size || 'medium'] || FONT_SCALE_VALUES.medium
   document.documentElement.style.setProperty('--vx-font-family', family)
   document.documentElement.style.setProperty('--vx-font-scale', scale)
+  document.documentElement.style.setProperty('--vx-font-size-base', `${14 * Number(scale)}px`)
   document.body.style.fontFamily = family
   document.body.style.fontSize = `calc(14px * ${scale})`
 }

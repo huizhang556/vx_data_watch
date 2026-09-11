@@ -113,7 +113,7 @@ export default function SettingsPage({
   const [authSettings, setAuthSettings] = useState<AuthSettings | null>(null);
   const [siteSettings, setSiteSettings] = useState<SiteSettings | null>(null);
   const [activeSetting, setActiveSetting] = useState("site");
-  const [settingsNavWidth, setSettingsNavWidth] = useState(() => Number(localStorage.getItem("vx_settings_nav_width")) || 220);
+  const [settingsNavWidth, setSettingsNavWidth] = useState(() => Math.max(260, Math.min(380, Number(localStorage.getItem("vx_settings_nav_width")) || 300)));
   const [testRecipient, setTestRecipient] = useState("");
   const [loading, setLoading] = useState(false);
   const loadUsers = () =>
@@ -247,7 +247,7 @@ export default function SettingsPage({
   const jumpSetting = (key: string) => { setActiveSetting(key); document.getElementById(`settings-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
   const resizeSettingsNav = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
-    const move = (moveEvent: PointerEvent) => { const next = Math.max(180, Math.min(360, moveEvent.clientX - 32)); localStorage.setItem("vx_settings_nav_width", String(next)); setSettingsNavWidth(next); };
+    const move = (moveEvent: PointerEvent) => { const next = Math.max(260, Math.min(380, moveEvent.clientX - 32)); localStorage.setItem("vx_settings_nav_width", String(next)); setSettingsNavWidth(next); };
     const stop = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", stop);
   };
@@ -596,7 +596,7 @@ export default function SettingsPage({
         </section>
         <section className="section-band auth-settings-section" id="settings-style">
           <div className="section-heading"><div><Typography.Title level={3}>系统样式</Typography.Title><Typography.Text type="secondary">设置系统默认主题和字体。用户已主动选择的个人样式优先于系统默认值。</Typography.Text></div></div>
-          {user.role === "admin" && <Form form={styleForm} layout="vertical" onFinish={saveStyleSettings} onValuesChange={(_, values) => applyStyleSettings(values)} requiredMark={false} className="settings-form-grid">
+          {user.role === "admin" && <Form form={styleForm} layout="vertical" onFinish={async (values) => { await saveStyleSettings(values); applyStyleSettings(values); }} onValuesChange={(_, values) => applyStyleSettings(values)} requiredMark={false} className="settings-form-grid">
             <div id="settings-theme"><Form.Item name="default_theme" label="默认主题"><Select options={[{ value: "system", label: "跟随系统" }, { value: "morning", label: "晨曦模式" }, { value: "rose", label: "玫瑰柔和模式" }, { value: "lavender", label: "薰衣草模式" }, { value: "mist", label: "雾蓝模式" }, { value: "mint", label: "薄荷模式" }, { value: "cream", label: "奶油模式" }]} /></Form.Item></div>
             <div id="settings-font"><Form.Item name="default_font_family" label="字体系列"><Select options={[{ value: "system", label: systemFontLabel() }, { value: "microsoft-yahei", label: "微软雅黑" }, { value: "pingfang", label: "苹方" }, { value: "source-han-sans", label: "思源黑体" }, { value: "noto-sans-sc", label: "Noto Sans SC" }, { value: "source-han-serif", label: "思源宋体" }, { value: "simsun", label: "宋体（SimSun）" }, { value: "kaiti", label: "楷体（KaiTi）" }, { value: "segoe-ui", label: "Segoe UI" }, { value: "arial", label: "Arial/Helvetica" }, { value: "roboto", label: "Roboto" }, { value: "monospace", label: "等宽字体" }]} /></Form.Item><Form.Item name="default_font_size" label="字号"><Select options={[{ value: "size-10", label: "10 px（特小）" }, { value: "size-11", label: "11 px" }, { value: "size-12", label: "12 px（小）" }, { value: "size-13", label: "13 px" }, { value: "size-14", label: "14 px（标准）" }, { value: "size-15", label: "15 px" }, { value: "size-16", label: "16 px" }, { value: "size-18", label: "18 px（大）" }, { value: "size-20", label: "20 px" }, { value: "size-22", label: "22 px" }, { value: "size-24", label: "24 px（特大）" }]} /></Form.Item></div>
             <div className="settings-actions"><Button type="primary" htmlType="submit" loading={loading}>保存系统样式</Button></div>

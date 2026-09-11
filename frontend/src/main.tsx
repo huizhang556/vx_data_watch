@@ -25,7 +25,7 @@ function InteractionPolicy({ children }: PropsWithChildren) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#137a63', borderRadius: 8, fontFamily: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif' } }}>
+    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#137a63', borderRadius: 8, fontFamily: 'var(--vx-font-family, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif)' } }}>
       <InteractionPolicy><ThemeProvider><BrowserRouter><AuthGate><App /></AuthGate></BrowserRouter></ThemeProvider></InteractionPolicy>
     </ConfigProvider>
   </React.StrictMode>,
