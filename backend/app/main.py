@@ -63,6 +63,7 @@ from .download_service import cancel_task, pause_task, start_task
 from .deps import (
     CsrfUser,
     CurrentUser,
+    OptionalUser,
     require_admin,
     require_csrf_admin,
     require_csrf_editor,
@@ -190,6 +191,15 @@ DEFAULT_MENU_LABELS = {
     "/about": "\u5173\u4e8e\u5f00\u53d1", "/about/architecture": "\u9879\u76ee\u67b6\u6784", "/about/technology": "\u5f00\u53d1\u6280\u672f", "/about/team": "\u5173\u4e8e\u6211\u4eec",
 }
 DEFAULT_SITE_SETTINGS = {"site_name": "视频号数据分析", "site_subtitle": "数据驱动内容运营", "logo_path": "", "browser_title": "视频号数据分析", "footer_text": ""}
+
+
+def _site_logo_url(values: dict[str, Any]) -> str:
+    logo_path = str(values.get("logo_path") or "")
+    if not logo_path:
+        return ""
+    # The generated filename changes on every upload, making the URL a
+    # reliable cache key for browsers and reverse proxies.
+    return f"/api/settings/site/logo?v={Path(logo_path).name}"
 DEFAULT_STYLE_SETTINGS = {"default_theme": "system", "default_font_family": "system", "default_font_size": "medium"}
 DEFAULT_MENU_ORDER = {
     "/users": ["/users/accounts", "/users/local"], "/ai-chat-menu": ["/ai-chat/config", "/ai-chat"],
@@ -607,7 +617,7 @@ def auth_config(db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
         "captcha_site_key": values["captcha_site_key"],
         "site_name": site["site_name"],
         "site_subtitle": site["site_subtitle"],
-        "logo_url": "/api/settings/site/logo" if site.get("logo_path") else "",
+        "logo_url": _site_logo_url(site),
     }
 
 
@@ -1216,7 +1226,7 @@ def _json_app_setting(db: Session, key: str, defaults: dict[str, Any]) -> dict[s
 @app.get("/api/settings/site")
 def read_site_settings(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
     values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
-    values["logo_url"] = "/api/settings/site/logo" if values.get("logo_path") else ""
+    values["logo_url"] = _site_logo_url(values)
     return values
 
 
@@ -1239,7 +1249,7 @@ def save_site_settings(payload: dict[str, Any], user: CsrfUser, db: Annotated[Se
     else:
         db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
     db.commit()
-    values["logo_url"] = "/api/settings/site/logo" if values.get("logo_path") else ""
+    values["logo_url"] = _site_logo_url(values)
     return values
 
 
@@ -1256,20 +1266,28 @@ async def upload_site_logo(file: UploadFile, user: CsrfUser, db: Annotated[Sessi
         raise HTTPException(status_code=413, detail="Logo 文件不能超过 2 MB")
     logo_dir = get_settings().data_dir / "site-assets"
     logo_dir.mkdir(parents=True, exist_ok=True)
-    for old in logo_dir.glob("logo.*"):
-        old.unlink(missing_ok=True)
-    path = logo_dir / f"logo{suffix}"
-    path.write_bytes(content)
-    values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
-    values["logo_path"] = str(path.relative_to(get_settings().data_dir))
-    row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
-    encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
-    if row:
-        row.value = encoded
-    else:
-        db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
-    db.commit()
-    return {**values, "logo_url": "/api/settings/site/logo"}
+    path = logo_dir / f"logo-{uuid.uuid4().hex}{suffix}"
+    old_path_value = str(_json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS).get("logo_path") or "")
+    try:
+        path.write_bytes(content)
+        values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
+        values["logo_path"] = str(path.relative_to(get_settings().data_dir))
+        row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
+        encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
+        if row:
+            row.value = encoded
+        else:
+            db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
+        db.commit()
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    if old_path_value:
+        old_path = (get_settings().data_dir / old_path_value).resolve()
+        data_root = get_settings().data_dir.resolve()
+        if data_root in old_path.parents and old_path != path.resolve():
+            old_path.unlink(missing_ok=True)
+    return {**values, "logo_url": _site_logo_url(values)}
 
 
 @app.delete("/api/settings/site/logo", status_code=204)
@@ -1279,6 +1297,7 @@ def delete_site_logo(user: CsrfUser, db: Annotated[Session, Depends(get_db)]) ->
     values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
     if values.get("logo_path"):
         (get_settings().data_dir / values["logo_path"]).unlink(missing_ok=True)
+    old_path_value = str(values.get("logo_path") or "")
     values["logo_path"] = ""
     row = db.scalar(select(AppSetting).where(AppSetting.key == SITE_SETTINGS_KEY))
     encoded = json.dumps(values, ensure_ascii=False).encode("utf-8")
@@ -1287,10 +1306,15 @@ def delete_site_logo(user: CsrfUser, db: Annotated[Session, Depends(get_db)]) ->
     else:
         db.add(AppSetting(key=SITE_SETTINGS_KEY, value=encoded))
     db.commit()
+    if old_path_value:
+        old_path = (get_settings().data_dir / old_path_value).resolve()
+        data_root = get_settings().data_dir.resolve()
+        if data_root in old_path.parents:
+            old_path.unlink(missing_ok=True)
 
 
 @app.get("/api/settings/site/logo")
-def get_site_logo(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
+def get_site_logo(user: OptionalUser, db: Annotated[Session, Depends(get_db)]) -> FileResponse:
     values = _json_app_setting(db, SITE_SETTINGS_KEY, DEFAULT_SITE_SETTINGS)
     if not values.get("logo_path"):
         raise HTTPException(status_code=404, detail="未配置站点 Logo")
@@ -1311,8 +1335,8 @@ def save_style_settings(payload: dict[str, Any], user: CsrfUser, db: Annotated[S
     if user.role != Role.admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     themes = {"system", "morning", "rose", "lavender", "mist", "mint", "cream"}
-    fonts = {"system", "microsoft-yahei", "source-han-sans", "pingfang", "monospace"}
-    sizes = {"small", "medium", "large"}
+    fonts = {"system", "microsoft-yahei", "source-han-sans", "pingfang", "noto-sans-sc", "source-han-serif", "simsun", "kaiti", "segoe-ui", "arial", "roboto", "monospace"}
+    sizes = {"xsmall", "small", "medium", "large", "xlarge", "size-10", "size-11", "size-12", "size-13", "size-14", "size-15", "size-16", "size-18", "size-20", "size-22", "size-24"}
     if payload.get("default_theme") not in themes or payload.get("default_font_family") not in fonts or payload.get("default_font_size") not in sizes:
         raise HTTPException(status_code=422, detail="系统样式配置值无效")
     values = {"default_theme": payload["default_theme"], "default_font_family": payload["default_font_family"], "default_font_size": payload["default_font_size"]}

@@ -45,7 +45,7 @@ export default function MenuVisibilityPage() {
     } catch (cause) { message.error(cause instanceof Error ? cause.message : "保存菜单配置失败"); }
     finally { setSaving(false); }
   };
-  const labelEditor = (node: MenuNode) => <span className="menu-visibility-label-editor"><Typography.Text type="secondary">默认：{node.label}</Typography.Text><Input size="small" value={labels[node.key] || ""} maxLength={20} placeholder="留空使用默认名称" onChange={(event) => setLabels((current) => ({ ...current, [node.key]: event.target.value }))} /><Button type="text" size="small" icon={<RotateCcw size={14} />} title="恢复默认名称" aria-label={`恢复${node.label}默认名称`} disabled={!labels[node.key]} onClick={() => setLabels((current) => ({ ...current, [node.key]: "" }))} /></span>;
+  const labelEditor = (node: MenuNode) => <><Input className="menu-visibility-label-input" size="small" value={labels[node.key] || ""} maxLength={20} placeholder="留空使用默认名称" onChange={(event) => setLabels((current) => ({ ...current, [node.key]: event.target.value }))} /><Button className="menu-visibility-label-reset" type="text" size="small" icon={<RotateCcw size={14} />} title="恢复默认名称" aria-label={`恢复${node.label}默认名称`} disabled={!labels[node.key]} onClick={() => setLabels((current) => ({ ...current, [node.key]: "" }))} /></>;
   const moveChild = (parent: string, child: string, offset: number) => setOrder((current) => { const next = [...(current[parent] || [])]; const index = next.indexOf(child); const target = index + offset; if (index < 0 || target < 0 || target >= next.length) return current; [next[index], next[target]] = [next[target], next[index]]; return { ...current, [parent]: next }; });
   const renderNode = (node: MenuNode) => {
     const configurable = configurableDescendants(node);
@@ -55,13 +55,15 @@ export default function MenuVisibilityPage() {
     return <div className="menu-visibility-group" key={node.key}>
       <div className="menu-visibility-row menu-visibility-parent">
         <Checkbox className={checked ? "menu-visibility-hidden-checkbox" : undefined} disabled={!configurable.length} checked={checked} indeterminate={indeterminate} onChange={(event) => setNode(node, event.target.checked)}>{node.label}</Checkbox>
-        <span><Tag color={node.configurable ? "blue" : "default"}>{node.configurable ? "可配置" : "不可配置"}</Tag>{configurable.length > 0 && (indeterminate ? "部分隐藏" : checked ? "全部隐藏" : "全部显示")}</span>
+        <span className="menu-visibility-status"><Tag color={node.configurable ? "blue" : "default"}>{node.configurable ? "可配置" : "不可配置"}</Tag>{configurable.length > 0 && (indeterminate ? "部分隐藏" : checked ? "全部隐藏" : "全部显示")}</span>
         {labelEditor(node)}
+        <span className="menu-visibility-order-placeholder" aria-hidden="true" />
+        <span className="menu-visibility-switch-placeholder" aria-hidden="true" />
       </div>
       {(node.children ? [...node.children].sort((left, right) => (order[node.key] || []).indexOf(left.key) - (order[node.key] || []).indexOf(right.key)) : []).map((child, index, children) => <div className="menu-visibility-row menu-visibility-child" key={child.key}>
         <span>{child.label}</span>
-        <span><Tag color={child.configurable ? "blue" : "default"}>{child.configurable ? "可配置" : "不可配置"}</Tag>{child.configurable && <Switch className="menu-visibility-switch" checked={values[child.key] === false} checkedChildren="禁止显示" unCheckedChildren="显示" onChange={(hiddenValue) => setValues((current) => ({ ...current, [child.key]: !hiddenValue }))} />}</span>
-        {labelEditor(child)}<span className="menu-order-actions"><Button type="text" size="small" icon={<ArrowUp size={14} />} disabled={index === 0} title="上移" aria-label={`${child.label}上移`} onClick={() => moveChild(node.key, child.key, -1)} /><Button type="text" size="small" icon={<ArrowDown size={14} />} disabled={index === children.length - 1} title="下移" aria-label={`${child.label}下移`} onClick={() => moveChild(node.key, child.key, 1)} /></span>
+        <span className="menu-visibility-status"><Tag color={child.configurable ? "blue" : "default"}>{child.configurable ? "可配置" : "不可配置"}</Tag></span>
+        {labelEditor(child)}<span className="menu-order-actions"><Button type="text" size="small" icon={<ArrowUp size={14} />} disabled={!child.configurable || index === 0} title="上移" aria-label={`${child.label}上移`} onClick={() => moveChild(node.key, child.key, -1)} /><Button type="text" size="small" icon={<ArrowDown size={14} />} disabled={!child.configurable || index === children.length - 1} title="下移" aria-label={`${child.label}下移`} onClick={() => moveChild(node.key, child.key, 1)} /></span><span className="menu-visibility-switch-cell">{child.configurable && <Switch className="menu-visibility-switch" checked={values[child.key] === false} checkedChildren="禁止显示" unCheckedChildren="显示" onChange={(hiddenValue) => setValues((current) => ({ ...current, [child.key]: !hiddenValue }))} />}</span>
       </div>)}
     </div>;
   };

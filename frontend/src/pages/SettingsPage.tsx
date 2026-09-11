@@ -22,7 +22,7 @@ import dayjs from "dayjs";
 import { api } from "../api";
 import { useAccount } from "../account";
 import { useAuth } from "../auth";
-import { useTheme, type ThemeMode } from "../theme";
+import { applyStyleSettings, useTheme, type ThemeMode } from "../theme";
 import type { Account } from "../types";
 
 interface LocalUser {
@@ -56,7 +56,14 @@ interface AuthSettings {
   captcha_secret_key_set?: boolean;
 }
 interface SiteSettings { site_name: string; site_subtitle: string; logo_path: string; logo_url: string; browser_title: string; footer_text: string }
-interface StyleSettings { default_theme: ThemeMode; default_font_family: string; default_font_size: "small" | "medium" | "large" }
+interface StyleSettings { default_theme: ThemeMode; default_font_family: string; default_font_size: string }
+const systemFontLabel = () => {
+  const platform = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (/Windows/i.test(platform)) return "系统默认（微软雅黑）";
+  if (/Macintosh|iPhone|iPad/i.test(platform)) return "系统默认（苹方）";
+  if (/Linux/i.test(platform)) return "系统默认（Noto Sans SC）";
+  return "系统默认（系统字体栈）";
+};
 const settingsTree = [
   { key: "site", title: "站点信息" },
   { key: "email", title: "邮箱与注册" },
@@ -138,6 +145,11 @@ export default function SettingsPage({
       void loadStyleSettings();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (loading || user.role !== "admin") return;
+    const values = styleForm.getFieldsValue();
+    if (values.default_font_family) applyStyleSettings(values);
+  }, [loading, user.role]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (user.role !== "admin" || section === "settings") return;
     const timer = window.setInterval(() => void loadUsers(), 30000);
@@ -223,7 +235,7 @@ export default function SettingsPage({
     return false;
   };
   const deleteSiteLogo = async () => {
-    try { await api<void>("/api/settings/site/logo", { method: "DELETE" }); const saved = await api<SiteSettings>("/api/settings/site"); setSiteSettings(saved); siteForm.setFieldsValue(saved); message.success("站点 Logo 已恢复默认"); }
+    try { await api<void>("/api/settings/site/logo", { method: "DELETE" }); const saved = await api<SiteSettings>("/api/settings/site"); setSiteSettings(saved); siteForm.setFieldsValue(saved); window.dispatchEvent(new Event("vx:site-config-updated")); message.success("站点 Logo 已恢复默认"); }
     catch (cause) { message.error(cause instanceof Error ? cause.message : "Logo 删除失败"); }
   };
   const saveStyleSettings = async (values: StyleSettings) => {
@@ -584,9 +596,9 @@ export default function SettingsPage({
         </section>
         <section className="section-band auth-settings-section" id="settings-style">
           <div className="section-heading"><div><Typography.Title level={3}>系统样式</Typography.Title><Typography.Text type="secondary">设置系统默认主题和字体。用户已主动选择的个人样式优先于系统默认值。</Typography.Text></div></div>
-          {user.role === "admin" && <Form form={styleForm} layout="vertical" onFinish={saveStyleSettings} requiredMark={false} className="settings-form-grid">
+          {user.role === "admin" && <Form form={styleForm} layout="vertical" onFinish={saveStyleSettings} onValuesChange={(_, values) => applyStyleSettings(values)} requiredMark={false} className="settings-form-grid">
             <div id="settings-theme"><Form.Item name="default_theme" label="默认主题"><Select options={[{ value: "system", label: "跟随系统" }, { value: "morning", label: "晨曦模式" }, { value: "rose", label: "玫瑰柔和模式" }, { value: "lavender", label: "薰衣草模式" }, { value: "mist", label: "雾蓝模式" }, { value: "mint", label: "薄荷模式" }, { value: "cream", label: "奶油模式" }]} /></Form.Item></div>
-            <div id="settings-font"><Form.Item name="default_font_family" label="字体系列"><Select options={[{ value: "system", label: "系统默认" }, { value: "microsoft-yahei", label: "微软雅黑" }, { value: "source-han-sans", label: "思源黑体" }, { value: "pingfang", label: "苹方/系统字体" }, { value: "monospace", label: "等宽字体" }]} /></Form.Item><Form.Item name="default_font_size" label="字号"><Select options={[{ value: "small", label: "小" }, { value: "medium", label: "标准" }, { value: "large", label: "大" }]} /></Form.Item></div>
+            <div id="settings-font"><Form.Item name="default_font_family" label="字体系列"><Select options={[{ value: "system", label: systemFontLabel() }, { value: "microsoft-yahei", label: "微软雅黑" }, { value: "pingfang", label: "苹方" }, { value: "source-han-sans", label: "思源黑体" }, { value: "noto-sans-sc", label: "Noto Sans SC" }, { value: "source-han-serif", label: "思源宋体" }, { value: "simsun", label: "宋体（SimSun）" }, { value: "kaiti", label: "楷体（KaiTi）" }, { value: "segoe-ui", label: "Segoe UI" }, { value: "arial", label: "Arial/Helvetica" }, { value: "roboto", label: "Roboto" }, { value: "monospace", label: "等宽字体" }]} /></Form.Item><Form.Item name="default_font_size" label="字号"><Select options={[{ value: "size-10", label: "10 px（特小）" }, { value: "size-11", label: "11 px" }, { value: "size-12", label: "12 px（小）" }, { value: "size-13", label: "13 px" }, { value: "size-14", label: "14 px（标准）" }, { value: "size-15", label: "15 px" }, { value: "size-16", label: "16 px" }, { value: "size-18", label: "18 px（大）" }, { value: "size-20", label: "20 px" }, { value: "size-22", label: "22 px" }, { value: "size-24", label: "24 px（特大）" }]} /></Form.Item></div>
             <div className="settings-actions"><Button type="primary" htmlType="submit" loading={loading}>保存系统样式</Button></div>
           </Form>}
         </section>

@@ -21,7 +21,7 @@ const levelInfo = (role: string | undefined, level: number | undefined) => {
 export function UserAvatar({ username, avatar, role, level, size = 36, className }: UserAvatarProps) {
   const info = levelInfo(role, level);
   const Icon = info.icon;
-  return <span className={`user-avatar ${className || ""}`} style={{ "--user-avatar-size": `${size}px` } as React.CSSProperties}>
+  return <span className={`user-avatar user-avatar-level-${info.className} ${className || ""}`} style={{ "--user-avatar-size": `${size}px` } as React.CSSProperties}>
     <Avatar size={size} src={avatar && avatar !== "default" ? avatar : undefined}>{username.slice(0, 1).toUpperCase()}</Avatar>
     <Tooltip title={info.label}>
       <span className={`user-avatar-badge user-avatar-badge-${info.className}`} aria-label={info.label}><Icon size={Math.max(10, Math.round(size * 0.38))} strokeWidth={2.5} /></span>

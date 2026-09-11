@@ -51,7 +51,7 @@ import {
 import { api } from "./api";
 import { AccountContext } from "./account";
 import { useAuth } from "./auth";
-import { THEME_LABELS, useTheme, type ThemeMode } from "./theme";
+import { applyStyleSettings, THEME_LABELS, useTheme, type ThemeMode } from "./theme";
 import type { Account } from "./types";
 import { UserAvatar } from "./components/UserAvatar";
 
@@ -199,7 +199,7 @@ export default function App() {
   useEffect(() => { const loadSite = () => { void api<{ site_name: string; site_subtitle: string; logo_url: string }>("/api/settings/site").then(setSiteInfo).catch(() => undefined); }; loadSite(); window.addEventListener("vx:site-config-updated", loadSite); return () => window.removeEventListener("vx:site-config-updated", loadSite); }, []);
   useEffect(() => {
     if (localStorage.getItem("vx_theme_explicit") === "true") return;
-    void api<{ default_theme: ThemeMode }>("/api/settings/style").then(({ default_theme }) => setTheme(default_theme)).catch(() => undefined);
+    void api<{ default_theme: ThemeMode; default_font_family: string; default_font_size: string }>("/api/settings/style").then((settings) => { setTheme(settings.default_theme); applyStyleSettings(settings); }).catch(() => undefined);
   }, [setTheme]);
   useEffect(() => {
     const refreshLabels = () => { void api<Record<string, string>>("/api/settings/menu-labels").then(setMenuLabels).catch(() => undefined); };
@@ -448,7 +448,7 @@ export default function App() {
                 aria-label="打开用户菜单"
               >
                 <UserAvatar
-                  size={36}
+                  size={42}
                   className="profile-avatar"
                   username={user.username}
                   avatar={user.avatar}

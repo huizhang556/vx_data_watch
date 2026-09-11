@@ -85,7 +85,7 @@ def test_acr_registry_token_authentication(monkeypatch) -> None:  # type: ignore
         result = await updates.fetch_registry_versions(
             "team/app", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
-        assert [row["version"] for row in result] == ["0.5.5", "0.5.4", "0.5.3"]
+        assert [row["version"] for row in result] == ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]
         assert any(auth == "Bearer test-token" for _, auth in fake.calls)
 
     asyncio.run(run())
@@ -117,13 +117,13 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
             "zhang_spaces/vx-data-watch", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
         assert [row["version"] for row in docker] == ["0.4.0"]
-        assert [row["version"] for row in acr] == ["0.5.5", "0.5.4", "0.5.3"]
+        assert [row["version"] for row in acr] == ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]
 
     asyncio.run(run())
 
 
 def test_queue_rejects_parallel_update(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    settings = SimpleNamespace(data_dir=tmp_path, update_repository="litehub/vx-data-watch")
+    settings = SimpleNamespace(data_dir=tmp_path, update_repository="litehub/vx-data-watch", deployment_method="compose")
     monkeypatch.setattr(updates, "get_settings", lambda: settings)
     request = updates.queue_update("0.3.2", "backup.vxbackup")
     assert request["version"] == "0.3.2"
@@ -169,7 +169,7 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
             self.calls.append(("tag", source, repository, tag))
 
         def image_tags(self, _repository: str) -> list[str]:
-            return ["0.5.5", "0.5.4", "0.5.3", "0.5.2", "latest"]
+            return ["0.5.6", "0.5.5", "0.5.4", "0.5.3", "0.5.2", "latest"]
 
         def remove_image(self, image: str) -> None:
             self.calls.append(("remove-image", image))
@@ -194,15 +194,16 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
         engine=engine,  # type: ignore[arg-type]
     )
     assert engine.calls == [
-        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.5"),
+        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.6"),
         ("pull", "litehub/vx-data-watch", "0.3.2"),
         ("tag", "litehub/vx-data-watch:0.3.2", "docker.io/litehub/vx-data-watch", "latest"),
         ("replace", "vx-data-watch", "app", "docker.io/litehub/vx-data-watch", "latest"),
         ("replace-running", "vx-data-watch", "updater", "docker.io/litehub/vx-data-watch", "latest"),
         ("remove", "old-updater", True),
-            ("remove-image", "docker.io/litehub/vx-data-watch:0.5.4"),
-            ("remove-image", "docker.io/litehub/vx-data-watch:0.5.3"),
-            ("remove-image", "docker.io/litehub/vx-data-watch:0.5.2"),
+        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.5"),
+        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.4"),
+        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.3"),
+        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.2"),
     ]
     assert "VX_IMAGE=docker.io/litehub/vx-data-watch:latest" in env_file.read_text()
     assert updates.read_update_status()["state"] == "success"

@@ -45,6 +45,18 @@ def get_current_user(request: Request, db: Db) -> User:
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def get_optional_user(request: Request, db: Db) -> User | None:
+    try:
+        return get_current_user(request, db)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            return None
+        raise
+
+
+OptionalUser = Annotated[User | None, Depends(get_optional_user)]
+
+
 def require_editor(user: CurrentUser) -> User:
     if user.role not in {Role.admin, Role.editor}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要编辑权限")

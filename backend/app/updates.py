@@ -303,7 +303,8 @@ def queue_update(version: str, backup_filename: str, registry: str = "docker.io"
     settings = get_settings()
     configured_image = ""
     try:
-        env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
+        configured_env_path = getattr(settings, "update_env_file", None)
+        env_path = configured_env_path if configured_env_path and configured_env_path.is_file() else Path(".env")
         content = env_path.read_text(encoding="utf-8") if env_path.is_file() else ""
         match = re.search(r"(?m)^VX_IMAGE=(.+)$", content)
         configured_image = match.group(1).strip() if match else ""
@@ -316,7 +317,7 @@ def queue_update(version: str, backup_filename: str, registry: str = "docker.io"
         "registry": registry,
         "image": configured_image or f"{registry}/{REGISTRY_REPOSITORIES.get(registry, settings.update_repository)}:latest",
         "current_version": __version__,
-        "deployment_method": settings.deployment_method,
+        "deployment_method": getattr(settings, "deployment_method", "compose"),
         "backup_filename": backup_filename,
         "requested_at": datetime.now(UTC).isoformat(),
     }
