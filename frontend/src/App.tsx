@@ -79,11 +79,11 @@ const items = [
     icon: <UserRound size={19} />,
     label: "用户管理",
     children: [
-      { key: "/users/accounts", label: "视频号账号" },
-      { key: "/users/local", label: "注册用户管理" },
+      { key: "/users/accounts", icon: <Video size={17} />, label: "视频号账号" },
+      { key: "/users/local", icon: <UserRound size={17} />, label: "注册用户管理" },
     ],
   },
-  { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat/config", label: "AI 配置" }, { key: "/ai-chat", label: "AI 聊天" }] },
+  { key: "/ai-chat-menu", icon: <Bot size={19} />, label: "AI 速问", children: [{ key: "/ai-chat/config", icon: <Settings size={17} />, label: "AI 配置" }, { key: "/ai-chat", icon: <MessageCircle size={17} />, label: "AI 聊天" }] },
   { key: "/accounts", icon: <Video size={19} />, label: "视频号账号" },
   {
     key: "/analysis",
@@ -109,27 +109,27 @@ const items = [
     icon: <Download size={19} />,
     label: "视频下载",
     children: [
-      { key: "/download/config", label: "下载配置" },
-      { key: "/download/content", label: "下载内容" },
+      { key: "/download/config", icon: <Settings size={17} />, label: "下载配置" },
+      { key: "/download/content", icon: <Download size={17} />, label: "下载内容" },
     ],
   },
-  { key: "/settings", icon: <Settings size={19} />, label: "系统设置", children: [{ key: "/settings/auth", label: "基础系统设置" }, { key: "/settings/database", label: "数据库设置" }, { key: "/settings/menu", label: "菜单显示管理" }] },
+  { key: "/settings", icon: <Settings size={19} />, label: "系统设置", children: [{ key: "/settings/auth", icon: <Settings size={17} />, label: "基础系统设置" }, { key: "/settings/database", icon: <DatabaseBackup size={17} />, label: "数据库设置" }, { key: "/settings/menu", icon: <Settings size={17} />, label: "菜单显示管理" }] },
   { key: "/backups", icon: <DatabaseBackup size={19} />, label: "加密备份" },
   { key: "/updates", icon: <RefreshCw size={19} />, label: "在线更新" },
   {
     key: "/usage",
     icon: <BookOpen size={19} />,
     label: "使用说明",
-    children: [{ key: "/usage/levels", label: "等级说明" }],
+    children: [{ key: "/usage/levels", icon: <BookOpen size={17} />, label: "等级说明" }],
   },
   {
     key: "/about",
     icon: <Info size={19} />,
     label: "关于开发",
     children: [
-      { key: "/about/architecture", label: "项目架构" },
-      { key: "/about/technology", label: "开发技术" },
-      { key: "/about/team", label: "关于我们" },
+      { key: "/about/architecture", icon: <Info size={17} />, label: "项目架构" },
+      { key: "/about/technology", icon: <Bot size={17} />, label: "开发技术" },
+      { key: "/about/team", icon: <UserRound size={17} />, label: "关于我们" },
     ],
   },
 ];
@@ -147,7 +147,7 @@ export default function App() {
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [menuVisibility, setMenuVisibility] = useState<Record<string, boolean>>({});
-  const [siteInfo, setSiteInfo] = useState<{ site_name: string; site_subtitle: string; logo_url: string }>({ site_name: "视频号数据分析", site_subtitle: "", logo_url: "" });
+  const [siteInfo, setSiteInfo] = useState<{ site_name: string; site_subtitle: string; logo_url: string }>({ site_name: "HG-工具小屋", site_subtitle: "", logo_url: "" });
   const [menuLabels, setMenuLabels] = useState<Record<string, string>>({});
   const [menuOrder, setMenuOrder] = useState<Record<string, string[]>>({});
   const [menuShortcuts, setMenuShortcuts] = useState<Record<string, boolean>>({});
@@ -415,7 +415,7 @@ export default function App() {
             </Dropdown>
             <Space className="quick-links" size={4}>
               {shortcutItems.length > 0 && shortcutItems.map((item) => (
-                <Button key={item.key} type="text" icon={<MessageCircle size={17} />} onClick={() => navigate(item.key)} title={item.label}>{item.label}</Button>
+                <Button key={item.key} type="text" icon={item.icon || <MessageCircle size={17} />} onClick={() => navigate(item.key)} title={item.label}>{item.label}</Button>
               ))}
               {shortcutItems.length === 0 && <>
               <Button

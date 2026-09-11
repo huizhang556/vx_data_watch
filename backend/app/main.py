@@ -191,7 +191,7 @@ DEFAULT_MENU_LABELS = {
     "/backups": "\u52a0\u5bc6\u5907\u4efd", "/updates": "\u5728\u7ebf\u66f4\u65b0", "/usage": "\u4f7f\u7528\u8bf4\u660e", "/usage/levels": "\u7b49\u7ea7\u8bf4\u660e",
     "/about": "\u5173\u4e8e\u5f00\u53d1", "/about/architecture": "\u9879\u76ee\u67b6\u6784", "/about/technology": "\u5f00\u53d1\u6280\u672f", "/about/team": "\u5173\u4e8e\u6211\u4eec",
 }
-DEFAULT_SITE_SETTINGS = {"site_name": "视频号数据分析", "site_subtitle": "数据驱动内容运营", "logo_path": "", "browser_title": "视频号数据分析", "footer_text": ""}
+DEFAULT_SITE_SETTINGS = {"site_name": "HG-工具小屋", "site_subtitle": "数据驱动内容运营", "logo_path": "", "browser_title": "HG-工具小屋", "footer_text": ""}
 
 
 def _site_logo_url(values: dict[str, Any]) -> str:

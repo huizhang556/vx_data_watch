@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VX_", env_file=".env", extra="ignore")
 
-    app_name: str = "视频号数据分析"
+    app_name: str = "HG-工具小屋"
     data_dir: Path = Path("./data")
     database_url: str = "sqlite:///./data/vx_data.db"
     cookie_secure: bool = False
