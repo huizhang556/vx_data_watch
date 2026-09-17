@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     database_url: str = "sqlite:///./data/vx_data.db"
     cookie_secure: bool = False
+    api_docs_enabled: bool = False
     session_hours: int = 12
     max_upload_mb: int = 20
     master_key: str | None = None

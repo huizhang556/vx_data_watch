@@ -227,6 +227,22 @@ CONFIGURABLE_MENU_VISIBILITY = {
     "/usage/levels", "/about/architecture", "/about/technology", "/about/team",
 }
 _login_attempts: dict[str, list[float]] = {}
+_auth_request_attempts: dict[str, list[float]] = {}
+
+
+def _check_auth_rate_limit(key: str, *, limit: int, window_seconds: int = 300) -> None:
+    """Apply a small local guard to unauthenticated auth and mail endpoints.
+
+    This is intentionally defensive for single-process deployments. Production
+    multi-worker deployments should replace it with a shared Redis/database
+    limiter, but the local guard still prevents accidental request floods.
+    """
+    now = time.monotonic()
+    attempts = [value for value in _auth_request_attempts.get(key, []) if now - value < window_seconds]
+    if len(attempts) >= limit:
+        raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试")
+    attempts.append(now)
+    _auth_request_attempts[key] = attempts
 
 
 @asynccontextmanager
@@ -238,8 +254,9 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    docs_url="/api/docs",
+    docs_url="/api/docs" if settings.api_docs_enabled else None,
     redoc_url=None,
+    openapi_url="/api/openapi.json" if settings.api_docs_enabled else None,
     lifespan=lifespan,
 )
 
@@ -907,6 +924,8 @@ def login(
     attempt_key = (
         f"{request.client.host if request.client else 'unknown'}:{payload.username.lower()}"
     )
+    client_host = request.client.host if request.client else "unknown"
+    _check_auth_rate_limit(f"login:ip:{client_host}", limit=30, window_seconds=300)
     now = time.monotonic()
     attempts = [value for value in _login_attempts.get(attempt_key, []) if now - value < 300]
     if len(attempts) >= 5:
@@ -933,6 +952,9 @@ def register_request_code(payload: RegisterCodeRequest, request: Request, db: An
         raise HTTPException(status_code=404, detail="注册功能当前已关闭")
     require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
+    client_host = request.client.host if request.client else "unknown"
+    _check_auth_rate_limit(f"register:ip:{client_host}", limit=10, window_seconds=3600)
+    _check_auth_rate_limit(f"register:email:{email}", limit=5, window_seconds=3600)
     if email_user(db, email):
         raise HTTPException(status_code=409, detail="该邮箱已注册")
     send_code(db, email, "register")
@@ -965,6 +987,9 @@ def register(payload: RegisterRequest, request: Request, response: Response, db:
 def reset_request_code(payload: PasswordResetRequest, request: Request, db: Annotated[Session, Depends(get_db)]) -> dict[str, str]:
     require_captcha(request, payload.captcha_token, db)
     email = normalize_email(payload.email)
+    client_host = request.client.host if request.client else "unknown"
+    _check_auth_rate_limit(f"reset:ip:{client_host}", limit=10, window_seconds=3600)
+    _check_auth_rate_limit(f"reset:email:{email}", limit=5, window_seconds=3600)
     if not email_user(db, email):
         # Avoid exposing whether an address is registered.
         return {"message": "如果邮箱已注册，验证码将发送至该邮箱"}
@@ -1749,8 +1774,11 @@ def import_history(
     query = (
         select(ImportBatch).order_by(ImportBatch.created_at.desc()).limit(min(max(limit, 1), 200))
     )
-    if account_id:
+    if account_id is not None:
+        _get_account(db, account_id, user)
         query = query.where(ImportBatch.account_id == account_id)
+    if user.role != Role.admin:
+        query = query.where(ImportBatch.user_id == user.id)
     rows = db.scalars(query).all()
     return [
         {
@@ -3011,11 +3039,14 @@ def _deployment_file_content(path: Path, redact: bool = False) -> dict[str, Any]
         return {"path": str(path), "exists": True, "readable": False, "content": "", "error": str(exc)}
     if redact:
         secret_keys = ("KEY", "PASSWORD", "SECRET", "TOKEN", "COOKIE", "MASTER")
-        content = "\n".join(
-            f"{key}=********" if separator and value and any(token in key.upper() for token in secret_keys) else line
-            for line in content.splitlines()
-            for key, separator, value in [line.partition("=")]
-        )
+        redacted_lines = []
+        for line in content.splitlines():
+            match = re.match(r"^(\s*(?:[-]?\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*)(.+?)\s*$", line)
+            if match and any(token in match.group(2).upper() for token in secret_keys):
+                redacted_lines.append(f"{match.group(1)}********")
+            else:
+                redacted_lines.append(line)
+        content = "\n".join(redacted_lines)
     return {"path": str(path), "exists": True, "readable": True, "content": content}
 
 
@@ -3068,7 +3099,7 @@ def system_deployment_info(user: Annotated[User, Depends(require_admin)]) -> dic
     return {
         "deployment_method": deployment_method,
         "image_path": image_path,
-        "service_runtime": {"project_dir": str(project_dir), "env_file": _deployment_file_content(env_path, redact=True), "compose_file": _deployment_file_content(compose_path)},
+        "service_runtime": {"project_dir": str(project_dir), "env_file": _deployment_file_content(env_path, redact=True), "compose_file": _deployment_file_content(compose_path, redact=True)},
         "data_storage": storage,
     }
 
@@ -3078,7 +3109,7 @@ def system_deployment_file(file: str = Query(..., pattern="^(env|compose)$"), us
     settings = get_settings()
     env_path = settings.update_env_file if settings.update_env_file.is_file() else Path(".env")
     path = env_path if file == "env" else env_path.parent / "docker-compose.yaml"
-    return _deployment_file_content(path, redact=file == "env")
+    return _deployment_file_content(path, redact=True)
 
 
 def _deployment_migration_plan() -> dict[str, Any]:
@@ -3207,14 +3238,15 @@ async def system_update(
         versions = await fetch_registry_versions(REGISTRY_REPOSITORIES.get(payload.registry, settings.update_repository), payload.registry)
     except UpdateRegistryError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    if payload.version not in {row["version"] for row in versions}:
+    version_row = next((row for row in versions if row["version"] == payload.version), None)
+    if version_row is None:
         raise HTTPException(status_code=404, detail="所选镜像仓库中不存在该版本")
     try:
         backup = create_backup()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"更新前创建备份失败：{exc}") from exc
     try:
-        request = queue_update(payload.version, backup.name, payload.registry)
+        request = queue_update(payload.version, backup.name, payload.registry, version_row.get("digest"))
     except UpdateBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+from urllib.parse import urlsplit
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -24,7 +26,24 @@ def _base_candidates(base_url: str) -> list[str]:
 
 
 def _endpoint(base_url: str, suffix: str) -> str:
+    _validate_provider_url(base_url)
     return base_url.rstrip("/") + suffix
+
+
+def _validate_provider_url(base_url: str) -> None:
+    """Reject obvious SSRF targets before making an outbound provider call."""
+    parsed = urlsplit(base_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"https", "http"} or not host:
+        raise ValueError("AI 接口地址无效")
+    if host in {"localhost", "localhost.localdomain", "metadata.google.internal", "instance-data"}:
+        raise ValueError("AI 接口地址不允许指向本机或云元数据服务")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if address.is_loopback or address.is_private or address.is_link_local or address.is_reserved or address.is_unspecified:
+        raise ValueError("AI 接口地址不允许指向内网或保留地址")
 
 
 def _configured_protocol(config: AIProviderConfig, model: str | None = None) -> str:

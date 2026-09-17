@@ -295,7 +295,7 @@ def read_update_status() -> dict[str, Any]:
         return {"state": "unknown", "message": "更新状态文件不可读"}
 
 
-def queue_update(version: str, backup_filename: str, registry: str = "docker.io") -> dict[str, Any]:
+def queue_update(version: str, backup_filename: str, registry: str = "docker.io", digest: str | None = None) -> dict[str, Any]:
     request_path, processing_path, status_path = update_paths()
     status = read_update_status()
     if request_path.exists() or processing_path.exists() or status.get("state") in ACTIVE_STATES:
@@ -313,6 +313,7 @@ def queue_update(version: str, backup_filename: str, registry: str = "docker.io"
     request = {
         "id": uuid.uuid4().hex,
         "version": version,
+        "digest": digest if isinstance(digest, str) and digest.startswith("sha256:") else None,
         "repository": REGISTRY_REPOSITORIES.get(registry, get_settings().update_repository),
         "registry": registry,
         "image": configured_image or f"{registry}/{REGISTRY_REPOSITORIES.get(registry, settings.update_repository)}:latest",

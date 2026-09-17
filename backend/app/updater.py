@@ -152,6 +152,11 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     inspect_image = getattr(docker, "image_inspect", None)
     target_metadata = inspect_image(f"{pull_repository}:{version}") if callable(inspect_image) else {}
     target_digest = next(iter(target_metadata.get("RepoDigests") or []), None)
+    expected_digest = request.get("digest")
+    if expected_digest:
+        actual_digest = target_digest.rsplit("@", 1)[-1] if isinstance(target_digest, str) and "@" in target_digest else None
+        if actual_digest != expected_digest:
+            raise ValueError("目标镜像摘要与版本仓库记录不一致，已终止更新")
     # Keep deployment configuration on stable latest while pulling immutable
     # release tags. The companion updater is recreated after app replacement
     # so both services run the same image digest.
