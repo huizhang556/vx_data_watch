@@ -1,23 +1,14 @@
 # VX Data Watch
 
-## 0.5.7 更新说明
+HG-工具小屋（技术项目名：VX Data Watch）是一个多功能、综合性的工具类网站，主要提供以下能力：
 
-- AI 官方接口协议改为由 `backend/app/ai_protocols.json` 统一维护。该公开配置记录内置厂商、默认模型、聊天协议、请求方法、请求路径和请求格式。
-- 管理员打开 AI 配置时，官方厂商列表、默认模型和当前模型请求协议由 `/api/ai/protocols` 动态加载；协议选项会显示实际的 HTTP 方法和请求路径。
-- AI 测试请求、普通聊天请求和流式聊天请求使用同一协议目录解析官方接口路径；自定义 OpenAI 兼容地址继续使用兼容回退逻辑。
-- AI 聊天使用用户在当前会话中点击“应用模型”后选择的模型，不会回退使用接口默认模型。
-- AI 接口地址增加 HTTPS、凭据、内网地址和重定向校验；登录、注册验证码和密码重置验证码增加进程内限流。部署信息页面查看 `.env` 和 Compose 内容时会自动脱敏敏感字段。
-- 新增手动触发的候选构建和发布工作流：`.github/workflows/build-candidate.yml` 与 `.github/workflows/publish-release.yml`。正式镜像发布前应先人工验证候选镜像；兼容构建关闭 OCI provenance 和 SBOM 附加清单。
+- **用户与权限**：支持用户登录、注册、多视频号管理和会员等级隔离；管理员可以进入系统后台进行管理。
+- **视频号数据分析**：本地优先处理视频号运营数据，支持 CSV/Excel 导入、截图 OCR、数据分析、趋势分析和 AI 建议，适配桌面端与移动端浏览器。
+- **视频下载**：支持油管视频列表分析、视频下载、本地保存和格式转码；使用下载功能时需要用户提供自己的 Cookies。
+- **AI 工作台**：提供聊天、生图和生视频模式，并支持多厂商模型接入。
+- **管理员运维**：提供在线更新、AI 接入配置、用户数据加密备份和系统设置等功能。
+- **多种部署方式**：支持国内外服务器一键脚本部署、在线更新、数据迁移与备份，也支持 `Docker Compose` 和本地源码部署。
 
-详细变更顺序和测试记录请参阅 [VERSIONS.md](VERSIONS.md)。
-
-HG工具站（VX Data Watch）是一个多功能、综合性的工具类网站。其主要提供的功能有：
-1.单用户系统登录、注册。本地多视频号管理和数据支持、支持会员功能用户隔离。支持管理员登录管理设置后台系统。
-2.本地优先的微信视频号数据分析平台，适配桌面端和移动端浏览器。系统支持视频号运营数据导入、OCR 识别、数据分析，趋势分析，AI建议等功能。
-3.油管视频下载，提供油管视频下载和本地保存功能(需要用户提供自己的cookies)。支持视频列表分析和视频下载。支持视频转码（通用转为mp4格式）。
-4.提供一站式AI对话服务。支持聊天模式，生图模式，生视频模式。
-5.（管理员权限）一站式在线更新服务，AI接入配置，用户数据加密备份，系统设置等。
-6.支持国内/国外服务器一键脚本部署，一键更新，一键数据迁移和备份，省心快捷。同时也支持docker compose和本地源码部署。
 项目数据默认保存在部署者选择的 SQLite 或 PostgreSQL 数据库中；用户主动请求 AI 分析或 AI 速问时，相关数据才会发送到管理员配置并授权使用的模型接口，确保用户隐私保护。
 
 ## 公开主页与认证入口
@@ -344,7 +335,7 @@ cp .env.example .env
 也可以下载指定版本的 GitHub 自动源码归档，不需要项目维护者重复上传压缩包：
 
 ```bash
-VERSION=0.4.2
+VERSION=0.5.7
 curl -L -o vx-data-watch-v${VERSION}.tar.gz \
   https://github.com/huizhang556/vx_data_watch/archive/refs/tags/v${VERSION}.tar.gz
 sudo tar -xzf vx-data-watch-v${VERSION}.tar.gz -C /opt
@@ -363,9 +354,9 @@ cp .env.example .env
 | `VX_DATA_DIR` | 数据、自动主密钥和备份目录 | `./data` |
 | `VX_DATABASE_URL` | 数据库连接地址；默认 SQLite，PostgreSQL 使用 `postgresql+psycopg://...` | `sqlite:///./data/vx_data.db` |
 
-源码部署默认使用 SQLite；若使用 PostgreSQL，请准备可访问的 PostgreSQL 服务并填写连接地址，依赖会随项目安装。内置 PostgreSQL 容器仅适用于一键脚本和 Docker Compose 部署。已有 `.env` 的升级不会自动切换数据库。
+源码部署默认使用 SQLite。若使用 PostgreSQL，请准备可访问的外部 PostgreSQL 服务，并在 `.env` 中填写 `VX_DATABASE_MODE=postgres` 和 `VX_DATABASE_URL`（例如 `postgresql+psycopg://用户:密码@主机:5432/数据库名`），依赖会随项目安装。源码部署不启动项目内置的 PostgreSQL 容器；内置 PostgreSQL 容器仅适用于一键脚本和 Docker Compose 部署。已有 `.env` 的升级不会自动切换数据库。
 
-手动使用内置 PostgreSQL 时，在 `.env` 中填写 `VX_DATABASE_MODE=postgres`、`VX_POSTGRES_USER`、`VX_POSTGRES_PASSWORD`、`VX_POSTGRES_DB` 和 `VX_DATABASE_URL`，并使用 `docker compose --profile postgres up -d` 启动。SQLite 数据卷为 `vx-data`，PostgreSQL 数据卷为 `vx-postgres`；不要在未确认备份的情况下执行 `down --volumes`。PostgreSQL 备份文件为 `.postgres.sql.gz`，恢复前先停止应用，再执行 `gunzip -c 文件.sql.gz | docker compose --profile postgres exec -T postgres psql -U "$VX_POSTGRES_USER" -d "$VX_POSTGRES_DB"`。
+源码部署使用外部 PostgreSQL 时，请按照数据库服务商提供的 `pg_dump`/`pg_restore` 或 SQL 备份流程进行备份和恢复。SQLite 数据默认保存在 `VX_DATA_DIR` 指定目录中；不要在未确认备份的情况下删除该目录。
 
 ### 3. 首次启动
 
