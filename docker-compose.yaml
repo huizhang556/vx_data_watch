@@ -62,6 +62,9 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # The updater needs Docker management access to replace app/updater containers.
+  # Treat /var/run/docker.sock as host-level administration; never expose it to
+  # untrusted users or run untrusted images with this service enabled.
   updater:
     container_name: vx-data-watch-updater
     build:

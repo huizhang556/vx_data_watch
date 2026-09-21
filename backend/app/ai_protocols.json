@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "last_reviewed": "2026-09-22",
+  "note": "Public provider metadata only. Secrets and user data must never be stored here.",
+  "providers": {
+    "openai": {
+      "display_name": "OpenAI",
+      "base_url": "https://api.openai.com",
+      "default_model": "gpt-4o-mini",
+      "protocols": {
+        "chat": [
+          {"id": "chat_completions", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true},
+          {"id": "responses", "label": "Responses", "method": "POST", "path": "/v1/responses", "request_format": "openai_responses", "streaming": true}
+        ],
+        "image": [
+          {"id": "openai_images", "label": "Images Generations", "method": "POST", "path": "/v1/images/generations", "request_format": "openai_images", "async_task": false}
+        ],
+        "video": [
+          {"id": "openai_videos", "label": "Videos Tasks", "method": "POST", "path": "/v1/videos", "request_format": "openai_videos", "async_task": true}
+        ]
+      }
+    },
+    "anthropic": {
+      "display_name": "Anthropic",
+      "base_url": "https://api.anthropic.com",
+      "default_model": "claude-3-5-sonnet-latest",
+      "protocols": {"chat": [{"id": "anthropic", "label": "Messages", "method": "POST", "path": "/v1/messages", "request_format": "anthropic_messages", "streaming": true}], "image": [], "video": []}
+    },
+    "gemini": {
+      "display_name": "Google Gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "default_model": "gemini-2.0-flash",
+      "protocols": {
+        "chat": [{"id": "gemini", "label": "Generate Content", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents", "streaming": true}],
+        "image": [{"id": "gemini_image", "label": "Image generation via Generate Content", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents_image", "async_task": false}],
+        "video": [{"id": "gemini_video", "label": "Veo long-running operation", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents_video", "async_task": true}]
+      }
+    },
+    "grok": {
+      "display_name": "xAI Grok",
+      "base_url": "https://api.x.ai",
+      "default_model": "grok-3-mini",
+      "protocols": {"chat": [{"id": "grok", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}
+    },
+    "deepseek": {"display_name": "DeepSeek", "base_url": "https://api.deepseek.com", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
+    "zhipu": {"display_name": "Zhipu AI", "base_url": "https://open.bigmodel.cn/api/paas", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/v4/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
+    "qwen": {"display_name": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
+    "nvidia": {"display_name": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
+    "moonshot": {"display_name": "Moonshot AI", "base_url": "https://api.moonshot.cn/v1", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}}
+  }
+}

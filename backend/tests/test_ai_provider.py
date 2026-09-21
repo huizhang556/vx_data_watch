@@ -4,8 +4,18 @@ import asyncio
 from typing import Any
 
 import httpx
+import pytest
 from app import ai_service, main
 from fastapi.testclient import TestClient
+
+
+def test_protocol_catalog_is_public_metadata_only(client: TestClient, auth: dict[str, str]) -> None:
+    response = client.get("/api/ai/protocols", headers=auth)
+    assert response.status_code == 200
+    providers = {item["key"]: item for item in response.json()["providers"]}
+    assert providers["openai"]["default_model"] == "gpt-4o-mini"
+    assert {item["id"] for item in providers["openai"]["protocols"]["chat"]} == {"chat_completions", "responses"}
+    assert "api_key" not in response.text.lower()
 
 
 def _payload(model: str = "test-model", account_id: int = 1) -> dict[str, Any]:
@@ -84,6 +94,11 @@ def test_provider_model_cache_is_returned_and_used_by_quick_configs(
 
 
 def test_native_provider_protocols(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        ai_service.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
+    )
     requests: list[httpx.Request] = []
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -101,6 +116,20 @@ def test_native_provider_protocols(monkeypatch) -> None:  # type: ignore[no-unty
     assert requests[2].headers["authorization"] == "Bearer x-key"
 
 
+def test_provider_url_rejects_private_dns_and_redirects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        ai_service.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("10.0.0.8", 443))],
+    )
+    with pytest.raises(ValueError, match="private"):
+        ai_service._validate_provider_url_secure("https://attacker.example")
+
+    response = httpx.Response(302, headers={"location": "http://127.0.0.1"})
+    with pytest.raises(RuntimeError, match="redirect"):
+        ai_service._raise_for_provider_response(response)
+
+
 def test_ai_chat_end_to_end(client: TestClient, auth: dict[str, str], account_id: int, monkeypatch) -> None:
     async def success(**_kwargs: Any) -> str:
         return "连接成功"
@@ -110,17 +139,20 @@ def test_ai_chat_end_to_end(client: TestClient, auth: dict[str, str], account_id
     assert session.status_code == 201
     session_id = session.json()["id"]
 
+    streamed_models: list[str | None] = []
     async def stream(*_args: Any, **_kwargs: Any):
+        streamed_models.append(_args[2] if len(_args) > 2 else _kwargs.get("model"))
         yield "模拟"
         yield "回复"
     monkeypatch.setattr(main, "stream_chat_provider", stream)
-    response = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "你好", "attachments": [{"filename": "note.txt", "content_type": "text/plain", "data": "aGVsbG8="}]})
+    response = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "你好", "model": "test-model", "attachments": [{"filename": "note.txt", "content_type": "text/plain", "data": "aGVsbG8="}]})
     assert response.status_code == 200
     generation = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "生成图片", "mode": "image"})
     assert generation.status_code == 409
     assert "新建聊天窗口" in generation.json()["detail"]
     messages = client.get(f"/api/ai-chat/sessions/{session_id}/messages", headers=auth).json()
     assert "done" in response.text, response.text
+    assert streamed_models == ["test-model"]
     assert [item["role"] for item in messages] == ["user", "assistant"], response.text
     attachment = messages[0]["attachments"][0]
     assert client.get(f"/api/ai-chat/attachments/{attachment['id']}", headers=auth).status_code == 200

@@ -51,6 +51,7 @@ from .ai_service import (
     test_provider,
     test_provider_values,
     stream_chat_provider,
+    provider_request_preview,
     _configured_protocol,
 )
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
@@ -58,6 +59,30 @@ from .audit import write_audit
 from .auth_service import auth_settings, consume_code, email_user, normalize_email, require_captcha, save_auth_settings, send_code, test_smtp_connection
 from .backups import create_backup
 from .config import get_settings
+
+
+AI_PROTOCOLS_PATH = Path(__file__).with_name("ai_protocols.json")
+
+
+def _load_ai_protocol_catalog() -> dict[str, Any]:
+    """Load public provider metadata from the single versioned protocol catalog."""
+    try:
+        payload = json.loads(AI_PROTOCOLS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": 1, "providers": {}}
+    providers = payload.get("providers") if isinstance(payload, dict) else {}
+    return {"schema_version": payload.get("schema_version", 1), "providers": providers if isinstance(providers, dict) else {}}
+
+
+def _chat_protocol_ids() -> set[str]:
+    """Return protocol IDs declared for chat and implemented by ai_service."""
+    declared: set[str] = set()
+    for provider in _load_ai_protocol_catalog()["providers"].values():
+        if not isinstance(provider, dict):
+            continue
+        entries = provider.get("protocols", {}).get("chat", [])
+        declared.update(str(item["id"]) for item in entries if isinstance(item, dict) and item.get("id"))
+    return declared & {"chat_completions", "responses", "anthropic", "gemini", "grok"}
 from .database import SessionLocal, get_db, init_db
 from .download_service import cancel_task, pause_task, start_task
 from .deps import (
@@ -161,6 +186,7 @@ from .updates import (
     save_update_registry,
     version_key,
     version_payload,
+    _valid_digest,
 )
 
 settings = get_settings()
@@ -230,6 +256,16 @@ _login_attempts: dict[str, list[float]] = {}
 _auth_request_attempts: dict[str, list[float]] = {}
 
 
+def _prune_rate_limit_store(store: dict[str, list[float]], now: float, window_seconds: int) -> None:
+    """Bound process-local limiter memory when attackers rotate identifiers."""
+    expired = [key for key, values in store.items() if not values or now - values[-1] >= window_seconds]
+    for key in expired:
+        store.pop(key, None)
+    if len(store) > 10_000:
+        for key in list(store)[: len(store) - 10_000]:
+            store.pop(key, None)
+
+
 def _check_auth_rate_limit(key: str, *, limit: int, window_seconds: int = 300) -> None:
     """Apply a small local guard to unauthenticated auth and mail endpoints.
 
@@ -238,6 +274,7 @@ def _check_auth_rate_limit(key: str, *, limit: int, window_seconds: int = 300) -
     limiter, but the local guard still prevents accidental request floods.
     """
     now = time.monotonic()
+    _prune_rate_limit_store(_auth_request_attempts, now, window_seconds)
     attempts = [value for value in _auth_request_attempts.get(key, []) if now - value < window_seconds]
     if len(attempts) >= limit:
         raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试")
@@ -273,6 +310,9 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
         "img-src 'self' data: blob:; connect-src 'self' https://challenges.cloudflare.com; font-src 'self' data:; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src https://challenges.cloudflare.com"
     )
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -927,6 +967,7 @@ def login(
     client_host = request.client.host if request.client else "unknown"
     _check_auth_rate_limit(f"login:ip:{client_host}", limit=30, window_seconds=300)
     now = time.monotonic()
+    _prune_rate_limit_store(_login_attempts, now, 300)
     attempts = [value for value in _login_attempts.get(attempt_key, []) if now - value < 300]
     if len(attempts) >= 5:
         raise HTTPException(status_code=429, detail="登录失败次数过多，请 5 分钟后重试")
@@ -2244,6 +2285,18 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
     if user.role.value != "admin" and config.account_id is not None:
         raise HTTPException(status_code=403, detail="该 AI 接口不是管理员发布的全局配置")
     if config.account_id is not None and not db.get(ChannelsAccount, config.account_id): raise HTTPException(status_code=404, detail="AI 配置不存在")
+    selected_model = (payload.model or config.model or "").strip()
+    if not selected_model:
+        raise HTTPException(status_code=409, detail="请先选择并应用模型")
+    try:
+        configured_models = json.loads(config.models_json) if config.models_json else []
+    except (TypeError, ValueError):
+        configured_models = []
+    allowed_models = {str(item) for item in configured_models if str(item).strip()}
+    if not allowed_models:
+        allowed_models = {config.model}
+    if selected_model not in allowed_models:
+        raise HTTPException(status_code=422, detail="所选模型不属于当前接口配置，请重新应用模型")
     if not payload.content.strip() and not payload.attachments:
         raise HTTPException(status_code=422, detail="消息内容和附件不能同时为空")
     attachment_dir = get_settings().data_dir / "ai-chat-attachments" / str(row.id)
@@ -2277,7 +2330,7 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
         elif content_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
             content_parts.append({"type": "text", "text": f"\n[附件 {filename}]\n{raw.decode('utf-8', errors='replace')}"})
     previous = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == row.id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
-    user_message = AIChatMessage(session_id=row.id, role="user", content=payload.content.strip(), provider_snapshot_json=json.dumps({"model": config.model, "base_url": config.base_url}, ensure_ascii=False))
+    user_message = AIChatMessage(session_id=row.id, role="user", content=payload.content.strip(), provider_snapshot_json=json.dumps({"model": selected_model, "base_url": config.base_url}, ensure_ascii=False))
     db.add(user_message); db.flush()
     for attachment in attachment_rows: attachment.message_id = user_message.id; db.add(attachment)
     db.commit()
@@ -2286,11 +2339,11 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
         parts: list[str] = []
         try:
             yield f"data: {json.dumps({'type': 'context', **context_info}, ensure_ascii=False)}\n\n"
-            async for part in stream_chat_provider(config, messages):
+            async for part in stream_chat_provider(config, messages, selected_model):
                 parts.append(part); yield f"data: {json.dumps({'type': 'delta', 'content': part}, ensure_ascii=False)}\n\n"
             answer = "".join(parts)
             with SessionLocal() as stream_db:
-                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=answer, provider_snapshot_json=json.dumps({"model": config.model}, ensure_ascii=False))); stream_db.commit()
+                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=answer, provider_snapshot_json=json.dumps({"model": selected_model}, ensure_ascii=False))); stream_db.commit()
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
@@ -2313,6 +2366,41 @@ def list_ai_providers(
     else:
         rows = _provider_candidates(db, account_id, user)
     return [_provider_payload(row) for row in rows]
+
+
+@app.get("/api/ai/protocols")
+def list_ai_protocol_catalog(user: CurrentUser) -> dict[str, Any]:
+    """Return the public, non-secret provider and protocol catalog for the UI.
+
+    The catalog is intentionally read from a file shipped with the application;
+    API keys and user-specific configuration never belong in this response.
+    """
+    catalog = _load_ai_protocol_catalog()
+    default_models = {
+        "openai": "gpt-4o-mini", "anthropic": "claude-3-5-sonnet-latest",
+        "gemini": "gemini-2.0-flash", "grok": "grok-3-mini",
+        "deepseek": "deepseek-chat", "zhipu": "glm-4-flash",
+        "qwen": "qwen-plus", "nvidia": "meta/llama-3.1-70b-instruct",
+        "moonshot": "moonshot-v1-8k",
+    }
+    display_names = {"zhipu": "智谱 AI", "qwen": "通义千问", "moonshot": "Moonshot AI（国内）"}
+    providers: list[dict[str, Any]] = []
+    for key, raw in catalog["providers"].items():
+        if not isinstance(raw, dict):
+            continue
+        protocols = raw.get("protocols") if isinstance(raw.get("protocols"), dict) else {}
+        providers.append({
+            "key": str(key),
+            "display_name": display_names.get(str(key), str(raw.get("display_name") or key)),
+            "base_url": str(raw.get("base_url") or ""),
+            "default_model": str(raw.get("default_model") or default_models.get(str(key), "")),
+            "protocols": {
+                category: [item for item in entries if isinstance(item, dict) and item.get("id")]
+                for category, entries in protocols.items()
+                if isinstance(entries, list)
+            },
+        })
+    return {"schema_version": catalog["schema_version"], "providers": providers}
 
 
 @app.get("/api/ai/providers/{provider_id}/models")
@@ -2397,7 +2485,8 @@ def save_ai_provider(
         categories = {key: list(dict.fromkeys(item for item in values if item in allowed)) for key, values in payload.model_categories.items() if isinstance(values, list)}
         config.model_categories_json = json.dumps(categories, ensure_ascii=False)
     allowed_models = set(json.loads(config.models_json) if config.models_json else [])
-    protocols = {str(model): str(protocol) for model, protocol in payload.model_protocols.items() if str(model) in allowed_models and str(protocol) in {"chat_completions", "responses", "anthropic", "gemini", "grok"}}
+    allowed_protocols = _chat_protocol_ids()
+    protocols = {str(model): str(protocol) for model, protocol in payload.model_protocols.items() if str(model) in allowed_models and str(protocol) in allowed_protocols}
     if protocols:
         config.model_protocols_json = json.dumps(protocols, ensure_ascii=False)
     # OPENAI-compatible endpoints use the Chat Completions contract. Older
@@ -2643,7 +2732,7 @@ async def test_selected_ai_provider(
     payload: AIProviderModelTest,
     user: CsrfUser,
     db: Annotated[Session, Depends(get_db)],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Test the exact provider/model selected in an AI chat session."""
     if payload.account_id is not None:
         _get_account(db, payload.account_id, user)
@@ -2653,17 +2742,19 @@ async def test_selected_ai_provider(
         raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
     if not config.is_enabled:
         raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
+    selected_protocol = _configured_protocol(config, payload.model)
+    preview = provider_request_preview(config.base_url, payload.model, selected_protocol, decrypt_secret(config.encrypted_api_key))
     try:
         result = await test_provider_values(
             base_url=config.base_url,
             model=payload.model,
-            protocol=_configured_protocol(config, payload.model),
+            protocol=selected_protocol,
             timeout_seconds=config.timeout_seconds,
             api_key=decrypt_secret(config.encrypted_api_key),
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"result": result}
+    return {"result": result, "request": preview}
 
 
 def _draft_api_key(payload: AIProviderDraft, db: Session) -> str:
@@ -2713,22 +2804,24 @@ async def test_ai_provider_draft(
     payload: AIProviderDraft,
     user: Annotated[User, Depends(require_csrf_admin)],
     db: Annotated[Session, Depends(get_db)],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not payload.model:
         raise HTTPException(status_code=422, detail="请先选择模型")
+    api_key = _draft_api_key(payload, db)
+    preview = provider_request_preview(payload.base_url, payload.model, payload.protocol, api_key)
     try:
         result = await test_provider_values(
             base_url=payload.base_url,
             model=payload.model,
             protocol=payload.protocol,
             timeout_seconds=payload.timeout_seconds,
-            api_key=_draft_api_key(payload, db),
+            api_key=api_key,
         )
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"result": result}
+    return {"result": result, "request": preview}
 
 
 @app.post("/api/ai/analyze", status_code=201)
@@ -3212,7 +3305,7 @@ def system_update_history(user: Annotated[User, Depends(require_admin)]) -> list
 def system_update_registry(
     payload: SystemRegistryUpdate,
     user: Annotated[User, Depends(require_csrf_admin)],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if payload.registry not in ALLOWED_REGISTRIES:
         raise HTTPException(status_code=400, detail="不支持的镜像仓库")
     try:
@@ -3241,6 +3334,8 @@ async def system_update(
     version_row = next((row for row in versions if row["version"] == payload.version), None)
     if version_row is None:
         raise HTTPException(status_code=404, detail="所选镜像仓库中不存在该版本")
+    if not _valid_digest(version_row.get("digest")):
+        raise HTTPException(status_code=502, detail="镜像仓库未返回可验证的 manifest digest，已拒绝执行更新")
     try:
         backup = create_backup()
     except Exception as exc:

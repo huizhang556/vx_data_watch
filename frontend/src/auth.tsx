@@ -1,11 +1,10 @@
-/* eslint-disable react-refresh/only-export-components */
+/* eslint-disable react-refresh/only-export-components, no-irregular-whitespace */
 import { createContext, useContext, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { Alert, Button, Form, Input, Spin, Typography, message } from 'antd'
 import { ArrowRight, BarChart3, Bot, ChevronDown, Database, Github, Globe2, LockKeyhole, Mail, Moon, Rocket, ShieldCheck, Sparkles, Sun, UserRound, Users, Workflow } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { api, setCsrfToken } from './api'
 import type { User } from './types'
-import { useTheme } from './theme'
 
 interface AuthContextValue { user: User; logout: () => Promise<void>; updateUser: (user: User) => void }
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -25,7 +24,7 @@ function Captcha({ enabled, siteKey, onChange }: { enabled: boolean; siteKey?: s
 }
 
 type HomeSite = { site_name: string; site_subtitle: string; logo_url: string }
-function LegacyHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
+export function LegacyHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
   const navigate = useNavigate()
   return <main className="home-page">
     <header className="home-header">
@@ -36,11 +35,8 @@ function LegacyHomePage({ site, user, onLogout }: { site: HomeSite; user?: User;
   </main>
 }
 
-function LegacyModernHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
+export function LegacyModernHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
   const navigate = useNavigate()
-  const { theme: themeMode, toggleTheme } = useTheme()
-  const theme = String(themeMode)
-  const showMoonIcon = theme === 'morning'
   const [language, setLanguage] = useState<'zh' | 'en'>(() => localStorage.getItem('vx_home_language') === 'en' ? 'en' : 'zh')
   const [homeMode, setHomeMode] = useState<'dark' | 'light'>(() => localStorage.getItem('vx_home_mode') === 'light' ? 'light' : 'dark')
   const english = language === 'en'
@@ -70,7 +66,7 @@ function LegacyModernHomePage({ site, user, onLogout }: { site: HomeSite; user?:
   </main>
 }
 
-function HomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
+export function LegacyBrokenHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
   const navigate = useNavigate()
   const [language, setLanguage] = useState<'zh' | 'en'>(() => localStorage.getItem('vx_home_language') === 'en' ? 'en' : 'zh')
   const [mode, setMode] = useState<'dark' | 'light'>(() => localStorage.getItem('vx_home_mode') === 'light' ? 'light' : 'dark')
@@ -91,6 +87,29 @@ function HomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLog
     <section className="home-feature-grid" id="features">{cards.map((card) => <article className="home-feature-card" key={card.title}><div className={`home-feature-icon ${card.tone}`}>{card.icon}</div><h3>{card.title}</h3><p>{card.description}</p><div className="home-feature-tags">{card.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></article>)}</section>
     <section className="home-open-section"><h2>{en ? 'Open source · Share · Build a better data world' : '开源 · 共享 · 共建更好的数据世界'}</h2><div className="home-open-grid"><span><Github /><b>{en ? 'Open source' : '开源项目'}</b><small>{en ? 'Community driven' : '完全开源，社区驱动'}</small></span><span><Sparkles /><b>{en ? 'Always improving' : '持续更新'}</b><small>{en ? 'Iterate continuously' : '不断优化，功能迭代'}</small></span><span><Users /><b>{en ? 'Community' : '社区支持'}</b><small>{en ? 'You are welcome' : '欢迎你的加入'}</small></span><span><ShieldCheck /><b>{en ? 'Reliable' : '安全可靠'}</b><small>{copy.security}</small></span></div></section>
     <footer className="home-footer"><div><h3>{copy.about}</h3><a href="#" onClick={emptyLink}>{copy.aboutProject}</a><a href="#" onClick={emptyLink}>{copy.contact}</a><a href="#features" onClick={emptyLink}>{copy.features}</a></div><div><h3>{copy.docsCol}</h3><a href="#" onClick={emptyLink}>{copy.install}</a><a href="#" onClick={emptyLink}>{copy.guide}</a><a href="#" onClick={emptyLink}>{copy.api}</a></div><div><h3>{copy.projects}</h3><a href="#" onClick={emptyLink}>{copy.oneApi}</a><a href="#" onClick={emptyLink}>Midjourney-Proxy</a><a href="#" onClick={emptyLink}>new-api-key-tool</a></div><div><h3>{copy.links}</h3><a href="#" onClick={emptyLink}>{copy.coai}</a><a href="#" onClick={emptyLink}>new-api-horizon</a><a href="#" onClick={emptyLink}>GPT-Load</a><a href="#" onClick={emptyLink}>LangBot</a></div></footer>
+  </main>
+}
+
+function HomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
+  const navigate = useNavigate()
+  const [language, setLanguage] = useState<'zh' | 'en'>(() => localStorage.getItem('vx_home_language') === 'en' ? 'en' : 'zh')
+  const [mode, setMode] = useState<'dark' | 'light'>(() => localStorage.getItem('vx_home_mode') === 'light' ? 'light' : 'dark')
+  const en = language === 'en'
+  const text = en ? {
+    home: 'Home', features: 'Features', docs: 'Documentation', login: 'Log in', register: 'Sign up', enter: 'Open workspace', logout: 'Log out', kicker: 'Open source · Data analytics · AI workspace', hero: 'Make data-driven decisions with AI for every idea', description: 'An all-in-one data analytics and AI workspace for data sources, visualization, intelligent analysis and automation.', start: 'Get started', source: 'View source', overview: 'Data overview', analysis: 'Data analysis', assistant: 'AI assistant', sources: 'Data sources', settings: 'Settings', total: 'Total data', tasks: 'Analysis tasks', generated: 'AI generated', trend: 'Data trends', about: 'About us', documentation: 'Documentation', projects: 'Related projects', links: 'Friend links', security: 'Privacy and security'
+  } : {
+    home: '首页', features: '功能特性', docs: '项目文档', login: '登录', register: '注册', enter: '进入系统', logout: '退出', kicker: '开源 · 数据分析 · AI 工作台', hero: '让数据驱动决策，让 AI 赋能每一个想法', description: '一站式数据分析与 AI 工作台，支持多数据源接入、数据可视化、智能分析与自动化任务，帮助你更高效地处理数据、发现价值。', start: '立即体验', source: '查看源码', overview: '数据总览', analysis: '数据分析', assistant: 'AI 助手', sources: '数据源', settings: '系统设置', total: '总数据量', tasks: '分析任务', generated: 'AI 生成', trend: '数据趋势', about: '关于我们', documentation: '文档', projects: '相关项目', links: '友情链接', security: '安全可靠'
+  }
+  const githubUrl = 'https://github.com/huizhang556/vx_data_watch'
+  const toggleLanguage = () => { const next = en ? 'zh' : 'en'; setLanguage(next); localStorage.setItem('vx_home_language', next) }
+  const toggleMode = () => { const next = mode === 'dark' ? 'light' : 'dark'; setMode(next); localStorage.setItem('vx_home_mode', next) }
+  const features = en ? [['Multi-source access', 'Connect databases, files and APIs with ease.'], ['Analytics and visualization', 'Turn complex data into clear, useful insights.'], ['AI assistant', 'Ask, analyze and generate with multiple AI models.'], ['Automation', 'Schedule tasks, sync data and automate workflows.']] : [['多数据源接入', '支持数据库、文件和 API 等多种数据源。'], ['数据分析与可视化', '用清晰的图表和报告呈现数据价值。'], ['AI 智能助手', '集成多种模型，支持问答、分析和内容生成。'], ['自动化任务', '定时任务、数据同步和智能分析自动运行。']]
+  return <main className={`home-page home-page-modern ${mode === 'light' ? 'home-light-mode' : 'home-dark-mode'}`}>
+    <header className="home-modern-header"><a className="home-modern-brand" href="#top" aria-label={site.site_name}><span className="home-modern-mark">VX</span><span>{site.site_name || 'HG-工具小屋'}</span></a><nav className="home-modern-nav" aria-label={text.home}><a className="active" href="#top">{text.home}</a><a href="#features">{text.features}</a><a href={githubUrl} target="_blank" rel="noreferrer">GitHub</a><a href={githubUrl} target="_blank" rel="noreferrer">{text.docs}</a></nav><div className="home-modern-actions"><button className="home-icon-button" type="button" onClick={toggleMode} title={mode === 'dark' ? '切换白天模式' : '切换黑夜模式'} aria-label="切换显示模式">{mode === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button><button className="home-language" type="button" onClick={toggleLanguage} title="切换语言"><Globe2 size={16} />{en ? 'English' : '中文'}<ChevronDown size={14} /></button>{user ? <><span className="home-modern-user">{user.username}</span><button className="home-outline-button" type="button" onClick={() => navigate('/dashboard')}>{text.enter}</button><button className="home-primary-button" type="button" onClick={onLogout}>{text.logout}</button></> : <><button className="home-outline-button" type="button" onClick={() => navigate('/login')}>{text.login}</button><button className="home-primary-button" type="button" onClick={() => navigate('/register')}>{text.register}</button></>}</div></header>
+    <section className="home-modern-hero" id="top"><div className="home-modern-copy"><div className="home-kicker"><Github size={16} />{text.kicker}</div><h1>{site.site_name || 'HG-工具小屋'}</h1><h2>{site.site_subtitle || text.hero}</h2><p>{text.description}</p><div className="home-hero-actions"><button className="home-primary-button home-large-button" type="button" onClick={() => navigate(user ? '/dashboard' : '/login')}><Rocket size={18} />{text.start}<ArrowRight size={18} /></button><a className="home-outline-button home-large-button" href={githubUrl} target="_blank" rel="noreferrer"><Github size={18} />{text.source}</a></div></div><div className="home-dashboard-art" aria-label={text.analysis}><div className="home-orbit home-orbit-one" /><div className="home-orbit home-orbit-two" /><div className="home-globe" /><div className="home-panel-window"><div className="home-window-dots"><i /><i /><i /></div><div className="home-panel-sidebar"><b>⌂　{text.overview}</b><span>▥　{text.analysis}</span><span>◉　{text.assistant}</span><span>▤　{text.sources}</span><span>⚙　{text.settings}</span></div><div className="home-panel-main"><div className="home-stat-row"><div><small>{text.total}</small><strong>1,248,690</strong><em>↑ 12.6%</em></div><div><small>{text.tasks}</small><strong>286</strong><em>↑ 18.3%</em></div><div><small>{text.generated}</small><strong>142</strong><em>↑ 32.7%</em></div></div><div className="home-chart"><small>{text.trend}</small><div className="home-chart-lines"><b /><b /><b /><b /><b /><b /></div><div className="home-bars"><i /><i /><i /><i /><i /><i /><i /><i /></div></div></div></div><div className="home-ai-card"><Sparkles size={22} /><strong>AI</strong><span>{text.assistant}</span></div></div></section>
+    <section className="home-feature-grid" id="features">{features.map(([title, description], index) => <article className="home-feature-card" key={title}><div className={`home-feature-icon ${['cyan', 'teal', 'purple', 'gold'][index]}`}>{[<Database />, <BarChart3 />, <Bot />, <Workflow />][index]}</div><h3>{title}</h3><p>{description}</p><div className="home-feature-tags"><span>{index === 0 ? 'API' : index === 1 ? 'Reports' : index === 2 ? 'Models' : 'Automation'}</span><span>...</span></div></article>)}</section>
+    <section className="home-open-section"><h2>{en ? 'Open source · Share · Build a better data world' : '开源 · 分享 · 共建更好的数据世界'}</h2><div className="home-open-grid"><span><Github /><b>{en ? 'Open source' : '开源项目'}</b><small>{en ? 'Community driven' : '完全开源，社区驱动'}</small></span><span><Sparkles /><b>{en ? 'Always improving' : '持续更新'}</b><small>{en ? 'Iterate continuously' : '持续优化产品体验'}</small></span><span><Users /><b>{en ? 'Community' : '社区支持'}</b><small>{en ? 'You are welcome' : '欢迎你的加入'}</small></span><span><ShieldCheck /><b>{en ? 'Reliable' : '安全可靠'}</b><small>{text.security}</small></span></div></section>
+    <footer className="home-footer"><div><h3>{text.about}</h3><a href="#" onClick={(event) => event.preventDefault()}>{en ? 'About project' : '关于项目'}</a><a href="#" onClick={(event) => event.preventDefault()}>{en ? 'Contact us' : '联系我们'}</a></div><div><h3>{text.documentation}</h3><a href="#" onClick={(event) => event.preventDefault()}>{en ? 'Installation' : '安装部署'}</a><a href="#" onClick={(event) => event.preventDefault()}>{en ? 'User guide' : '使用指南'}</a><a href="#" onClick={(event) => event.preventDefault()}>{en ? 'API docs' : 'API 文档'}</a></div><div><h3>{text.projects}</h3><a href="#" onClick={(event) => event.preventDefault()}>One API</a><a href="#" onClick={(event) => event.preventDefault()}>Midjourney-Proxy</a></div><div><h3>{text.links}</h3><a href="#" onClick={(event) => event.preventDefault()}>CoAI</a><a href="#" onClick={(event) => event.preventDefault()}>GPT-Load</a></div></footer>
   </main>
 }
 

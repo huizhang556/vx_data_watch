@@ -46,7 +46,7 @@ def test_version_payload_offers_all_other_semver_versions(monkeypatch) -> None: 
             {"version": "0.2.1"},
         ]
     )
-    assert payload["current_version"] == "0.5.6"
+    assert payload["current_version"] == "0.5.7"
     assert [row["version"] for row in payload["versions"]] == ["0.5.3", "0.5.1", "0.4.3", "0.4.2", "0.3.4", "0.3.3", "0.3.2", "0.3.0", "0.2.1"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
@@ -78,14 +78,14 @@ def test_acr_registry_token_authentication(monkeypatch) -> None:  # type: ignore
                     )
                 if "auth.example.test" in url:
                     return httpx.Response(200, json={"token": "test-token"}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.6", "0.5.5", "0.5.4", "0.5.3", "latest"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.7", "0.5.6", "0.5.5", "0.5.4", "latest"]}, request=httpx.Request("GET", url))
 
         fake = FakeClient()
         monkeypatch.setattr(updates.httpx, "AsyncClient", lambda *args, **kwargs: fake)
         result = await updates.fetch_registry_versions(
             "team/app", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
-        assert [row["version"] for row in result] == ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]
+        assert [row["version"] for row in result] == ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]
         assert any(auth == "Bearer test-token" for _, auth in fake.calls)
 
     asyncio.run(run())
@@ -108,7 +108,7 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
                     return httpx.Response(200, json={"results": [{"name": "0.4.0"}]}, request=httpx.Request("GET", url))
                 if "registry-1.docker.io" in url:
                     return httpx.Response(200, json={"tags": ["0.4.0"]}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]}, request=httpx.Request("GET", url))
 
         monkeypatch.setattr(updates.httpx, "AsyncClient", FakeClient)
         updates._version_cache.clear()
@@ -117,7 +117,7 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
             "zhang_spaces/vx-data-watch", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
         assert [row["version"] for row in docker] == ["0.4.0"]
-        assert [row["version"] for row in acr] == ["0.5.6", "0.5.5", "0.5.4", "0.5.3"]
+        assert [row["version"] for row in acr] == ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]
 
     asyncio.run(run())
 
@@ -146,6 +146,17 @@ def test_prepare_update_dir_repairs_root_owned_directory(tmp_path: Path, monkeyp
     assert calls == [(10001, 10001)]
 
 
+def test_initial_deployment_is_recorded_once(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    settings = SimpleNamespace(data_dir=tmp_path, deployment_method="script")
+    monkeypatch.setattr(updater, "get_settings", lambda: settings)
+    monkeypatch.setattr(updater, "update_history_dir", lambda: tmp_path / "history")
+    updater._record_initial_deployment()
+    updater._record_initial_deployment()
+    rows = list((tmp_path / "history").glob("*.json"))
+    assert len(rows) == 1
+    assert '"type": "initial_deployment"' in rows[0].read_text(encoding="utf-8")
+
+
 def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     env_file = tmp_path / ".env"
     env_file.write_text("VX_PORT=8000\n# VX_IMAGE=old/image:tag\n", encoding="utf-8")
@@ -161,6 +172,7 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
 
     class FakeEngine:
         calls: list[tuple[object, ...]] = []
+        digest = "sha256:" + "a" * 64
 
         def pull(self, repository: str, version: str) -> None:
             self.calls.append(("pull", repository, version))
@@ -169,7 +181,13 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
             self.calls.append(("tag", source, repository, tag))
 
         def image_tags(self, _repository: str) -> list[str]:
-            return ["0.5.6", "0.5.5", "0.5.4", "0.5.3", "0.5.2", "latest"]
+            return ["0.5.7", "0.5.6", "0.5.5", "0.5.4", "0.5.3", "latest"]
+
+        def image_inspect(self, _image: str) -> dict[str, object]:
+            return {"RepoDigests": [f"docker.io/litehub/vx-data-watch@{self.digest}"]}
+
+        def find_compose_container(self, _project: str, _service: str) -> dict[str, object]:
+            return {"Config": {"Image": "docker.io/litehub/vx-data-watch:latest"}}
 
         def remove_image(self, image: str) -> None:
             self.calls.append(("remove-image", image))
@@ -190,20 +208,20 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
 
     engine = FakeEngine()
     updater.process_update(
-        {"id": "request-1", "repository": "litehub/vx-data-watch", "version": "0.3.2"},
+        {"id": "request-1", "repository": "litehub/vx-data-watch", "version": "0.3.2", "digest": engine.digest},
         engine=engine,  # type: ignore[arg-type]
     )
     assert engine.calls == [
-        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.6"),
+        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.7"),
         ("pull", "litehub/vx-data-watch", "0.3.2"),
         ("tag", "litehub/vx-data-watch:0.3.2", "docker.io/litehub/vx-data-watch", "latest"),
         ("replace", "vx-data-watch", "app", "docker.io/litehub/vx-data-watch", "latest"),
         ("replace-running", "vx-data-watch", "updater", "docker.io/litehub/vx-data-watch", "latest"),
         ("remove", "old-updater", True),
+        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.6"),
         ("remove-image", "docker.io/litehub/vx-data-watch:0.5.5"),
         ("remove-image", "docker.io/litehub/vx-data-watch:0.5.4"),
         ("remove-image", "docker.io/litehub/vx-data-watch:0.5.3"),
-        ("remove-image", "docker.io/litehub/vx-data-watch:0.5.2"),
     ]
     assert "VX_IMAGE=docker.io/litehub/vx-data-watch:latest" in env_file.read_text()
     assert updates.read_update_status()["state"] == "success"
@@ -224,18 +242,23 @@ def test_updater_restores_env_when_replacement_fails(tmp_path: Path, monkeypatch
     monkeypatch.setattr(updates, "get_settings", lambda: settings)
 
     class FailingEngine:
+        digest = "sha256:" + "a" * 64
+
         def pull(self, _repository: str, _version: str) -> None:
             pass
 
         def tag(self, _source: str, _repository: str, _tag: str) -> None:
             pass
 
+        def image_inspect(self, _image: str) -> dict[str, object]:
+            return {"RepoDigests": [f"docker.io/litehub/vx-data-watch@{self.digest}"]}
+
         def replace_compose_service(self, *_args: str) -> None:
             raise RuntimeError("health check failed")
 
     with pytest.raises(RuntimeError, match="health check failed"):
         updater.process_update(
-            {"id": "request-2", "repository": "litehub/vx-data-watch", "version": "0.3.2"},
+            {"id": "request-2", "repository": "litehub/vx-data-watch", "version": "0.3.2", "digest": FailingEngine.digest},
             engine=FailingEngine(),  # type: ignore[arg-type]
         )
     assert env_file.read_text(encoding="utf-8") == original

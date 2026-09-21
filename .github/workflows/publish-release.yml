@@ -1,0 +1,94 @@
+name: Publish Release Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Existing tested Docker Hub tag, for example candidate-<full-commit-sha>
+        required: true
+        type: string
+      release_version:
+        description: Semantic version without the v prefix, for example 0.5.7
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images
+  cancel-in-progress: false
+
+env:
+  DOCKERHUB_IMAGE: docker.io/litehub/vx-data-watch
+  ACR_REGISTRY: crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com
+  ACR_IMAGE: crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com/zhang_spaces/vx-data-watch
+
+jobs:
+  publish:
+    name: Promote tested image to Docker Hub and ACR
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Validate release inputs
+        shell: bash
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          [[ "$CANDIDATE_TAG" =~ ^candidate-[0-9a-f]{40}$ ]] || { echo "candidate_tag must be candidate-<full sha>"; exit 1; }
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "release_version must be SemVer"; exit 1; }
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Pull and record tested candidate digest
+        shell: bash
+        env:
+          CANDIDATE: ${{ env.DOCKERHUB_IMAGE }}:${{ inputs.candidate_tag }}
+        run: |
+          docker pull "$CANDIDATE"
+          digest="$(docker image inspect "$CANDIDATE" --format '{{index .RepoDigests 0}}' | sed 's/^.*@//')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Candidate digest unavailable"; exit 1; }
+          echo "CANDIDATE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "Tested candidate digest: $digest"
+      - name: Promote the same image to both registries
+        shell: bash
+        env:
+          CANDIDATE: ${{ env.DOCKERHUB_IMAGE }}:${{ inputs.candidate_tag }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          for tag in "$RELEASE_VERSION" latest; do
+            docker tag "$CANDIDATE" "${DOCKERHUB_IMAGE}:$tag"
+            docker push "${DOCKERHUB_IMAGE}:$tag"
+            docker tag "$CANDIDATE" "${ACR_IMAGE}:$tag"
+            docker push "${ACR_IMAGE}:$tag"
+          done
+      - name: Verify pushed manifests
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          digest_for() {
+            docker buildx imagetools inspect "$1" | awk '/^Digest:/ { print $2; exit }'
+          }
+          for tag in "$RELEASE_VERSION" latest; do
+            dockerhub_digest="$(digest_for "${DOCKERHUB_IMAGE}:$tag")"
+            acr_digest="$(digest_for "${ACR_IMAGE}:$tag")"
+            [[ "$dockerhub_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Docker Hub digest unavailable for $tag"; exit 1; }
+            [[ "$acr_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ACR digest unavailable for $tag"; exit 1; }
+            [[ "$dockerhub_digest" == "$acr_digest" ]] || { echo "Digest mismatch for $tag: Docker Hub=$dockerhub_digest ACR=$acr_digest"; exit 1; }
+            [[ "$dockerhub_digest" == "$CANDIDATE_DIGEST" ]] || { echo "Published digest differs from tested candidate for $tag"; exit 1; }
+            echo "$tag: $dockerhub_digest"
+          done
+          echo "Published version: $RELEASE_VERSION"
+          echo "Source candidate digest: $CANDIDATE_DIGEST"

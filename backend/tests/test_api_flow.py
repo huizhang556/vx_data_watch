@@ -216,14 +216,16 @@ def test_admin_can_check_and_queue_system_update(
     from app import main
     from app.updates import update_paths
 
+    digest = "sha256:" + "a" * 64
+
     async def versions(_repository: str, _registry: str = "docker.io") -> list[dict[str, str]]:
         return [
-                {"version": "0.5.6", "published_at": "2026-09-11T00:00:00Z"},
-                {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z"},
-            {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z"},
-            {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z"},
-                {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z"},
-            {"version": "0.3.4", "published_at": "2026-08-19T00:00:00Z"},
+                {"version": "0.5.7", "published_at": "2026-09-22T00:00:00Z", "digest": digest},
+                {"version": "0.5.3", "published_at": "2026-09-03T00:00:00Z", "digest": digest},
+            {"version": "0.4.3", "published_at": "2026-08-28T00:00:00Z", "digest": digest},
+            {"version": "0.4.2", "published_at": "2026-08-20T00:00:00Z", "digest": digest},
+                {"version": "0.4.0", "published_at": "2026-08-19T00:00:00Z", "digest": digest},
+            {"version": "0.3.4", "published_at": "2026-08-19T00:00:00Z", "digest": digest},
         ]
 
     monkeypatch.setattr(main, "fetch_registry_versions", versions)
@@ -233,7 +235,7 @@ def test_admin_can_check_and_queue_system_update(
 
     checked = client.get("/api/system/versions")
     assert checked.status_code == 200, checked.text
-    assert checked.json()["current_version"] == "0.5.6"
+    assert checked.json()["current_version"] == "0.5.7"
     assert [row["version"] for row in checked.json()["versions"]] == ["0.5.3", "0.4.3", "0.4.2", "0.4.0", "0.3.4"]
 
     queued = client.post(
@@ -372,6 +374,12 @@ def test_secure_cookie_does_not_break_plain_http_session() -> None:
             assert session_client.post("/api/auth/logout").status_code == 204
     finally:
         main.settings.cookie_secure = previous
+
+
+def test_security_headers_enable_hsts_behind_tls_proxy(client: TestClient) -> None:
+    response = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+    assert response.status_code == 200
+    assert response.headers["strict-transport-security"].startswith("max-age=31536000")
 
 
 def test_ai_analysis_returns_report_but_history_does_not_store_body(

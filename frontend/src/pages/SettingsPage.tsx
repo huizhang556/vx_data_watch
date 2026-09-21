@@ -240,7 +240,7 @@ export default function SettingsPage({
   };
   const saveStyleSettings = async (values: StyleSettings) => {
     setLoading(true);
-    try { const saved = await api<StyleSettings>("/api/settings/style", { method: "PUT", body: JSON.stringify(values) }); styleForm.setFieldsValue(saved); setTheme(saved.default_theme); document.documentElement.style.setProperty("--vx-font-family", saved.default_font_family === "system" ? '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif' : saved.default_font_family === "microsoft-yahei" ? '"Microsoft YaHei", sans-serif' : saved.default_font_family === "source-han-sans" ? '"Source Han Sans SC", sans-serif' : saved.default_font_family === "pingfang" ? '"PingFang SC", sans-serif' : 'ui-monospace, SFMono-Regular, Consolas, monospace'); document.documentElement.style.setProperty("--vx-font-scale", saved.default_font_size === "small" ? "0.94" : saved.default_font_size === "large" ? "1.06" : "1"); message.success("系统样式已保存"); }
+    try { const saved = await api<StyleSettings>("/api/settings/style", { method: "PUT", body: JSON.stringify(values) }); styleForm.setFieldsValue(saved); setTheme(saved.default_theme); applyStyleSettings(saved); message.success("系统样式已保存"); }
     catch (cause) { message.error(cause instanceof Error ? cause.message : "系统样式保存失败"); }
     finally { setLoading(false); }
   };

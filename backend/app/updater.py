@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,10 +16,33 @@ from .updates import (
     REGISTRY_REPOSITORIES,
     SEMVER_PATTERN,
     prepare_update_dir_for_app,
-    update_paths,
     update_history_dir,
+    update_paths,
     write_json_atomic,
 )
+
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _digest_from_metadata(metadata: dict[str, Any]) -> str | None:
+    for reference in metadata.get("RepoDigests") or []:
+        if isinstance(reference, str) and "@" in reference:
+            digest = reference.rsplit("@", 1)[-1]
+            if _DIGEST_PATTERN.fullmatch(digest):
+                return digest
+    return None
+
+
+def _service_digest(docker: DockerEngine, project: str, service: str) -> str | None:
+    container = docker.find_compose_container(project, service)
+    image = container.get("Config", {}).get("Image")
+    if not isinstance(image, str) or not image:
+        return None
+    return _digest_from_metadata(docker.image_inspect(image))
+
+
+def _verify_running_digests(docker: DockerEngine, project: str, expected: str) -> bool:
+    return _service_digest(docker, project, "app") == expected and _service_digest(docker, project, "updater") == expected
 
 
 def _status(request: dict[str, Any], state: str, message: str, **extra: Any) -> None:
@@ -79,6 +104,34 @@ def _persist_image(env_file: Path, image: str) -> None:
 def _rollback_record_path() -> Path:
     request_path, _, _ = update_paths()
     return request_path.with_name("rollback.json")
+
+
+def _record_initial_deployment() -> None:
+    """Record the first container deployment once in the shared update volume."""
+    directory = update_history_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    marker = directory / ".initial-deployment-recorded"
+    if marker.exists() or any(directory.glob("*.json")):
+        return
+    now = datetime.now(UTC).isoformat()
+    record = {
+        "id": f"initial-{uuid.uuid4().hex}",
+        "type": "initial_deployment",
+        "state": "success",
+        "target_version": __version__,
+        "current_version": __version__,
+        "final_version": __version__,
+        "deployment_method": getattr(get_settings(), "deployment_method", "compose"),
+        "message": "首次部署完成",
+        "started_at": now,
+        "updated_at": now,
+        "duration_seconds": 0,
+        "rollback": False,
+        "stages": [{"state": "success", "message": "首次部署完成", "at": now}],
+    }
+    history_path = directory / f"{record['id']}.json"
+    write_json_atomic(history_path, record)
+    marker.write_text(now, encoding="utf-8")
 
 
 def _write_rollback_record(request: dict[str, Any], previous_env: str, image: str) -> None:
@@ -151,10 +204,14 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     docker.pull(pull_repository, version)
     inspect_image = getattr(docker, "image_inspect", None)
     target_metadata = inspect_image(f"{pull_repository}:{version}") if callable(inspect_image) else {}
-    target_digest = next(iter(target_metadata.get("RepoDigests") or []), None)
+    target_digest = _digest_from_metadata(target_metadata)
     expected_digest = request.get("digest")
+    if not isinstance(expected_digest, str) or not _DIGEST_PATTERN.fullmatch(expected_digest):
+        raise ValueError("更新请求缺少可验证的目标镜像 digest")
+    if target_digest != expected_digest:
+        raise ValueError("目标镜像摘要与版本仓库记录不一致，已终止更新")
     if expected_digest:
-        actual_digest = target_digest.rsplit("@", 1)[-1] if isinstance(target_digest, str) and "@" in target_digest else None
+        actual_digest = target_digest
         if actual_digest != expected_digest:
             raise ValueError("目标镜像摘要与版本仓库记录不一致，已终止更新")
     # Keep deployment configuration on stable latest while pulling immutable
@@ -163,9 +220,11 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
     source_image = f"{pull_repository}:{version}"
     docker.tag(source_image, image_repository, "latest")
     latest_metadata = inspect_image(latest_image) if callable(inspect_image) else {}
-    latest_digest = next(iter(latest_metadata.get("RepoDigests") or []), None)
+    latest_digest = _digest_from_metadata(latest_metadata)
+    if latest_digest != expected_digest:
+        raise ValueError("latest 镜像摘要与目标版本不一致，已终止更新")
     _persist_image(settings.update_env_file, latest_image)
-    _status(request, "restarting", "正在替换并重启应用", target_digest=target_digest, latest_digest=latest_digest, app_updater_digest_match=True)
+    _status(request, "restarting", "正在替换并重启应用", target_digest=target_digest, latest_digest=latest_digest, app_updater_digest_match=False)
     companion_id: str | None = None
     try:
         compose_repository = image_repository
@@ -176,6 +235,8 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
             companion_id = docker.replace_running_companion(
                 settings.update_project, "updater", compose_repository, "latest"
             )
+        if not _verify_running_digests(docker, settings.update_project, expected_digest):
+            raise ValueError("app 与 updater 实际运行镜像摘要不一致，已终止更新")
     except Exception:
         _status(request, "rolling_back", "更新失败，正在恢复原版本")
         if env_existed:
@@ -184,7 +245,7 @@ def process_update(request: dict[str, Any], engine: DockerEngine | None = None) 
             settings.update_env_file.unlink(missing_ok=True)
         raise
     _rollback_record_path().unlink(missing_ok=True)
-    _status(request, "success", "更新完成", current_version=version)
+    _status(request, "success", "更新完成", current_version=version, target_digest=target_digest, latest_digest=latest_digest, app_updater_digest_match=True)
     if companion_id:
         docker.remove(companion_id, force=True)
     _cleanup_old_release_tags(docker, image_repository, {previous_version, version})
@@ -226,6 +287,7 @@ def process_config_migration(request: dict[str, Any], engine: DockerEngine | Non
 
 def run() -> None:
     prepare_update_dir_for_app()
+    _record_initial_deployment()
     request_path, processing_path, _ = update_paths()
     while True:
         if request_path.exists() and not processing_path.exists():

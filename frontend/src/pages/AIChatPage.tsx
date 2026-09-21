@@ -523,6 +523,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           body: JSON.stringify({
             content,
             provider_id: providerId,
+            model,
             mode: modelCategory,
             attachments: attachmentPayload,
           }),

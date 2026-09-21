@@ -271,6 +271,7 @@ class AIChatSessionUpdate(BaseModel):
 class AIChatMessageInput(BaseModel):
     content: str = Field(default="", max_length=100_000)
     provider_id: int | None = None
+    model: str | None = Field(default=None, max_length=200)
     mode: Literal["chat", "image", "video"] = "chat"
     attachments: list[dict[str, str]] = Field(default_factory=list, max_length=8)
 

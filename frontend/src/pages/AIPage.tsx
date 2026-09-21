@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Checkbox, DatePicker, Dropdown, Empty, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Tabs, Typography, message } from 'antd'
-import { Bot, CheckSquare, Eye, History, PlugZap, Plus, Power, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, CheckSquare, ChevronDown, ChevronUp, Eye, History, PlugZap, Plus, Power, Search, Settings2, Sparkles, Trash2 } from 'lucide-react'
 import dayjs, { type Dayjs } from 'dayjs'
 import ReactECharts from 'echarts-for-react'
 import ReactMarkdown from 'react-markdown'
@@ -17,6 +17,9 @@ interface QuickConfig { id: number; name: string; provider_id: number; model: st
 interface QueryHistory { id: number; start_date: string; end_date: string; created_at: string }
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
 interface ProviderForm { account_id?: number | null; provider_id?: number; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key?: string }
+interface TestRequestPreview { method: string; url: string; protocol: string; model: string; headers: Record<string, string>; body: unknown; api_key_query?: string | null }
+interface ProtocolMeta { id: string; label: string; method: string; path: string; request_format: string; streaming?: boolean; async_task?: boolean }
+interface ProtocolProvider { key: string; display_name: string; base_url: string; default_model: string; protocols: Record<string, ProtocolMeta[]> }
 const reportMetrics = [
   { key: 'plays' as const, label: '播放', color: '#1677ff' },
   { key: 'likes' as const, label: '点赞', color: '#d4380d' },
@@ -41,6 +44,9 @@ const officialPresets = [
   { label: 'NVIDIA NIM', name: 'NVIDIA NIM', base_url: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-70b-instruct' },
   { label: 'Moonshot AI（国内）', name: 'Moonshot AI（国内）', base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
 ]
+
+// The protocol catalog endpoint is authoritative; retain the legacy constant for older data imports.
+void officialPresets
 
 export default function AIPage({ configOnly = false }: { configOnly?: boolean }) {
   const { account: selectedAccount } = useAccount()
@@ -67,6 +73,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [models, setModels] = useState<string[]>([])
   const [modelCategories, setModelCategories] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
   const [modelProtocols, setModelProtocols] = useState<Record<string, string>>({})
+  const [protocolCatalog, setProtocolCatalog] = useState<ProtocolProvider[]>([])
   const [modelCategoryChecked, setModelCategoryChecked] = useState<Record<string, string[]>>({ chat: [], image: [], video: [] })
   const [tested, setTested] = useState(false)
   const [modelLoading, setModelLoading] = useState(false)
@@ -80,6 +87,9 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [configError, setConfigError] = useState('')
+  const [testRequest, setTestRequest] = useState<TestRequestPreview | null>(null)
+  const [testResponse, setTestResponse] = useState('')
+  const [testPanelExpanded, setTestPanelExpanded] = useState(false)
   const [days, setDays] = useState(7)
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
   const [startDate, setStartDate] = useState<Dayjs>(() => dayjs().subtract(7, 'day'))
@@ -106,15 +116,15 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     await loadProviders(providerAccountId)
   }
   const protocolOptions = () => {
-    if (configMode === 'compatible') return [{ label: 'Chat Completions（兼容协议）', value: 'chat_completions' }]
+    if (configMode === 'compatible') return [{ label: 'Chat Completions（兼容协议：POST /v1/chat/completions）', value: 'chat_completions' }]
+    const baseUrl = String(form.getFieldValue('base_url') || '').replace(/\/$/, '')
     const name = String(form.getFieldValue('name') || '').toLowerCase()
-    if (name.includes('anthropic') || name.includes('claude')) return [{ label: 'Anthropic Messages', value: 'anthropic' }, { label: 'Anthropic Messages（兼容协议）', value: 'chat_completions' }]
-    if (name.includes('gemini')) return [{ label: 'Gemini Generate Content', value: 'gemini' }, { label: 'OpenAI Chat Completions（兼容协议）', value: 'chat_completions' }]
-    if (name.includes('openai')) return [{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses', value: 'responses' }, { label: 'Chat Completions（兼容协议）', value: 'chat_completions' }]
-    return [{ label: 'Chat Completions', value: 'chat_completions' }, { label: 'Responses（兼容协议）', value: 'responses' }]
+    const selected = protocolCatalog.find((item) => item.base_url.replace(/\/$/, '') === baseUrl || name.includes(item.key) || name.includes(item.display_name.toLowerCase()))
+    return (selected?.protocols.chat || []).map((item) => ({ label: `${item.label}（${item.method} ${item.path}）`, value: item.id }))
   }
   const loadHistories = () => !configOnly && account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
+  useEffect(() => { void api<{ providers: ProtocolProvider[] }>('/api/ai/protocols').then((data) => setProtocolCatalog(data.providers || [])).catch(() => setProtocolCatalog([])) }, [])
   useEffect(() => { if (configOnly) void loadProviders(); else if (account) void loadProviders(account.id) }, [account, configOnly]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!configOnly) void loadHistories() }, [account, configOnly]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void loadQuickConfigs() }, [])
@@ -162,9 +172,11 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setDraftTestLoading(true); setConfigError('')
     try {
       const values = await draftValues(true)
-      const response = await api<{ result: string }>('/api/ai/provider/test-draft', { method: 'POST', body: JSON.stringify(values) })
+      const response = await api<{ result: string; request: TestRequestPreview }>('/api/ai/provider/test-draft', { method: 'POST', body: JSON.stringify(values) })
+      setTestRequest(response.request)
+      setTestResponse(response.result || '（上游返回空内容）')
       setTested(true); message.success(response.result.slice(0, 100) || '连接成功')
-    } catch (cause) { setTested(false); setConfigError(cause instanceof Error ? cause.message : '测试失败') }
+    } catch (cause) { setTested(false); setTestResponse(cause instanceof Error ? cause.message : '测试失败'); setConfigError(cause instanceof Error ? cause.message : '测试失败') }
     finally { setDraftTestLoading(false) }
   }
 
@@ -403,12 +415,12 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           { key: 'official', label: '官方接口', children: <Typography.Text type="secondary">选择官方厂商预置并填写对应 API Key。</Typography.Text> },
           { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
         ]} />
-        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={officialPresets.map((item) => ({ value: item.label, label: item.label }))} onChange={(label) => { const preset = officialPresets.find((item) => item.label === label); if (preset) { form.setFieldsValue({ name: preset.name, base_url: preset.base_url, model: preset.model, protocol: 'chat_completions' }); setModels([preset.model]); setTested(false) } }} />}
+        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={protocolCatalog.map((item) => ({ value: item.key, label: item.display_name }))} onChange={(key) => { const preset = protocolCatalog.find((item) => item.key === key); const firstProtocol = preset?.protocols.chat?.[0]; if (preset) { form.setFieldsValue({ name: preset.display_name, base_url: preset.base_url, model: preset.default_model, protocol: firstProtocol?.id || 'chat_completions' }); setModels(preset.default_model ? [preset.default_model] : []); setTested(false) } }} />}
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
           <Form.Item name="api_key" label="API Key（已有配置可留空保持不变）" rules={[({ getFieldValue }) => ({ validator: async (_rule, value) => { if (value || getFieldValue('provider_id')) return; throw new Error('新建配置必须填写 API Key') } })]}><Input.Password autoComplete="new-password" /></Form.Item>
-          <div className="model-row"><Form.Item name="model" label="模型" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} onChange={(value) => { const next = modelProtocols[String(value)] || protocolOptions()[0]?.value || 'chat_completions'; form.setFieldValue('protocol', next) }} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
+          <div className="model-row"><Form.Item name="model" label="模型（当前选择模型即为测试模型）" rules={[{ required: true }]}><Select showSearch placeholder="先查询模型" options={models.map((model) => ({ value: model, label: model }))} onChange={(value) => { const next = modelProtocols[String(value)] || protocolOptions()[0]?.value || 'chat_completions'; form.setFieldValue('protocol', next) }} /></Form.Item><Button icon={<Search size={17} />} loading={modelLoading} onClick={() => void fetchModels()}>查询模型</Button></div>
           <div className="model-category-editor">
             {([['chat', '聊天模型'], ['image', '生图模型'], ['video', '视频模型']] as const).map(([key, label]) => {
               const selected = modelCategories[key] || []
@@ -436,6 +448,13 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
             })}
           </div>
           <Form.Item name="protocol" label="当前模型请求协议" extra="协议决定测试、模型查询和对话请求所使用的接口格式"><Select options={protocolOptions()} onChange={(value) => { const selectedModel = String(form.getFieldValue('model') || ''); if (selectedModel) setModelProtocols((current) => ({ ...current, [selectedModel]: String(value) })) }} /></Form.Item>
+          <div className={`ai-test-preview ${testPanelExpanded ? 'expanded' : ''}`}>
+            <div className="ai-test-preview-heading"><strong>测试请求与响应</strong><Button type="text" size="small" icon={testPanelExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />} onClick={() => setTestPanelExpanded((value) => !value)}>{testPanelExpanded ? '收缩' : '展开'}</Button></div>
+            <div className="ai-test-preview-columns">
+              <section><Typography.Text type="secondary">请求内容</Typography.Text><pre>{testRequest ? JSON.stringify(testRequest, null, 2) : '点击“测试”后显示实际测试模型、协议、地址和请求内容'}</pre></section>
+              <section><Typography.Text type="secondary">响应内容</Typography.Text><pre>{testResponse || '点击“测试”后显示上游响应；失败时显示上游错误信息'}</pre></section>
+            </div>
+          </div>
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>
           <div className="modal-actions"><Button loading={draftTestLoading} onClick={() => void testDraft()}>测试</Button><Button type="primary" loading={saveLoading} disabled={!tested} onClick={() => void saveProvider()}>保存</Button></div>
         </Form>

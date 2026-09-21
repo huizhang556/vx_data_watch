@@ -137,12 +137,16 @@ async def fetch_registry_versions(repository: str, registry: str = "docker.io") 
                 "size_bytes": row.get("full_size") or row.get("size"),
             }
         )
-    missing = [row for row in versions if not isinstance(row.get("size_bytes"), (int, float))]
+    missing = [row for row in versions if not isinstance(row.get("size_bytes"), (int, float)) or not _valid_digest(row.get("digest"))]
     if missing:
         async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
             for row in missing:
                 try:
-                    row["size_bytes"] = await _fetch_manifest_size(client, repository, registry, row["version"])
+                    size_bytes, digest = await _fetch_manifest_metadata(client, repository, registry, row["version"])
+                    if not isinstance(row.get("size_bytes"), (int, float)):
+                        row["size_bytes"] = size_bytes
+                    if not _valid_digest(row.get("digest")):
+                        row["digest"] = digest
                 except (httpx.HTTPError, ValueError, TypeError, UpdateRegistryError):
                     row["size_bytes"] = None
     versions.sort(key=lambda row: version_key(row["version"]), reverse=True)
@@ -150,7 +154,11 @@ async def fetch_registry_versions(repository: str, registry: str = "docker.io") 
     return versions
 
 
-async def _fetch_manifest_size(client: httpx.AsyncClient, repository: str, registry: str, version: str) -> int:
+def _valid_digest(value: object) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", value))
+
+
+async def _fetch_manifest_metadata(client: httpx.AsyncClient, repository: str, registry: str, version: str) -> tuple[int, str | None]:
     host = "registry-1.docker.io" if registry == "docker.io" else registry
     url = f"https://{host}/v2/{repository}/manifests/{version}"
     headers = {"Accept": "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json"}
@@ -178,7 +186,8 @@ async def _fetch_manifest_size(client: httpx.AsyncClient, repository: str, regis
     sizes = [item.get("size") for item in layers if isinstance(item, dict) and isinstance(item.get("size"), int)]
     if not sizes:
         raise ValueError("镜像 manifest 未返回有效层大小")
-    return sum(sizes)
+    digest = response.headers.get("Docker-Content-Digest")
+    return sum(sizes), digest if _valid_digest(digest) else None
 
 
 def version_payload(versions: list[dict[str, Any]], registry: str | None = None) -> dict[str, Any]:
@@ -271,7 +280,8 @@ def read_update_history() -> list[dict[str, Any]]:
     for path in update_history_dir().glob("*.json"):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(value, dict): rows.append(value)
+            if isinstance(value, dict):
+                rows.append(value)
         except (OSError, json.JSONDecodeError):
             continue
     rows.sort(key=lambda item: str(item.get("started_at") or item.get("updated_at") or ""), reverse=True)
