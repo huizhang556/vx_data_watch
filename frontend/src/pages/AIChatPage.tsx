@@ -40,6 +40,10 @@ type Session = {
   title: string;
   pinned: boolean;
   provider_id?: number | null;
+  applied_model?: string | null;
+  applied_protocol?: string | null;
+  applied_mode?: "chat" | "image" | "video" | null;
+  model_applied_at?: string | null;
   generation_status?: "idle" | "running" | "completed" | "failed";
   generation_type?: "image" | "video" | null;
   generation_error?: string | null;
@@ -62,6 +66,7 @@ type Provider = {
   api_key_configured: boolean;
   models?: string[];
   model_categories?: Record<string, string[]>;
+  model_protocols?: Record<string, string>;
   is_enabled: boolean;
 };
 function MarkdownCode({ children, className }: { children?: ReactNode; className?: string }) {
@@ -195,13 +200,20 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     setProviderId(session.provider_id || undefined);
     const sessionProvider = providerList.find((item) => item.id === session.provider_id);
     const savedModel = localStorage.getItem(`vx-ai-chat-model:${session.id}`);
-    setModel(savedModel || sessionProvider?.model || "");
-    setModelOptions(categoryModels(sessionProvider, modelCategory));
+    const sessionMode = session.applied_mode || "chat";
+    const availableModels = categoryModels(sessionProvider, sessionMode);
+    const sessionModel = session.applied_model || savedModel || sessionProvider?.model || "";
+    setModelCategory(sessionMode);
+    setModelOptions(availableModels);
+    setModel(availableModels.includes(sessionModel) ? sessionModel : availableModels[0] || "");
     setMessages([]);
     try {
       const history = await api<ChatMessage[]>(`/api/ai-chat/sessions/${session.id}/messages`);
       if (requestId === messageRequestRef.current) {
         setMessages(history);
+        if (!session.applied_model) {
+          message.info("该历史会话尚未保存模型配置，请先选择模型并点击“应用模型”");
+        }
         const used = history.reduce((total, item) => total + Math.max(1, Math.ceil(item.content.length / 3)), 0);
         setContextInfo({ used_tokens: used, max_tokens: 12000, compressed: false });
       }
@@ -246,14 +258,16 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
     if (!activeSession || !providerId || !model || applyingModel) return;
     const selectedProvider = providers.find((item) => item.id === providerId);
     if (!selectedProvider) return;
+    const selectedProtocol = selectedProvider.model_protocols?.[model] || selectedProvider.protocol;
     setApplyingModel(true);
     try {
-      const response = await api<{ result: string }>("/api/ai/provider/test-selected", {
+      const response = await api<Session & { result: string }>(`/api/ai-chat/sessions/${activeSession.id}/model`, {
         method: "POST",
-        body: JSON.stringify({ account_id: account?.id ?? null, provider_id: providerId, model }),
+        body: JSON.stringify({ account_id: account?.id ?? null, provider_id: providerId, model, protocol: selectedProtocol, mode: modelCategory }),
       });
       localStorage.setItem(`vx-ai-chat-model:${activeSession.id}`, model);
-      await updateSession(activeSession, { provider_id: providerId });
+      setActiveSession(response);
+      setSessions((items) => items.map((item) => item.id === response.id ? response : item));
       message.success(response.result?.slice(0, 100) || "模型配置可用，已应用");
     } catch (cause) {
       message.error(cause instanceof Error ? cause.message : "模型配置测试失败，未应用");
@@ -554,6 +568,10 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                   : item,
               ),
             );
+          if (event.type === "image" && event.attachment)
+            setMessages((items) => items.map((item, index) => index === items.length - 1 ? { ...item, content: "已生成图片", attachments: [...(item.attachments || []), event.attachment] } : item));
+          if (event.type === "video" && event.attachment)
+            setMessages((items) => items.map((item, index) => index === items.length - 1 ? { ...item, content: "已生成视频", attachments: [...(item.attachments || []), event.attachment] } : item));
           if (event.type === "error") throw new Error(event.message);
         }
       }
@@ -564,7 +582,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
       );
     } catch (cause) {
       if ((cause as DOMException)?.name !== "AbortError") {
-        setMessages((items) => items.filter((item) => item.id !== temporaryMessageId && item.id !== temporaryMessageId - 1));
+        setMessages((items) => items.map((item) => item.id === temporaryMessageId - 1 ? { ...item, content: `请求失败：${cause instanceof Error ? cause.message : "AI 请求失败"}` } : item));
         message.error(cause instanceof Error ? cause.message : "AI 请求失败");
       }
     } finally {
@@ -656,6 +674,11 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
           >
             全选
           </Button>
+          {activeSession?.applied_model && (
+            <span className="ai-chat-applied-model" title={`实际请求协议：${activeSession.applied_protocol || "未记录"}`}>
+              {providers.find((item) => item.id === activeSession.provider_id)?.name || "接口"} / {activeSession.applied_model} / {activeSession.applied_protocol || "未记录"}
+            </span>
+          )}
           <Button
             size="small"
             danger
@@ -735,9 +758,10 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
             onChange={(value) => {
               setProviderId(value);
               const provider = providers.find((item) => item.id === value);
-              setModel(provider?.model || "");
+              const options = categoryModels(provider, "chat");
               setModelCategory("chat");
-              setModelOptions(categoryModels(provider, "chat"));
+              setModelOptions(options);
+              setModel(options.includes(provider?.model || "") ? provider?.model || "" : options[0] || "");
             }}
             options={providers.filter((item) => item.is_enabled).map((item) => ({
               value: item.id,
@@ -756,7 +780,7 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
             value={model || undefined}
             placeholder="选择具体模型"
             disabled={!providerId}
-            onChange={setModel}
+            onChange={(value) => setModel(modelOptions.includes(value) ? value : modelOptions[0] || "")}
             options={modelOptions.map((item) => ({ value: item, label: item }))}
           />
           <Button
@@ -839,6 +863,8 @@ export default function AIChatPage({ configOnly = false }: { configOnly?: boolea
                         >
                           <img src={attachment.preview || `/api/ai-chat/attachments/${attachment.id}`} alt={attachment.filename} />
                         </button>
+                      ) : attachment.content_type.startsWith("video/") ? (
+                        <video key={attachment.id} className="ai-chat-history-video" controls preload="metadata" src={`/api/ai-chat/attachments/${attachment.id}`} />
                       ) : (
                         <a
                           key={attachment.id}

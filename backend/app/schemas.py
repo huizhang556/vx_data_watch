@@ -193,7 +193,7 @@ class AIProviderInput(BaseModel):
     name: str = Field(default="默认 AI", max_length=100)
     base_url: str = Field(min_length=8, max_length=500)
     model: str = Field(min_length=1, max_length=200)
-    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok"] = "chat_completions"
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok", "openai_images", "openai_videos"] = "chat_completions"
     interface_type: Literal["official", "compatible"] = "compatible"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
@@ -215,7 +215,7 @@ class AIProviderDraft(BaseModel):
     provider_id: int | None = None
     base_url: str = Field(min_length=8, max_length=500)
     model: str | None = Field(default=None, max_length=200)
-    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok"] = "chat_completions"
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok", "openai_images", "openai_videos"] = "chat_completions"
     api_key: str | None = Field(default=None, max_length=500)
     timeout_seconds: int = Field(default=60, ge=5, le=300)
 
@@ -236,6 +236,8 @@ class AIProviderModelTest(BaseModel):
     account_id: int | None = None
     provider_id: int
     model: str = Field(min_length=1, max_length=200)
+    protocol: Literal["chat_completions", "responses", "anthropic", "gemini", "grok", "openai_images", "openai_videos"] | None = None
+    mode: Literal["chat", "image", "video"] = "chat"
 
 class AIProviderCategoriesInput(BaseModel):
     account_id: int | None = None
@@ -273,6 +275,7 @@ class AIChatMessageInput(BaseModel):
     provider_id: int | None = None
     model: str | None = Field(default=None, max_length=200)
     mode: Literal["chat", "image", "video"] = "chat"
+    protocol: str | None = Field(default=None, max_length=50)
     attachments: list[dict[str, str]] = Field(default_factory=list, max_length=8)
 
 

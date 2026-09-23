@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import ipaddress
 import socket
-from pathlib import Path
+import base64
 from urllib.parse import urlsplit
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -11,11 +12,23 @@ from typing import Any
 import httpx
 
 from .models import AIProviderConfig
+from .ai_catalog import load_catalog
 from .security import decrypt_secret
+from .ai_protocol_registry import (
+    CHAT_PROTOCOL_HANDLERS,
+    SUPPORTED_CHAT_PROTOCOLS,
+    SUPPORTED_IMAGE_PROTOCOLS,
+    SUPPORTED_VIDEO_PROTOCOLS,
+)
 
 SYSTEM_PROMPT = """你是视频号数据分析顾问。只依据用户提供的结构化数据分析，不得编造完播率、受众画像、流量来源或其他缺失指标。
 输出必须包含：数据观察、异常与趋势、高贡献视频、可能原因、优化建议、验证方法、数据限制。
 把推测明确标为推测，建议要具体且可验证。使用简体中文 Markdown；可使用标题、列表、表格和强调，不要输出 HTML 或脚本。"""
+
+
+CHAT_TEST_PROMPT = "请简要回复：连接测试成功。"
+IMAGE_TEST_PROMPT = "一个简洁的蓝色几何图标，白色背景。"
+VIDEO_TEST_PROMPT = "蓝色光点缓慢移动，固定镜头，短视频。"
 
 
 def _base_candidates(base_url: str) -> list[str]:
@@ -97,31 +110,30 @@ def _configured_protocol(config: AIProviderConfig, model: str | None = None) -> 
     except (TypeError, ValueError):
         mappings = {}
     selected = mappings.get(model or config.model) if isinstance(mappings, dict) else None
-    if selected in {"chat_completions", "responses", "anthropic", "gemini", "grok"}:
+    if selected in SUPPORTED_CHAT_PROTOCOLS:
         return selected
     return "chat_completions" if config.interface_type == "compatible" else config.protocol
 
 
-def _catalog_protocol_path(base_url: str, protocol: str, model: str | None = None) -> str | None:
+def _catalog_protocol_path(base_url: str, protocol: str, model: str | None = None, category: str = "chat") -> str | None:
     """Resolve an official protocol path from the shipped public catalog."""
     try:
-        catalog_path = Path(__file__).with_name("ai_protocols.json")
-        payload = json.loads(catalog_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        payload = load_catalog()[0]
+    except (OSError, TypeError):
         return None
     normalized = base_url.rstrip("/").lower()
     for provider in (payload.get("providers", {}) if isinstance(payload, dict) else {}).values():
         if not isinstance(provider, dict) or not normalized.startswith(str(provider.get("base_url", "")).rstrip("/").lower()):
             continue
-        for item in provider.get("protocols", {}).get("chat", []):
-            if isinstance(item, dict) and item.get("id") == protocol:
+        for item in provider.get("protocols", {}).get(category, []):
+            if isinstance(item, dict) and item.get("id") == protocol and item.get("implemented", True) and not item.get("disabled", False):
                 path = str(item.get("path") or "")
                 return path.replace("{model}", model or "")
     return None
 
 
-def _request_path(base_url: str, protocol: str, model: str | None = None) -> str:
-    configured = _catalog_protocol_path(base_url, protocol, model)
+def _request_path(base_url: str, protocol: str, model: str | None = None, category: str = "chat") -> str:
+    configured = _catalog_protocol_path(base_url, protocol, model, category)
     if configured:
         root = base_url.rstrip("/").lower()
         for prefix in ("/v1", "/v2"):
@@ -134,6 +146,10 @@ def _request_path(base_url: str, protocol: str, model: str | None = None) -> str
         return f"/v1beta/models/{model or ''}:generateContent"
     if protocol == "anthropic":
         return "/v1/messages"
+    if protocol == "openai_images":
+        return "/images/generations" if base_url.rstrip("/").lower().endswith(("/v1", "/v2")) else "/v1/images/generations"
+    if protocol == "openai_videos":
+        return "/videos" if base_url.rstrip("/").lower().endswith(("/v1", "/v2")) else "/v1/videos"
     return "/chat/completions" if base_url.rstrip("/").lower().endswith(("/v1", "/v2")) else "/v1/chat/completions"
 
 
@@ -143,8 +159,14 @@ def build_prompt(snapshot: dict[str, Any]) -> str:
 
 def provider_request_preview(base_url: str, model: str, protocol: str, api_key: str) -> dict[str, Any]:
     """Return the sanitized request shape shown in the configuration tester."""
-    prompt = build_prompt({"test": True, "description": "connection test"})
-    if protocol == "responses":
+    prompt = CHAT_TEST_PROMPT if protocol in SUPPORTED_IMAGE_PROTOCOLS | SUPPORTED_VIDEO_PROTOCOLS else build_prompt({"测试": True, "说明": CHAT_TEST_PROMPT})
+    if protocol in SUPPORTED_IMAGE_PROTOCOLS:
+        path = _request_path(base_url, protocol, model, "image")
+        body: dict[str, Any] = {"model": model, "prompt": IMAGE_TEST_PROMPT, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+    elif protocol in SUPPORTED_VIDEO_PROTOCOLS:
+        path = _request_path(base_url, protocol, model, "video")
+        body = {"model": model, "prompt": VIDEO_TEST_PROMPT}
+    elif protocol == "responses":
         path = _request_path(base_url, protocol, model)
         body: dict[str, Any] = {"model": model, "instructions": SYSTEM_PROMPT, "input": prompt}
     elif protocol == "anthropic":
@@ -189,7 +211,7 @@ async def _call_provider(
     timeout_seconds: int,
     api_key: str,
     snapshot: dict[str, Any],
-) -> str:
+) -> str | dict[str, Any]:
     if protocol in {"anthropic", "gemini", "grok"}:
         return await _call_native_provider(base_url, model, protocol, timeout_seconds, api_key, [{"role": "user", "content": build_prompt(snapshot)}])
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -340,14 +362,71 @@ async def test_provider_values(
     timeout_seconds: int,
     api_key: str,
 ) -> str:
+    if protocol in SUPPORTED_IMAGE_PROTOCOLS:
+        base = _base_candidates(base_url)[0]
+        body = {"model": model, "prompt": IMAGE_TEST_PROMPT, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+            response = await client.post(_endpoint(base, _request_path(base, protocol, model, "image")), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=body)
+            _raise_for_provider_response(response)
+        return "生图测试请求已成功，接口返回正常。"
+    if protocol in SUPPORTED_VIDEO_PROTOCOLS:
+        base = _base_candidates(base_url)[0]
+        body = {"model": model, "prompt": VIDEO_TEST_PROMPT}
+        async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+            response = await client.post(_endpoint(base, _request_path(base, protocol, model, "video")), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=body)
+            _raise_for_provider_response(response)
+        payload = response.json()
+        task_id = payload.get("id") if isinstance(payload, dict) else None
+        return f"生视频任务创建成功，任务 ID：{task_id or '上游未返回任务 ID'}"
     return await _call_provider(
         base_url=base_url,
         model=model,
         protocol=protocol,
         timeout_seconds=timeout_seconds,
         api_key=api_key,
-        snapshot={"测试": True, "说明": "只回复：连接成功"},
+        snapshot={"测试": True, "说明": CHAT_TEST_PROMPT},
     )
+
+
+async def test_image_preview(
+    *,
+    base_url: str,
+    model: str,
+    protocol: str,
+    timeout_seconds: int,
+    api_key: str,
+) -> dict[str, Any]:
+    """Run an image test and return a browser-previewable result."""
+    if protocol not in SUPPORTED_IMAGE_PROTOCOLS:
+        raise ValueError("image protocol is not supported")
+    base = _base_candidates(base_url)[0]
+    body = {"model": model, "prompt": IMAGE_TEST_PROMPT, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
+        response = await client.post(
+            _endpoint(base, _request_path(base, protocol, model, "image")),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+        )
+        _raise_for_provider_response(response)
+    payload = response.json()
+    items = payload.get("data") if isinstance(payload, dict) else None
+    item = items[0] if isinstance(items, list) and items else None
+    if not isinstance(item, dict):
+        raise RuntimeError("image provider returned no image")
+    encoded = item.get("b64_json")
+    if isinstance(encoded, str) and encoded:
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("image response encoding is invalid") from exc
+        if not raw or len(raw) > 20 * 1024 * 1024:
+            raise RuntimeError("generated image size is invalid")
+        return {"text": "image test request succeeded", "media": {"kind": "image", "data_url": f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"}}
+    image_url = item.get("url")
+    if isinstance(image_url, str) and image_url.startswith(("https://", "http://")):
+        _validate_provider_url_secure(image_url)
+        return {"text": "image test request succeeded", "media": {"kind": "image", "url": image_url}}
+    raise RuntimeError("image provider returned no previewable image")
 
 
 async def test_provider(config: AIProviderConfig) -> str:
@@ -357,27 +436,145 @@ async def test_provider(config: AIProviderConfig) -> str:
     )
 
 
+async def generate_image_provider(
+    config: AIProviderConfig,
+    prompt: str,
+    model: str,
+    protocol: str,
+) -> bytes:
+    """Generate one image using a verified synchronous image protocol."""
+    if protocol not in SUPPORTED_IMAGE_PROTOCOLS:
+        raise ValueError("当前生图协议尚未接入")
+    if protocol != "openai_images":
+        raise ValueError("当前生图协议尚未接入")
+    api_key = decrypt_secret(config.encrypted_api_key)
+    body = {"model": model, "prompt": prompt, "n": 1, "size": "1024x1024", "response_format": "b64_json"}
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
+        response = None
+        for candidate in _base_candidates(config.base_url):
+            response = await client.post(
+                _endpoint(candidate, _request_path(candidate, protocol, model, "image")),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body,
+            )
+            if response.status_code != 404 or candidate == _base_candidates(config.base_url)[-1]:
+                break
+        if response is None:
+            raise RuntimeError("生图接口无响应")
+        _raise_for_provider_response(response)
+        payload = response.json()
+    items = payload.get("data") if isinstance(payload, dict) else None
+    item = items[0] if isinstance(items, list) and items else None
+    if not isinstance(item, dict):
+        raise RuntimeError("生图接口返回格式无效")
+    encoded = item.get("b64_json")
+    if isinstance(encoded, str) and encoded:
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("生图接口返回的图片编码无效") from exc
+    else:
+        image_url = item.get("url")
+        if not isinstance(image_url, str) or not image_url.startswith(("https://", "http://")):
+            raise RuntimeError("生图接口未返回可保存的图片数据")
+        _validate_provider_url_secure(image_url)
+        async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as download_client:
+            image_response = await download_client.get(image_url)
+            _raise_for_provider_response(image_response)
+            if not image_response.headers.get("content-type", "").lower().startswith("image/"):
+                raise RuntimeError("生图接口返回的 URL 不是图片")
+            data = image_response.content
+    if not data or len(data) > 20 * 1024 * 1024:
+        raise RuntimeError("生成图片大小无效")
+    return data
+
+
+async def generate_video_provider(
+    config: AIProviderConfig,
+    prompt: str,
+    model: str,
+    protocol: str,
+) -> tuple[bytes, str, str]:
+    """Create, poll, and download one video using OpenAI's async task API."""
+    if protocol not in SUPPORTED_VIDEO_PROTOCOLS:
+        raise ValueError("当前生视频协议尚未接入")
+    api_key = decrypt_secret(config.encrypted_api_key)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    deadline = asyncio.get_running_loop().time() + config.timeout_seconds
+    async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
+        candidates = _base_candidates(config.base_url)
+        response = None
+        for candidate in candidates:
+            response = await client.post(
+                _endpoint(candidate, _request_path(candidate, protocol, model, "video")),
+                headers=headers,
+                json={"model": model, "prompt": prompt},
+            )
+            if response.status_code != 404 or candidate == candidates[-1]:
+                break
+        if response is None:
+            raise RuntimeError("生视频接口无响应")
+        _raise_for_provider_response(response)
+        task = response.json()
+        task_id = task.get("id") if isinstance(task, dict) else None
+        if not isinstance(task_id, str) or not task_id:
+            raise RuntimeError("生视频接口未返回任务 ID")
+        poll_delay = 1.0
+        while True:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("生视频任务等待超时")
+            await asyncio.sleep(min(poll_delay, max(0.1, deadline - asyncio.get_running_loop().time())))
+            poll_delay = min(5.0, poll_delay + 0.5)
+            status_response = await client.get(
+                _endpoint(candidates[0], f"/videos/{task_id}"),
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            _raise_for_provider_response(status_response)
+            status_payload = status_response.json()
+            status = str(status_payload.get("status", "")).lower()
+            if status in {"failed", "cancelled", "canceled"}:
+                raise RuntimeError(str(status_payload.get("error") or "生视频任务失败"))
+            if status in {"completed", "succeeded", "success"}:
+                break
+        content_response = await client.get(
+            _endpoint(candidates[0], f"/videos/{task_id}/content"),
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        _raise_for_provider_response(content_response)
+        data = content_response.content
+        content_type = content_response.headers.get("content-type", "video/mp4").split(";", 1)[0].lower()
+    if not data or len(data) > 200 * 1024 * 1024:
+        raise RuntimeError("生成视频大小无效")
+    if not content_type.startswith("video/"):
+        content_type = "video/mp4"
+    if content_type == "video/mp4" and b"ftyp" not in data[:64]:
+        raise RuntimeError("上游返回的 MP4 文件格式无效")
+    if content_type == "video/webm" and not data.startswith(b"\x1a\x45\xdf\xa3"):
+        raise RuntimeError("上游返回的 WebM 文件格式无效")
+    return data, content_type, task_id
+
+
 async def stream_chat_provider(
-    config: AIProviderConfig, messages: list[dict[str, Any]], model: str | None = None
+    config: AIProviderConfig, messages: list[dict[str, Any]], model: str | None = None, protocol: str | None = None
 ) -> AsyncGenerator[str, None]:
     """Yield assistant text from an OpenAI-compatible chat completion stream."""
     selected_model = model or config.model
-    protocol = _configured_protocol(config, selected_model)
-    if protocol in {"anthropic", "gemini", "grok"}:
-        async for part in _stream_native_provider(config, messages, protocol, selected_model):
+    selected_protocol = protocol or _configured_protocol(config, selected_model)
+    if selected_protocol in {"anthropic", "gemini", "grok"}:
+        async for part in _stream_native_provider(config, messages, selected_protocol, selected_model):
             yield part
         return
     api_key = decrypt_secret(config.encrypted_api_key)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {"model": selected_model, "messages": messages, "stream": True}
-    if protocol == "responses":
+    if selected_protocol == "responses":
         instructions, response_input = _responses_request(messages)
         body = {"model": selected_model, "input": response_input, "stream": True}
         if instructions:
             body["instructions"] = instructions
     async with httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False) as client:
         for candidate in _base_candidates(config.base_url):
-          async with client.stream("POST", _endpoint(candidate, _request_path(candidate, protocol, selected_model)), headers=headers, json=body) as response:
+          async with client.stream("POST", _endpoint(candidate, _request_path(candidate, selected_protocol, selected_model)), headers=headers, json=body) as response:
             if response.status_code == 404 and candidate != _base_candidates(config.base_url)[-1]:
                 continue
             try:
@@ -385,7 +582,7 @@ async def stream_chat_provider(
             except httpx.HTTPStatusError as exc:
                 detail = (await response.aread()).decode("utf-8", errors="replace")[:500]
                 raise RuntimeError(f"AI 接口返回 {response.status_code}: {detail}") from exc
-            if protocol == "responses":
+            if selected_protocol == "responses":
                 async for line in response.aiter_lines():
                     if line.startswith("data:") and line[5:].strip() not in {"", "[DONE]"}:
                         try:

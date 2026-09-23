@@ -46,7 +46,7 @@ def test_version_payload_offers_all_other_semver_versions(monkeypatch) -> None: 
             {"version": "0.2.1"},
         ]
     )
-    assert payload["current_version"] == "0.5.7"
+    assert payload["current_version"] == "0.5.8"
     assert [row["version"] for row in payload["versions"]] == ["0.5.3", "0.5.1", "0.4.3", "0.4.2", "0.3.4", "0.3.3", "0.3.2", "0.3.0", "0.2.1"]
     assert payload["update_supported"] is True
     with pytest.raises(ValueError, match="语义版本"):
@@ -78,14 +78,14 @@ def test_acr_registry_token_authentication(monkeypatch) -> None:  # type: ignore
                     )
                 if "auth.example.test" in url:
                     return httpx.Response(200, json={"token": "test-token"}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.7", "0.5.6", "0.5.5", "0.5.4", "latest"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.8", "0.5.6", "0.5.5", "0.5.4", "latest"]}, request=httpx.Request("GET", url))
 
         fake = FakeClient()
         monkeypatch.setattr(updates.httpx, "AsyncClient", lambda *args, **kwargs: fake)
         result = await updates.fetch_registry_versions(
             "team/app", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
-        assert [row["version"] for row in result] == ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]
+        assert [row["version"] for row in result] == ["0.5.8", "0.5.6", "0.5.5", "0.5.4"]
         assert any(auth == "Bearer test-token" for _, auth in fake.calls)
 
     asyncio.run(run())
@@ -108,7 +108,7 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
                     return httpx.Response(200, json={"results": [{"name": "0.4.0"}]}, request=httpx.Request("GET", url))
                 if "registry-1.docker.io" in url:
                     return httpx.Response(200, json={"tags": ["0.4.0"]}, request=httpx.Request("GET", url))
-                return httpx.Response(200, json={"tags": ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]}, request=httpx.Request("GET", url))
+                return httpx.Response(200, json={"tags": ["0.5.8", "0.5.6", "0.5.5", "0.5.4"]}, request=httpx.Request("GET", url))
 
         monkeypatch.setattr(updates.httpx, "AsyncClient", FakeClient)
         updates._version_cache.clear()
@@ -117,7 +117,7 @@ def test_registry_version_cache_is_scoped_by_registry(monkeypatch) -> None:  # t
             "zhang_spaces/vx-data-watch", "crpi-k1zyo7p3ez2ovrc3.cn-chengdu.personal.cr.aliyuncs.com"
         )
         assert [row["version"] for row in docker] == ["0.4.0"]
-        assert [row["version"] for row in acr] == ["0.5.7", "0.5.6", "0.5.5", "0.5.4"]
+        assert [row["version"] for row in acr] == ["0.5.8", "0.5.6", "0.5.5", "0.5.4"]
 
     asyncio.run(run())
 
@@ -181,7 +181,7 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
             self.calls.append(("tag", source, repository, tag))
 
         def image_tags(self, _repository: str) -> list[str]:
-            return ["0.5.7", "0.5.6", "0.5.5", "0.5.4", "0.5.3", "latest"]
+            return ["0.5.8", "0.5.6", "0.5.5", "0.5.4", "0.5.3", "latest"]
 
         def image_inspect(self, _image: str) -> dict[str, object]:
             return {"RepoDigests": [f"docker.io/litehub/vx-data-watch@{self.digest}"]}
@@ -212,7 +212,7 @@ def test_updater_pulls_replaces_and_persists_image(tmp_path: Path, monkeypatch) 
         engine=engine,  # type: ignore[arg-type]
     )
     assert engine.calls == [
-        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.7"),
+        ("tag", "docker.io/litehub/vx-data-watch:latest", "docker.io/litehub/vx-data-watch", "0.5.8"),
         ("pull", "litehub/vx-data-watch", "0.3.2"),
         ("tag", "litehub/vx-data-watch:0.3.2", "docker.io/litehub/vx-data-watch", "latest"),
         ("replace", "vx-data-watch", "app", "docker.io/litehub/vx-data-watch", "latest"),

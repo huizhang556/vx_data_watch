@@ -344,7 +344,7 @@ cp .env.example .env
 也可以下载指定版本的 GitHub 自动源码归档，不需要项目维护者重复上传压缩包：
 
 ```bash
-VERSION=0.5.7
+VERSION=0.5.8
 curl -L -o vx-data-watch-v${VERSION}.tar.gz \
   https://github.com/huizhang556/vx_data_watch/archive/refs/tags/v${VERSION}.tar.gz
 sudo tar -xzf vx-data-watch-v${VERSION}.tar.gz -C /opt

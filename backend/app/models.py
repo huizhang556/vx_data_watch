@@ -324,12 +324,34 @@ class AIChatSession(Base):
     title: Mapped[str] = mapped_column(String(200), default="新对话")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_provider_configs.id", ondelete="SET NULL"))
+    applied_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    applied_protocol: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    applied_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    model_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     generation_status: Mapped[str] = mapped_column(String(20), default="idle", server_default="idle")
     generation_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     generation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AIChatGenerationTask(Base):
+    __tablename__ = "ai_chat_generation_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("ai_chat_sessions.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_provider_configs.id", ondelete="SET NULL"), nullable=True)
+    generation_type: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(200))
+    protocol: Mapped[str] = mapped_column(String(50))
+    upstream_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running", server_default="running", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AIChatMessage(Base):

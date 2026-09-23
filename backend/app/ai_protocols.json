@@ -1,51 +1,391 @@
 {
-  "schema_version": 1,
-  "last_reviewed": "2026-09-22",
-  "note": "Public provider metadata only. Secrets and user data must never be stored here.",
-  "providers": {
-    "openai": {
-      "display_name": "OpenAI",
-      "base_url": "https://api.openai.com",
-      "default_model": "gpt-4o-mini",
-      "protocols": {
-        "chat": [
-          {"id": "chat_completions", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true},
-          {"id": "responses", "label": "Responses", "method": "POST", "path": "/v1/responses", "request_format": "openai_responses", "streaming": true}
-        ],
-        "image": [
-          {"id": "openai_images", "label": "Images Generations", "method": "POST", "path": "/v1/images/generations", "request_format": "openai_images", "async_task": false}
-        ],
-        "video": [
-          {"id": "openai_videos", "label": "Videos Tasks", "method": "POST", "path": "/v1/videos", "request_format": "openai_videos", "async_task": true}
-        ]
-      }
-    },
-    "anthropic": {
-      "display_name": "Anthropic",
-      "base_url": "https://api.anthropic.com",
-      "default_model": "claude-3-5-sonnet-latest",
-      "protocols": {"chat": [{"id": "anthropic", "label": "Messages", "method": "POST", "path": "/v1/messages", "request_format": "anthropic_messages", "streaming": true}], "image": [], "video": []}
-    },
-    "gemini": {
-      "display_name": "Google Gemini",
-      "base_url": "https://generativelanguage.googleapis.com",
-      "default_model": "gemini-2.0-flash",
-      "protocols": {
-        "chat": [{"id": "gemini", "label": "Generate Content", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents", "streaming": true}],
-        "image": [{"id": "gemini_image", "label": "Image generation via Generate Content", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents_image", "async_task": false}],
-        "video": [{"id": "gemini_video", "label": "Veo long-running operation", "method": "POST", "path": "/v1beta/models/{model}:generateContent", "request_format": "gemini_contents_video", "async_task": true}]
-      }
-    },
-    "grok": {
-      "display_name": "xAI Grok",
-      "base_url": "https://api.x.ai",
-      "default_model": "grok-3-mini",
-      "protocols": {"chat": [{"id": "grok", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}
-    },
-    "deepseek": {"display_name": "DeepSeek", "base_url": "https://api.deepseek.com", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
-    "zhipu": {"display_name": "Zhipu AI", "base_url": "https://open.bigmodel.cn/api/paas", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/v4/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
-    "qwen": {"display_name": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/v1/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
-    "nvidia": {"display_name": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}},
-    "moonshot": {"display_name": "Moonshot AI", "base_url": "https://api.moonshot.cn/v1", "protocols": {"chat": [{"id": "chat_completions", "label": "Chat Completions compatible", "method": "POST", "path": "/chat/completions", "request_format": "openai_chat", "streaming": true}], "image": [], "video": []}}
-  }
+    "schema_version": 2, 
+    "last_reviewed": "2026-09-23", 
+    "note": "Public provider metadata only. Secrets and user data must never be stored here. Generation entries describe public upstream APIs; entries with implemented=false are catalogued but not yet callable by the application.", 
+    "providers": {
+        "openai": {
+            "display_name": "OpenAI", 
+            "base_url": "https://api.openai.com", 
+            "default_model": "gpt-4o-mini", 
+            "models": {
+                "chat": [
+                    "gpt-4.1", 
+                    "gpt-4o", 
+                    "gpt-4o-mini", 
+                    "o3-mini"
+                ], 
+                "image": [
+                    "gpt-image-1", 
+                    "dall-e-3"
+                ], 
+                "video": [
+                    "sora-2"
+                ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions", 
+                        "method": "POST", 
+                        "path": "/v1/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }, 
+                    {
+                        "id": "responses", 
+                        "label": "Responses", 
+                        "method": "POST", 
+                        "path": "/v1/responses", 
+                        "request_format": "openai_responses", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [
+                    {
+                        "id": "openai_images", 
+                        "label": "Images Generations", 
+                        "method": "POST", 
+                        "path": "/v1/images/generations", 
+                        "request_format": "openai_images", 
+                        "async_task": false, 
+                        "implemented": true
+                    }
+                ], 
+                "video": [
+                    {
+                        "id": "openai_videos", 
+                        "label": "Videos Tasks", 
+                        "method": "POST", 
+                        "path": "/v1/videos", 
+                        "request_format": "openai_videos", 
+                        "async_task": true, 
+                        "implemented": true
+                    }
+                ]
+            }
+        }, 
+        "anthropic": {
+            "display_name": "Anthropic", 
+            "base_url": "https://api.anthropic.com", 
+            "default_model": "claude-3-5-sonnet-latest", 
+            "models": {
+                "chat": [
+                    "claude-3-5-sonnet-latest", 
+                    "claude-3-7-sonnet-latest", 
+                    "claude-sonnet-4"
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "anthropic", 
+                        "label": "Messages", 
+                        "method": "POST", 
+                        "path": "/v1/messages", 
+                        "request_format": "anthropic_messages", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }
+        }, 
+        "gemini": {
+            "display_name": "Google Gemini", 
+            "base_url": "https://generativelanguage.googleapis.com", 
+            "default_model": "gemini-2.0-flash", 
+            "models": {
+                "chat": [
+                    "gemini-2.0-flash", 
+                    "gemini-2.5-flash", 
+                    "gemini-2.5-pro"
+                ], 
+                "image": [
+                    "imagen-3.0-generate-002", 
+                    "imagen-4.0-generate-001"
+                ], 
+                "video": [
+                    "veo-3.0-generate-preview", 
+                    "veo-3.1-generate-preview"
+                ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "gemini", 
+                        "label": "Generate Content", 
+                        "method": "POST", 
+                        "path": "/v1beta/models/{model}:generateContent", 
+                        "request_format": "gemini_contents", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [
+                    {
+                        "id": "gemini_image", 
+                        "label": "Imagen Predict", 
+                        "method": "POST", 
+                        "path": "/v1beta/models/{model}:predict", 
+                        "request_format": "gemini_imagen_predict", 
+                        "async_task": false, 
+                        "implemented": false
+                    }
+                ], 
+                "video": [
+                    {
+                        "id": "gemini_video", 
+                        "label": "Veo Predict Long Running", 
+                        "method": "POST", 
+                        "path": "/v1beta/models/{model}:predictLongRunning", 
+                        "request_format": "gemini_veo_predict", 
+                        "async_task": true, 
+                        "implemented": false
+                    }
+                ]
+            }
+        }, 
+        "grok": {
+            "display_name": "xAI Grok", 
+            "base_url": "https://api.x.ai", 
+            "default_model": "grok-3-mini", 
+            "models": {
+                "chat": [
+                    "grok-3-mini", 
+                    "grok-3", 
+                    "grok-4"
+                ], 
+                "image": [
+                    "grok-2-image-1212"
+                ], 
+                "video": [ ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "grok", 
+                        "label": "Chat Completions", 
+                        "method": "POST", 
+                        "path": "/v1/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [
+                    {
+                        "id": "grok_images", 
+                        "label": "Image Generations", 
+                        "method": "POST", 
+                        "path": "/v1/images/generations", 
+                        "request_format": "openai_images", 
+                        "async_task": false, 
+                        "implemented": false
+                    }
+                ], 
+                "video": [ ]
+            }
+        }, 
+        "deepseek": {
+            "display_name": "DeepSeek", 
+            "base_url": "https://api.deepseek.com", 
+            "default_model": "deepseek-chat", 
+            "models": {
+                "chat": [
+                    "deepseek-chat", 
+                    "deepseek-reasoner"
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions", 
+                        "method": "POST", 
+                        "path": "/v1/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }
+        }, 
+        "zhipu": {
+            "display_name": "智谱 AI", 
+            "base_url": "https://open.bigmodel.cn/api/paas", 
+            "default_model": "glm-4-flash", 
+            "models": {
+                "chat": [
+                    "glm-4-plus", 
+                    "glm-4-flash", 
+                    "glm-4.5"
+                ], 
+                "image": [
+                    "cogview-3-plus"
+                ], 
+                "video": [
+                    "cogvideox-3"
+                ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions", 
+                        "method": "POST", 
+                        "path": "/v4/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [
+                    {
+                        "id": "zhipu_images", 
+                        "label": "CogView Images", 
+                        "method": "POST", 
+                        "path": "/v4/images/generations", 
+                        "request_format": "zhipu_images", 
+                        "async_task": false, 
+                        "implemented": false
+                    }
+                ], 
+                "video": [
+                    {
+                        "id": "zhipu_videos", 
+                        "label": "CogVideo Tasks", 
+                        "method": "POST", 
+                        "path": "/v4/videos/generations", 
+                        "request_format": "zhipu_videos", 
+                        "async_task": true, 
+                        "implemented": false
+                    }
+                ]
+            }
+        }, 
+        "qwen": {
+            "display_name": "通义千问", 
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode", 
+            "default_model": "qwen-plus", 
+            "models": {
+                "chat": [
+                    "qwen-plus", 
+                    "qwen-turbo", 
+                    "qwen-max"
+                ], 
+                "image": [
+                    "wanx-v1", 
+                    "qwen-image"
+                ], 
+                "video": [
+                    "wanx2.1-t2v-turbo", 
+                    "wanx2.1-i2v-turbo"
+                ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions Compatible", 
+                        "method": "POST", 
+                        "path": "/v1/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [
+                    {
+                        "id": "qwen_images", 
+                        "label": "DashScope Image Synthesis", 
+                        "method": "POST", 
+                        "path": "/api/v1/services/aigc/text2image/image-synthesis", 
+                        "request_format": "dashscope_images", 
+                        "async_task": true, 
+                        "implemented": false
+                    }
+                ], 
+                "video": [
+                    {
+                        "id": "qwen_videos", 
+                        "label": "DashScope Video Synthesis", 
+                        "method": "POST", 
+                        "path": "/api/v1/services/aigc/video-generation/video-synthesis", 
+                        "request_format": "dashscope_videos", 
+                        "async_task": true, 
+                        "implemented": false
+                    }
+                ]
+            }
+        }, 
+        "nvidia": {
+            "display_name": "NVIDIA NIM", 
+            "base_url": "https://integrate.api.nvidia.com/v1", 
+            "default_model": "meta/llama-3.1-70b-instruct", 
+            "models": {
+                "chat": [
+                    "meta/llama-3.1-70b-instruct", 
+                    "meta/llama-3.3-70b-instruct", 
+                    "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions Compatible", 
+                        "method": "POST", 
+                        "path": "/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }
+        }, 
+        "moonshot": {
+            "display_name": "Moonshot AI（国内）", 
+            "base_url": "https://api.moonshot.cn/v1", 
+            "default_model": "moonshot-v1-8k", 
+            "models": {
+                "chat": [
+                    "moonshot-v1-8k", 
+                    "moonshot-v1-32k", 
+                    "moonshot-v1-128k", 
+                    "kimi-k2-0711-preview"
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }, 
+            "protocols": {
+                "chat": [
+                    {
+                        "id": "chat_completions", 
+                        "label": "Chat Completions Compatible", 
+                        "method": "POST", 
+                        "path": "/chat/completions", 
+                        "request_format": "openai_chat", 
+                        "streaming": true, 
+                        "implemented": true
+                    }
+                ], 
+                "image": [ ], 
+                "video": [ ]
+            }
+        }
+    }
 }

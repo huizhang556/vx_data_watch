@@ -55,12 +55,18 @@ jobs:
         shell: bash
         env:
           CANDIDATE: ${{ env.DOCKERHUB_IMAGE }}:${{ inputs.candidate_tag }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
           docker pull "$CANDIDATE"
           digest="$(docker image inspect "$CANDIDATE" --format '{{index .RepoDigests 0}}' | sed 's/^.*@//')"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Candidate digest unavailable"; exit 1; }
+          version="$(docker image inspect "$CANDIDATE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          [[ "$version" == "$RELEASE_VERSION" ]] || { echo "Candidate version $version does not match release $RELEASE_VERSION"; exit 1; }
+          revision="$(docker image inspect "$CANDIDATE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || { echo "Candidate source revision label is missing or invalid"; exit 1; }
           echo "CANDIDATE_DIGEST=$digest" >> "$GITHUB_ENV"
-          echo "Tested candidate digest: $digest"
+          echo "CANDIDATE_REVISION=$revision" >> "$GITHUB_ENV"
+          echo "Tested candidate: version=$version revision=$revision digest=$digest"
       - name: Promote the same image to both registries
         shell: bash
         env:
@@ -91,4 +97,5 @@ jobs:
             echo "$tag: $dockerhub_digest"
           done
           echo "Published version: $RELEASE_VERSION"
+          echo "Source revision: $CANDIDATE_REVISION"
           echo "Source candidate digest: $CANDIDATE_DIGEST"

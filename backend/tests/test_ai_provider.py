@@ -116,6 +116,65 @@ def test_native_provider_protocols(monkeypatch) -> None:  # type: ignore[no-unty
     assert requests[2].headers["authorization"] == "Bearer x-key"
 
 
+def test_openai_image_protocol_accepts_base64_and_url(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(ai_service, "decrypt_secret", lambda _value: "image-key")
+    monkeypatch.setattr(
+        ai_service.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
+    )
+    config = ai_service.AIProviderConfig(base_url="https://api.openai.test", model="gpt-image-1", timeout_seconds=10, encrypted_api_key="encrypted")
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if request.url.path.endswith("/images/generations"):
+            return httpx.Response(200, json={"data": [{"b64_json": "aW1hZ2UtYnl0ZXM="}]})
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"url-image")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: original_client(transport=transport, **kwargs))
+
+    async def run() -> bytes:
+        return await ai_service.generate_image_provider(config, "sunset", "gpt-image-1", "openai_images")
+
+    assert asyncio.run(run()) == b"image-bytes"
+    assert calls == 1
+
+
+def test_openai_video_protocol_creates_polls_and_downloads(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(ai_service, "decrypt_secret", lambda _value: "video-key")
+    monkeypatch.setattr(
+        ai_service.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
+    )
+    config = ai_service.AIProviderConfig(base_url="https://api.openai.test", model="sora-2", timeout_seconds=10, encrypted_api_key="encrypted")
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "video-task-1", "status": "queued"})
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, headers={"content-type": "video/mp4"}, content=b"....ftypisom")
+        return httpx.Response(200, json={"id": "video-task-1", "status": "completed"})
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(ai_service.httpx, "AsyncClient", lambda **kwargs: original_client(transport=transport, **kwargs))
+    original_sleep = ai_service.asyncio.sleep
+    monkeypatch.setattr(ai_service.asyncio, "sleep", lambda _seconds: original_sleep(0))
+
+    async def run() -> tuple[bytes, str, str]:
+        return await ai_service.generate_video_provider(config, "a city at night", "sora-2", "openai_videos")
+
+    assert asyncio.run(run()) == (b"....ftypisom", "video/mp4", "video-task-1")
+    assert requests == ["/v1/videos", "/v1/videos/video-task-1", "/v1/videos/video-task-1/content"]
+
+
 def test_provider_url_rejects_private_dns_and_redirects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         ai_service.socket,
@@ -145,6 +204,8 @@ def test_ai_chat_end_to_end(client: TestClient, auth: dict[str, str], account_id
         yield "模拟"
         yield "回复"
     monkeypatch.setattr(main, "stream_chat_provider", stream)
+    applied = client.post("/api/ai-chat/sessions/%s/model" % session_id, headers=auth, json={"account_id": account_id, "provider_id": provider["id"], "model": "test-model"})
+    assert applied.status_code == 200
     response = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "你好", "model": "test-model", "attachments": [{"filename": "note.txt", "content_type": "text/plain", "data": "aGVsbG8="}]})
     assert response.status_code == 200
     generation = client.post("/api/ai-chat/sessions/%s/messages" % session_id, headers=auth, json={"content": "生成图片", "mode": "image"})

@@ -1,6 +1,7 @@
 ARG NODE_IMAGE=node:24-alpine
 ARG PYTHON_IMAGE=python:3.12-slim
-ARG APP_VERSION=0.5.7
+ARG APP_VERSION=0.5.8
+ARG VCS_REF=unknown
 ARG PIP_INDEX_URL=https://pypi.org/simple
 
 FROM ${NODE_IMAGE} AS frontend-build
@@ -12,9 +13,11 @@ RUN npm run build
 
 FROM ${PYTHON_IMAGE} AS runtime
 ARG APP_VERSION
+ARG VCS_REF
 ARG PIP_INDEX_URL
 LABEL org.opencontainers.image.title="VX Data Watch" \
       org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.source="https://github.com/huizhang556/vx_data_watch" \
       org.opencontainers.image.documentation="https://gitee.com/huizhang556/vx_data_watch"
 ENV PYTHONDONTWRITEBYTECODE=1 \

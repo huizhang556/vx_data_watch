@@ -358,11 +358,11 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-code-block { position: relative; display: block; margin: 8px 0; padding: 28px 10px 10px; background: var(--vx-surface); border: 1px solid var(--vx-border); border-radius: 6px; overflow-x: auto; }
 .ai-chat-code-block > .ant-btn { position: absolute; top: 2px; right: 2px; }
 .ai-chat-main { position: relative; min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-.ai-chat-toolbar { padding: 14px 18px; border-bottom: 1px solid var(--vx-border); }
+.ai-chat-toolbar { min-width: 0; display: flex; flex-wrap: wrap; padding: 14px 18px; border-bottom: 1px solid var(--vx-border); }
 .ai-chat-toolbar .ant-select { min-width: 240px; max-width: 100%; }
 .ai-chat-export-actions { margin-left: auto; }
 .ai-chat-message-stage { position: relative; min-height: 0; overflow: hidden; }
-.ai-chat-messages { height: 100%; min-height: 420px; max-height: 58vh; overflow-y: auto; padding: 22px; display: grid; align-content: start; gap: 16px; }
+.ai-chat-messages { height: 100%; min-height: 0; max-height: none; overflow-y: auto; padding: 22px; display: grid; align-content: start; gap: 16px; }
 .ai-chat-scroll-bottom { position: absolute !important; z-index: 4; left: 50%; bottom: 8px; width: 38px; height: 38px; transform: translateX(-50%); color: var(--vx-text) !important; background: color-mix(in srgb, var(--vx-surface) 72%, transparent) !important; border: 1px solid color-mix(in srgb, var(--vx-border) 80%, transparent) !important; box-shadow: 0 3px 12px color-mix(in srgb, var(--vx-text) 16%, transparent); backdrop-filter: blur(6px); }
 .ai-chat-scroll-bottom:hover, .ai-chat-scroll-bottom:focus-visible { color: var(--vx-accent-strong) !important; background: color-mix(in srgb, var(--vx-accent-soft) 88%, transparent) !important; border-color: var(--vx-accent) !important; }
 .ai-chat-message.search-highlight .ai-chat-message-content { outline: 2px solid var(--vx-accent); outline-offset: 3px; }
@@ -376,10 +376,11 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-history-attachment { display: block; margin-top: 8px; color: var(--vx-accent); }
 .ai-chat-history-image { display: block; max-width: min(280px, 100%); padding: 0; margin-top: 8px; border: 0; background: transparent; cursor: zoom-in; }
 .ai-chat-history-image img { display: block; max-width: 100%; max-height: 220px; border-radius: 8px; object-fit: contain; }
+.ai-chat-history-video { display: block; width: min(480px, 100%); max-height: 360px; margin-top: 8px; border-radius: 8px; background: #000; }
 .ai-chat-composer { display: grid; gap: 9px; padding: 14px 18px; border-top: 1px solid var(--vx-border); }
 .ai-chat-context-info { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-height: 26px; padding: 5px 10px; color: var(--vx-text); opacity: .78; font-size: 12px; background: var(--vx-surface-soft); border: 1px solid var(--vx-border); border-radius: 6px; }
 .ai-chat-context-info strong { color: var(--vx-accent-strong); }
-.ai-chat-composer .ant-space { justify-content: flex-end; }
+.ai-chat-composer .ant-space { justify-content: flex-end; flex-wrap: wrap; }
 .ai-chat-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
 .ai-chat-attachment { display: flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 6px; background: var(--vx-surface-soft); border: 1px solid var(--vx-border); border-radius: 6px; }
 .ai-chat-attachment span { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
@@ -389,21 +390,27 @@ button, input, textarea, select { letter-spacing: 0; }
 .ai-chat-category-order span { cursor: grab; padding: 4px 9px; border: 1px dashed var(--vx-border); border-radius: 5px; background: var(--vx-surface-soft); font-size: 12px; }
 .ai-chat-category-order span:active { cursor: grabbing; }
 .ai-chat-page > .ant-tabs { width: 100%; }
-.ai-chat-page { width: 100%; max-width: none; padding-inline: 18px; }
+.ai-chat-page { width: 100%; max-width: none; box-sizing: border-box; min-height: 0; height: 100%; display: flex; flex-direction: column; padding: 12px 18px 0; }
 .ai-chat-page > .ant-tabs .ant-tabs-nav-list { width: 100%; }
 .ai-chat-page > .ant-tabs .ant-tabs-tab { flex: 1; justify-content: center; min-height: 52px; padding: 14px 20px; font-size: 16px; font-weight: 600; }
 .ai-chat-page > .ant-tabs .ant-tabs-tab-btn { width: 100%; text-align: center; }
 .ai-chat-page > .ant-tabs .ant-tabs-content-holder,
 .ai-chat-page > .ant-tabs .ant-tabs-content,
-.ai-chat-page > .ant-tabs .ant-tabs-tabpane { width: 100%; }
-.ai-chat-page > .ant-tabs .ant-tabs-tabpane > .page { width: 100%; max-width: none; padding: 0; }
-.ai-chat-page .ai-chat-layout { width: 100%; height: calc(100vh - 176px); min-height: 560px; }
+.ai-chat-page > .ant-tabs .ant-tabs-tabpane { width: 100%; min-height: 0; }
+.ai-chat-page > .ant-tabs .ant-tabs-tabpane > .page { width: 100%; max-width: none; height: 100%; min-height: 0; padding: 0; }
+.content:has(.ai-chat-page) { min-height: 0; height: calc(100vh - 68px); display: flex; flex-direction: column; overflow: hidden; }
+.ai-chat-page > .ant-tabs { min-height: 0; height: 100%; display: flex; flex-direction: column; }
+.ai-chat-page > .ant-tabs .ant-tabs-content-holder { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.ai-chat-page > .ant-tabs .ant-tabs-content,
+.ai-chat-page > .ant-tabs .ant-tabs-tabpane { height: 100%; }
+.ai-chat-page .ai-chat-layout { width: 100%; height: 100%; min-height: 0; }
+.ai-chat-page .ai-chat-main { min-height: 0; }
 .ai-chat-toolbar > .ant-select { width: 180px; min-width: 145px; flex: 0 1 180px; }
 @media (max-width: 700px) { .ai-chat-toolbar > .ant-select { width: auto; min-width: 0; flex: 1 1 0; } }
 [data-theme='dark'] .ai-chat-sidebar { background: #151e23; }
 [data-theme='dark'] .ai-chat-message-content { background: #202b31; }
 [data-theme='dark'] .ai-chat-message.user .ai-chat-message-content { background: #24483f; }
-@media (max-width: 700px) { .ai-chat-page { padding-inline: 10px; } .ai-chat-layout { grid-template-columns: 1fr; height: auto; min-height: 620px; } .ai-chat-resizer { display: none; } .ai-chat-sidebar { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--vx-border); overflow-y: auto; } .ai-chat-messages { max-height: 52vh; padding: 14px; } .ai-chat-toolbar { flex-wrap: wrap; } .ai-chat-toolbar .ant-select { min-width: 0; flex: 1; } }
+@media (max-width: 700px) { .ai-chat-page { height: auto; min-height: 0; padding: 10px 10px 0; } .content:has(.ai-chat-page) { height: auto; min-height: calc(100vh - 68px); overflow-y: auto; } .ai-chat-page > .ant-tabs { height: auto; } .ai-chat-page > .ant-tabs .ant-tabs-content-holder, .ai-chat-page > .ant-tabs .ant-tabs-content, .ai-chat-page > .ant-tabs .ant-tabs-tabpane, .ai-chat-page > .ant-tabs .ant-tabs-tabpane > .page { height: auto; } .ai-chat-layout { grid-template-columns: 1fr; height: auto; min-height: 620px; } .ai-chat-resizer { display: none; } .ai-chat-sidebar { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--vx-border); overflow-y: auto; } .ai-chat-messages { max-height: 52vh; padding: 14px; } .ai-chat-toolbar { flex-wrap: wrap; } .ai-chat-toolbar .ant-select { min-width: 0; flex: 1; } }
 .avatar-uploader { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; }
 .avatar-uploader .ant-upload-list { margin-top: 0; max-width: min(360px, 100%); }
 .avatar-uploader .ant-upload-list-item-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -663,6 +670,10 @@ body { color-scheme: light; }
 .home-page-modern .home-modern-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--home-brand) !important; text-decoration: none; font-size: 19px; font-weight: 750; white-space: nowrap; }
 .home-modern-mark { display: grid; place-items: center; width: 39px; height: 39px; color: #fff; font-weight: 900; font-style: italic; font-size: 16px; background: linear-gradient(135deg, #00e5d0, #168aff); clip-path: polygon(24% 0, 52% 0, 40% 29%, 79% 29%, 42% 100%, 20% 100%, 34% 68%, 0 68%); }
 .home-modern-nav { display: flex; align-items: stretch; gap: 32px; margin-right: auto; height: 58px; }
+/* The public home header intentionally exposes only the project GitHub link. */
+.home-modern-nav a:nth-child(1),
+.home-modern-nav a:nth-child(2),
+.home-modern-nav a:nth-child(4) { display: none; }
 .home-page-modern .home-modern-nav a { display: inline-flex; align-items: center; color: var(--home-nav) !important; text-decoration: none; font-size: 14px; border-bottom: 2px solid transparent; }
 .home-page-modern .home-modern-nav a:hover, .home-page-modern .home-modern-nav a.active { color: var(--home-active) !important; border-color: var(--home-active); }
 .home-modern-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
@@ -1526,6 +1537,75 @@ button, input, textarea, select, .ant-typography, .ant-btn, .ant-input, .ant-inp
 .ai-test-preview-heading { min-height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 12px; }
 .ai-test-preview-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 0 8px 8px; }
 .ai-test-preview-columns section { min-width: 0; }
-.ai-test-preview-columns pre { height: 88px; margin: 4px 0 0; padding: 8px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.45; color: var(--vx-text); background: var(--vx-surface-muted); border: 1px solid var(--vx-border); border-radius: 4px; }
+.ai-test-preview-columns pre { height: 88px; margin: 4px 0 0; padding: 8px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.55; color: var(--vx-text); background: var(--vx-surface-muted); border: 1px solid var(--vx-border); border-radius: 4px; }
+.ai-test-preview-columns pre.ai-test-response-success { border-color: #52c41a; background: color-mix(in srgb, #52c41a 8%, var(--vx-surface-muted)); }
+.ai-test-preview-columns pre.ai-test-response-error { border-color: #ff4d4f; background: color-mix(in srgb, #ff4d4f 8%, var(--vx-surface-muted)); }
+.ai-test-media-result { min-width: 0; }
+.ai-test-media-preview { display: block; width: min(100%, 360px); max-height: 220px; margin-top: 6px; border: 1px solid var(--vx-border); border-radius: 8px; object-fit: contain; background: var(--vx-surface-muted); }
 .ai-test-preview.expanded .ai-test-preview-columns pre { height: 220px; }
 @media (max-width: 640px) { .ai-test-preview-columns { grid-template-columns: 1fr; } }
+
+/* Final semantic tokens for every selectable application theme. */
+:root,
+[data-theme] {
+  --vx-surface-muted: color-mix(in srgb, var(--vx-surface-soft) 72%, var(--vx-surface));
+  --vx-placeholder: color-mix(in srgb, var(--vx-muted) 88%, var(--vx-surface));
+  --vx-danger-border: color-mix(in srgb, var(--vx-danger) 46%, var(--vx-border));
+  --vx-success-border: color-mix(in srgb, var(--vx-success) 46%, var(--vx-border));
+}
+[data-theme] .ant-btn-primary { color: var(--vx-on-accent) !important; }
+[data-theme] .ant-btn-dangerous { border-color: var(--vx-danger-border); }
+[data-theme] .ant-input::placeholder,
+[data-theme] .ant-input-affix-wrapper input::placeholder { color: var(--vx-placeholder); }
+[data-theme] .ant-switch { background: var(--vx-border-strong); }
+[data-theme] .ai-provider-registry-row:hover,
+[data-theme] .quick-config-row:hover,
+[data-theme] .quick-config-management-row:hover,
+[data-theme] .menu-visibility-row:hover,
+[data-theme] .update-health-check:hover { color: var(--vx-text); background: var(--vx-hover); }
+[data-theme] .ai-test-preview-columns pre.ai-test-response-success {
+  color: var(--vx-text);
+  border-color: var(--vx-success);
+  background: color-mix(in srgb, var(--vx-success) 10%, var(--vx-surface-muted));
+}
+[data-theme] .ai-test-preview-columns pre.ai-test-response-error {
+  color: var(--vx-text);
+  border-color: var(--vx-danger);
+  background: color-mix(in srgb, var(--vx-danger) 10%, var(--vx-surface-muted));
+}
+
+/* Public home theme boundary. The home page has its own two-mode palette and
+   must not inherit the six internal application theme rules. */
+.home-page-modern {
+  isolation: isolate;
+  color-scheme: dark;
+}
+.home-page-modern a { color: inherit; }
+.home-page-modern button { color: inherit; }
+.home-page-modern button:hover:not(:disabled) { color: inherit; }
+.home-page-modern .home-modern-nav a:nth-child(1),
+.home-page-modern .home-modern-nav a:nth-child(2),
+.home-page-modern .home-modern-nav a:nth-child(4) { display: none !important; }
+.home-page-modern .home-modern-nav a:nth-child(3) { display: inline-flex !important; }
+.home-page-modern .home-modern-nav a,
+.home-page-modern .home-modern-nav a:hover {
+  color: var(--home-nav) !important;
+  border-color: transparent;
+}
+.home-page-modern .home-modern-nav a:hover { color: var(--home-active) !important; border-color: var(--home-active); }
+.home-page-modern .home-modern-brand { color: var(--home-brand) !important; }
+.home-page-modern .home-modern-user { color: var(--home-brand) !important; }
+.home-page-modern .home-icon-button,
+.home-page-modern .home-language { color: var(--home-button-text) !important; }
+.home-page-modern .home-outline-button { color: #dcecff; border-color: #168bd7; background: rgba(3, 20, 47, .52); }
+.home-page-modern .home-outline-button:hover { color: #fff !important; border-color: #25dfff; background: rgba(8, 119, 188, .25); }
+.home-page-modern .home-primary-button,
+.home-page-modern .home-primary-button:hover { color: #001523 !important; }
+.home-page-modern .home-footer a,
+.home-page-modern .home-footer a:hover { color: #8e8e8e !important; }
+.home-page-modern .home-footer a:hover { color: #d5d5d5 !important; }
+.home-page-modern.home-light-mode { color-scheme: light; }
+.home-page-modern.home-light-mode .home-outline-button { color: #24516a !important; border-color: #67aebf; background: rgba(255, 255, 255, .55); }
+.home-page-modern.home-light-mode .home-outline-button:hover { color: #163f55 !important; border-color: #10baca; background: rgba(255, 255, 255, .8); }
+.home-page-modern.home-light-mode .home-footer a,
+.home-page-modern.home-light-mode .home-footer a:hover { color: #6f7f89 !important; }

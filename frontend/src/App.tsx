@@ -59,6 +59,7 @@ type UpdateCheck = { current_version: string; latest_version?: string; has_updat
 const versionCompare = (left: string, right: string) => left.localeCompare(right, undefined, { numeric: true });
 
 const AIPage = lazy(() => import("./pages/AIPage"));
+const ProtocolCatalogPage = lazy(() => import("./pages/ProtocolCatalogPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 const BackupPage = lazy(() => import("./pages/BackupPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
@@ -494,6 +495,7 @@ export default function App() {
                 <Route path="/ai" element={<AIPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
                 <Route path="/ai-chat/config" element={<AIChatPage configOnly />} />
+                <Route path="/ai-chat/protocols" element={user.role === "admin" ? <ProtocolCatalogPage /> : <Navigate to="/analysis" replace />} />
                 <Route path="/accounts" element={<SettingsPage section="accounts" />} />
                 <Route path="/analysis/dashboard" element={<DashboardPage />} />
                 <Route path="/analysis/videos" element={<VideosPage />} />

@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -50,10 +50,17 @@ from .ai_service import (
     list_provider_models,
     test_provider,
     test_provider_values,
+    test_image_preview,
     stream_chat_provider,
+    generate_image_provider,
+    generate_video_provider,
     provider_request_preview,
     _configured_protocol,
+    SUPPORTED_CHAT_PROTOCOLS,
+    SUPPORTED_IMAGE_PROTOCOLS,
+    SUPPORTED_VIDEO_PROTOCOLS,
 )
+from .ai_catalog import CatalogValidationError, list_history, load_builtin_catalog, load_catalog, reset_catalog, restore_history, save_catalog
 from .analytics import date_summary, range_has_complete_data, range_summary, range_video_summary
 from .audit import write_audit
 from .auth_service import auth_settings, consume_code, email_user, normalize_email, require_captcha, save_auth_settings, send_code, test_smtp_connection
@@ -61,17 +68,9 @@ from .backups import create_backup
 from .config import get_settings
 
 
-AI_PROTOCOLS_PATH = Path(__file__).with_name("ai_protocols.json")
-
-
 def _load_ai_protocol_catalog() -> dict[str, Any]:
-    """Load public provider metadata from the single versioned protocol catalog."""
-    try:
-        payload = json.loads(AI_PROTOCOLS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"schema_version": 1, "providers": {}}
-    providers = payload.get("providers") if isinstance(payload, dict) else {}
-    return {"schema_version": payload.get("schema_version", 1), "providers": providers if isinstance(providers, dict) else {}}
+    """Load public provider metadata, including the persistent admin override."""
+    return load_catalog()[0]
 
 
 def _chat_protocol_ids() -> set[str]:
@@ -81,8 +80,12 @@ def _chat_protocol_ids() -> set[str]:
         if not isinstance(provider, dict):
             continue
         entries = provider.get("protocols", {}).get("chat", [])
-        declared.update(str(item["id"]) for item in entries if isinstance(item, dict) and item.get("id"))
-    return declared & {"chat_completions", "responses", "anthropic", "gemini", "grok"}
+        declared.update(
+            str(item["id"])
+            for item in entries
+            if isinstance(item, dict) and item.get("id") and item.get("implemented", True) and not item.get("disabled", False)
+        )
+    return declared & SUPPORTED_CHAT_PROTOCOLS
 from .database import SessionLocal, get_db, init_db
 from .download_service import cancel_task, pause_task, start_task
 from .deps import (
@@ -108,6 +111,7 @@ from .models import (
     AIChatCategory,
     AIChatSession,
     AIChatMessage,
+    AIChatGenerationTask,
     AIChatAttachment,
     UsageCounter,
     AuditLog,
@@ -256,6 +260,24 @@ _login_attempts: dict[str, list[float]] = {}
 _auth_request_attempts: dict[str, list[float]] = {}
 
 
+def recover_stale_generation_tasks() -> None:
+    """Do not expose tasks from a previous process as permanently running."""
+    with SessionLocal() as db:
+        stale = db.scalars(select(AIChatGenerationTask).where(AIChatGenerationTask.status == "running")).all()
+        if not stale:
+            return
+        now = datetime.now(UTC)
+        for task in stale:
+            task.status = "failed"
+            task.error = "服务重启后任务未能自动恢复，请重新发起生成"
+            task.completed_at = now
+            session = db.get(AIChatSession, task.session_id)
+            if session and session.generation_status == "running":
+                session.generation_status = "failed"
+                session.generation_error = task.error
+        db.commit()
+
+
 def _prune_rate_limit_store(store: dict[str, list[float]], now: float, window_seconds: int) -> None:
     """Bound process-local limiter memory when attackers rotate identifiers."""
     expired = [key for key, values in store.items() if not values or now - values[-1] >= window_seconds]
@@ -285,6 +307,7 @@ def _check_auth_rate_limit(key: str, *, limit: int, window_seconds: int = 300) -
 @asynccontextmanager
 async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
     init_db()
+    recover_stale_generation_tasks()
     yield
 
 
@@ -684,6 +707,7 @@ def auth_config(db: Annotated[Session, Depends(get_db)]) -> dict[str, Any]:
         "captcha_site_key": values["captcha_site_key"],
         "site_name": site["site_name"],
         "site_subtitle": site["site_subtitle"],
+        "browser_title": site.get("browser_title") or site["site_name"],
         "logo_url": _site_logo_url(site),
     }
 
@@ -1993,7 +2017,7 @@ def _chat_category_payload(row: AIChatCategory) -> dict[str, Any]:
 
 
 def _chat_session_payload(row: AIChatSession) -> dict[str, Any]:
-    return {"id": row.id, "category_id": row.category_id, "title": row.title, "pinned": row.pinned, "provider_id": row.provider_id, "generation_status": row.generation_status, "generation_type": row.generation_type, "generation_error": row.generation_error, "created_at": row.created_at, "updated_at": row.updated_at}
+    return {"id": row.id, "category_id": row.category_id, "title": row.title, "pinned": row.pinned, "provider_id": row.provider_id, "applied_model": row.applied_model, "applied_protocol": row.applied_protocol, "applied_mode": row.applied_mode, "model_applied_at": row.model_applied_at, "generation_status": row.generation_status, "generation_type": row.generation_type, "generation_error": row.generation_error, "created_at": row.created_at, "updated_at": row.updated_at}
 
 
 def _chat_owned_session(db: Session, session_id: int, user: User) -> AIChatSession:
@@ -2127,11 +2151,75 @@ def update_chat_session(session_id: int, payload: AIChatSessionUpdate, user: Csr
     db.commit(); return _chat_session_payload(row)
 
 
+@app.post("/api/ai-chat/sessions/{session_id}/model")
+async def apply_chat_model(
+    session_id: int,
+    payload: AIProviderModelTest,
+    user: CsrfUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    """Test and atomically apply the exact model/protocol to this session."""
+    row = _chat_owned_session(db, session_id, user)
+    if payload.account_id is not None:
+        _get_account(db, payload.account_id, user)
+    config = db.get(AIProviderConfig, payload.provider_id)
+    allowed = _provider_candidates(db, payload.account_id, user)
+    if not config or config.id not in {item.id for item in allowed}:
+        raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
+    if not config.is_enabled:
+        raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
+    try:
+        configured_models = json.loads(config.models_json) if config.models_json else []
+    except (TypeError, ValueError):
+        configured_models = []
+    allowed_models = {str(item).strip() for item in configured_models if str(item).strip()}
+    if config.model:
+        allowed_models.add(config.model)
+    if allowed_models and payload.model not in allowed_models:
+        raise HTTPException(status_code=422, detail="所选模型不属于当前接口配置")
+    protocol = _configured_protocol(config, payload.model) if payload.mode == "chat" else (payload.protocol or "")
+    if payload.mode == "image" and protocol not in SUPPORTED_IMAGE_PROTOCOLS:
+        raise HTTPException(status_code=422, detail="当前生图协议尚未接入")
+    if payload.mode == "video" and protocol not in SUPPORTED_VIDEO_PROTOCOLS:
+        raise HTTPException(status_code=422, detail="当前生视频协议尚未接入")
+    if payload.mode == "chat" and payload.protocol and payload.protocol != protocol:
+        raise HTTPException(status_code=409, detail="所选协议与当前模型配置不一致，请刷新后重新选择")
+    if payload.mode == "chat" and protocol not in SUPPORTED_CHAT_PROTOCOLS:
+        raise HTTPException(status_code=422, detail="当前请求协议尚未接入")
+    try:
+        if payload.mode in {"image", "video"}:
+            result = "生成协议已配置，将在首次生成时验证上游"
+        else:
+            result = await test_provider_values(
+                base_url=config.base_url,
+                model=payload.model,
+                protocol=protocol,
+                timeout_seconds=config.timeout_seconds,
+                api_key=decrypt_secret(config.encrypted_api_key),
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    row.provider_id = config.id
+    row.applied_model = payload.model.strip()
+    row.applied_protocol = protocol
+    row.applied_mode = payload.mode
+    row.model_applied_at = datetime.now(UTC)
+    db.commit()
+    return {**_chat_session_payload(row), "tested": True, "result": result}
+
+
 @app.get("/api/ai-chat/sessions/{session_id}/messages")
 def list_chat_messages(session_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
     _chat_owned_session(db, session_id, user)
     rows = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == session_id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
     return [{"id": row.id, "role": row.role, "content": row.content, "created_at": row.created_at, "attachments": [{"id": item.id, "filename": item.filename, "content_type": item.content_type, "size_bytes": item.size_bytes} for item in db.scalars(select(AIChatAttachment).where(AIChatAttachment.message_id == row.id)).all()]} for row in rows]
+
+
+@app.get("/api/ai-chat/sessions/{session_id}/generation-tasks")
+def list_chat_generation_tasks(session_id: int, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> list[dict[str, Any]]:
+    _chat_owned_session(db, session_id, user)
+    rows = db.scalars(select(AIChatGenerationTask).where(AIChatGenerationTask.session_id == session_id).order_by(AIChatGenerationTask.started_at.desc(), AIChatGenerationTask.id.desc())).all()
+    return [{"id": row.id, "generation_type": row.generation_type, "model": row.model, "protocol": row.protocol, "status": row.status, "error": row.error, "started_at": row.started_at, "updated_at": row.updated_at, "completed_at": row.completed_at} for row in rows]
 
 
 def _chat_message_owned(db: Session, message_id: int, user: User) -> AIChatMessage:
@@ -2236,7 +2324,9 @@ def delete_chat_session(session_id: int, user: CsrfUser, db: Annotated[Session, 
     row = _chat_owned_session(db, session_id, user); attachment_dir = get_settings().data_dir / "ai-chat-attachments" / str(session_id); db.delete(row); db.commit(); shutil.rmtree(attachment_dir, ignore_errors=True); return Response(status_code=204)
 
 
-USAGE_LIMITS = {0: {"ai_chat": 20, "analysis": 5, "download": 5}, 1: {"ai_chat": 50, "analysis": 10, "download": 20}, 2: {"ai_chat": 100, "analysis": 20, "download": 50}}
+USAGE_LIMITS = {0: {"ai_chat": 20, "ai_image": 3, "ai_video": 1, "analysis": 5, "download": 5}, 1: {"ai_chat": 50, "ai_image": 10, "ai_video": 3, "analysis": 10, "download": 20}, 2: {"ai_chat": 100, "ai_image": 30, "ai_video": 10, "analysis": 20, "download": 50}}
+AI_IMAGE_STORAGE_LIMIT = 512 * 1024 * 1024
+AI_VIDEO_STORAGE_LIMIT = 1024 * 1024 * 1024
 
 
 def _consume_usage(db: Session, user: User, kind: str, amount: int = 1) -> None:
@@ -2267,25 +2357,24 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
                 status_code=409,
                 detail="当前对话已有历史消息，生图或生视频需要新建聊天窗口",
             )
-    _consume_usage(db, user, "ai_chat")
-    if payload.mode in {"image", "video"}:
-        if row.generation_status == "running":
-            raise HTTPException(status_code=409, detail="当前对话已有生成任务进行中，请等待任务完成")
-        row.generation_status = "running"
-        row.generation_type = payload.mode
-        row.generation_error = None
-        db.commit()
-        row.generation_status = "failed"
-        row.generation_error = "当前接口尚未接入生图/生视频任务协议"
-        db.commit()
-        raise HTTPException(status_code=501, detail="当前接口尚未接入生图/生视频任务协议，请选择聊天模型或配置对应生成接口")
-    config = db.get(AIProviderConfig, payload.provider_id or row.provider_id) if (payload.provider_id or row.provider_id) else db.scalar(select(AIProviderConfig).where(AIProviderConfig.is_active.is_(True)).order_by(AIProviderConfig.id))
+    # Chat requests are bound to the configuration explicitly applied to this
+    # session. Client-provided values are retained only for old UI payload
+    # compatibility and are never used to select a provider or model.
+    if not row.provider_id or not row.applied_model or not row.applied_protocol:
+        raise HTTPException(status_code=409, detail="请先点击“应用模型”并完成模型测试")
+    if payload.mode == "chat" and row.applied_mode and row.applied_mode != "chat":
+        raise HTTPException(status_code=409, detail="当前会话不是聊天模式，请应用聊天模型")
+    if payload.mode == "image" and row.applied_mode != "image":
+        raise HTTPException(status_code=409, detail="请先应用生图模型")
+    if payload.mode == "video" and row.applied_mode != "video":
+        raise HTTPException(status_code=409, detail="请先应用生视频模型")
+    config = db.get(AIProviderConfig, row.provider_id)
     if not config: raise HTTPException(status_code=409, detail="请先配置并选择 AI 接口")
     if not config.is_enabled: raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
     if user.role.value != "admin" and config.account_id is not None:
         raise HTTPException(status_code=403, detail="该 AI 接口不是管理员发布的全局配置")
     if config.account_id is not None and not db.get(ChannelsAccount, config.account_id): raise HTTPException(status_code=404, detail="AI 配置不存在")
-    selected_model = (payload.model or config.model or "").strip()
+    selected_model = row.applied_model.strip()
     if not selected_model:
         raise HTTPException(status_code=409, detail="请先选择并应用模型")
     try:
@@ -2297,6 +2386,164 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
         allowed_models = {config.model}
     if selected_model not in allowed_models:
         raise HTTPException(status_code=422, detail="所选模型不属于当前接口配置，请重新应用模型")
+    if payload.mode == "chat":
+        configured_protocol = _configured_protocol(config, selected_model)
+        if row.applied_protocol != configured_protocol:
+            raise HTTPException(status_code=409, detail="当前模型协议配置已变化，请重新应用模型")
+    elif payload.mode == "image" and (row.applied_mode != "image" or row.applied_protocol not in SUPPORTED_IMAGE_PROTOCOLS):
+        raise HTTPException(status_code=409, detail="请先应用已接入的生图模型和协议")
+    elif payload.mode == "video" and (row.applied_mode != "video" or row.applied_protocol not in SUPPORTED_VIDEO_PROTOCOLS):
+        raise HTTPException(status_code=409, detail="请先应用已接入的生视频模型和协议")
+    if payload.mode == "chat":
+        _consume_usage(db, user, "ai_chat")
+    if payload.mode == "image":
+        if not payload.content.strip():
+            raise HTTPException(status_code=422, detail="请输入生图提示词")
+        if user.role.value != "admin":
+            stored_bytes = db.scalar(
+                select(func.coalesce(func.sum(AIChatAttachment.size_bytes), 0))
+                .join(AIChatMessage, AIChatAttachment.message_id == AIChatMessage.id)
+                .join(AIChatSession, AIChatMessage.session_id == AIChatSession.id)
+                .where(AIChatSession.user_id == user.id)
+            ) or 0
+            if int(stored_bytes) >= AI_IMAGE_STORAGE_LIMIT:
+                raise HTTPException(status_code=413, detail="您的生图存储空间已用尽，请删除旧图片后重试")
+        prompt = payload.content.strip()
+        locked = db.execute(
+            update(AIChatSession)
+            .where(AIChatSession.id == row.id, AIChatSession.generation_status != "running")
+            .values(generation_status="running", generation_type="image", generation_error=None)
+        )
+        if locked.rowcount != 1:
+            raise HTTPException(status_code=409, detail="当前已有生成任务进行中，请等待任务完成")
+        try:
+            _consume_usage(db, user, "ai_image")
+        except Exception:
+            row.generation_status = "failed"
+            row.generation_error = "生图额度不足"
+            db.commit()
+            raise
+        row.generation_status = "running"
+        row.generation_type = "image"
+        row.generation_error = None
+        db.commit()
+        snapshot = {"provider_id": config.id, "provider_name": config.name, "model": selected_model, "protocol": row.applied_protocol, "mode": "image", "base_url": config.base_url}
+        user_message = AIChatMessage(session_id=row.id, role="user", content=prompt, provider_snapshot_json=json.dumps(snapshot, ensure_ascii=False))
+        db.add(user_message)
+        db.commit()
+        async def image_event_stream():
+            try:
+                data = await generate_image_provider(config, prompt, selected_model, row.applied_protocol or "")
+                target_dir = get_settings().data_dir / "ai-chat-attachments" / str(row.id)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                    content_type, extension = "image/png", "png"
+                elif data.startswith(b"\xff\xd8\xff"):
+                    content_type, extension = "image/jpeg", "jpg"
+                elif data.startswith((b"GIF87a", b"GIF89a")):
+                    content_type, extension = "image/gif", "gif"
+                elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                    content_type, extension = "image/webp", "webp"
+                else:
+                    raise RuntimeError("上游返回的内容不是受支持的图片格式")
+                if user.role.value != "admin":
+                    with SessionLocal() as quota_db:
+                        stored_bytes = quota_db.scalar(
+                            select(func.coalesce(func.sum(AIChatAttachment.size_bytes), 0))
+                            .join(AIChatMessage, AIChatAttachment.message_id == AIChatMessage.id)
+                            .join(AIChatSession, AIChatMessage.session_id == AIChatSession.id)
+                            .where(AIChatSession.user_id == user.id)
+                        ) or 0
+                    if int(stored_bytes) + len(data) > AI_IMAGE_STORAGE_LIMIT:
+                        raise RuntimeError("生成图片将超出您的生图存储空间限制")
+                target = target_dir / f"{uuid.uuid4().hex}.{extension}"
+                target.write_bytes(data)
+                with SessionLocal() as stream_db:
+                    assistant = AIChatMessage(session_id=row.id, role="assistant", content="已生成图片", provider_snapshot_json=json.dumps({**snapshot, "status": "completed"}, ensure_ascii=False))
+                    stream_db.add(assistant)
+                    stream_db.flush()
+                    attachment = AIChatAttachment(message_id=assistant.id, filename=target.name, content_type=content_type, storage_path=str(target), size_bytes=len(data))
+                    stream_db.add(attachment)
+                    session_row = stream_db.get(AIChatSession, row.id)
+                    if session_row:
+                        session_row.generation_status = "completed"
+                        session_row.generation_error = None
+                    stream_db.commit()
+                    attachment_id = attachment.id
+                yield f"data: {json.dumps({'type': 'image', 'attachment': {'id': attachment_id, 'filename': target.name, 'content_type': content_type}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                with SessionLocal() as stream_db:
+                    session_row = stream_db.get(AIChatSession, row.id)
+                    if session_row:
+                        session_row.generation_status = "failed"
+                        session_row.generation_error = str(exc)[:500]
+                    stream_db.commit()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(image_event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    if payload.mode == "video":
+        if not payload.content.strip():
+            raise HTTPException(status_code=422, detail="请输入生视频提示词")
+        if user.role.value != "admin":
+            stored_bytes = db.scalar(select(func.coalesce(func.sum(AIChatAttachment.size_bytes), 0)).join(AIChatMessage, AIChatAttachment.message_id == AIChatMessage.id).join(AIChatSession, AIChatMessage.session_id == AIChatSession.id).where(AIChatSession.user_id == user.id)) or 0
+            if int(stored_bytes) >= AI_VIDEO_STORAGE_LIMIT:
+                raise HTTPException(status_code=413, detail="您的生视频存储空间已用尽，请删除旧视频后重试")
+        prompt = payload.content.strip()
+        locked = db.execute(update(AIChatSession).where(AIChatSession.id == row.id, AIChatSession.generation_status != "running").values(generation_status="running", generation_type="video", generation_error=None))
+        if locked.rowcount != 1:
+            raise HTTPException(status_code=409, detail="当前已有生成任务进行中，请等待任务完成")
+        try:
+            _consume_usage(db, user, "ai_video")
+        except Exception:
+            row.generation_status = "failed"
+            row.generation_error = "生视频额度不足"
+            db.commit()
+            raise
+        snapshot = {"provider_id": config.id, "provider_name": config.name, "model": selected_model, "protocol": row.applied_protocol, "mode": "video", "base_url": config.base_url}
+        db.add(AIChatMessage(session_id=row.id, role="user", content=prompt, provider_snapshot_json=json.dumps(snapshot, ensure_ascii=False)))
+        task_row = AIChatGenerationTask(session_id=row.id, user_id=user.id, provider_id=config.id, generation_type="video", model=selected_model, protocol=row.applied_protocol or "openai_videos")
+        db.add(task_row)
+        db.commit()
+        async def video_event_stream():
+            try:
+                data, content_type, upstream_task_id = await generate_video_provider(config, prompt, selected_model, row.applied_protocol or "")
+                if user.role.value != "admin":
+                    with SessionLocal() as quota_db:
+                        stored_bytes = quota_db.scalar(select(func.coalesce(func.sum(AIChatAttachment.size_bytes), 0)).join(AIChatMessage, AIChatAttachment.message_id == AIChatMessage.id).join(AIChatSession, AIChatMessage.session_id == AIChatSession.id).where(AIChatSession.user_id == user.id)) or 0
+                    if int(stored_bytes) + len(data) > AI_VIDEO_STORAGE_LIMIT:
+                        raise RuntimeError("生成视频将超出您的生视频存储空间限制")
+                target_dir = get_settings().data_dir / "ai-chat-attachments" / str(row.id)
+                target_dir.mkdir(parents=True, exist_ok=True)
+                extension = {"video/webm": "webm", "video/quicktime": "mov"}.get(content_type, "mp4")
+                target = target_dir / f"{uuid.uuid4().hex}.{extension}"
+                target.write_bytes(data)
+                with SessionLocal() as stream_db:
+                    assistant = AIChatMessage(session_id=row.id, role="assistant", content="已生成视频", provider_snapshot_json=json.dumps({**snapshot, "status": "completed"}, ensure_ascii=False))
+                    stream_db.add(assistant); stream_db.flush()
+                    attachment = AIChatAttachment(message_id=assistant.id, filename=target.name, content_type=content_type, storage_path=str(target), size_bytes=len(data))
+                    stream_db.add(attachment)
+                    session_row = stream_db.get(AIChatSession, row.id)
+                    if session_row: session_row.generation_status = "completed"; session_row.generation_error = None
+                    task = stream_db.get(AIChatGenerationTask, task_row.id)
+                    if task:
+                        task.upstream_task_id = upstream_task_id
+                        task.status = "completed"
+                        task.completed_at = datetime.now(UTC)
+                    stream_db.commit(); attachment_id = attachment.id
+                yield f"data: {json.dumps({'type': 'video', 'task_id': task_row.id, 'attachment': {'id': attachment_id, 'filename': target.name, 'content_type': content_type}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                with SessionLocal() as stream_db:
+                    session_row = stream_db.get(AIChatSession, row.id)
+                    if session_row: session_row.generation_status = "failed"; session_row.generation_error = str(exc)[:500]
+                    task = stream_db.get(AIChatGenerationTask, task_row.id)
+                    if task:
+                        task.status = "failed"
+                        task.error = str(exc)[:500]
+                        task.completed_at = datetime.now(UTC)
+                    stream_db.commit()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(video_event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     if not payload.content.strip() and not payload.attachments:
         raise HTTPException(status_code=422, detail="消息内容和附件不能同时为空")
     attachment_dir = get_settings().data_dir / "ai-chat-attachments" / str(row.id)
@@ -2330,7 +2577,8 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
         elif content_type.startswith("text/") or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
             content_parts.append({"type": "text", "text": f"\n[附件 {filename}]\n{raw.decode('utf-8', errors='replace')}"})
     previous = db.scalars(select(AIChatMessage).where(AIChatMessage.session_id == row.id).order_by(AIChatMessage.created_at, AIChatMessage.id)).all()
-    user_message = AIChatMessage(session_id=row.id, role="user", content=payload.content.strip(), provider_snapshot_json=json.dumps({"model": selected_model, "base_url": config.base_url}, ensure_ascii=False))
+    snapshot = {"provider_id": config.id, "provider_name": config.name, "model": selected_model, "protocol": row.applied_protocol, "mode": row.applied_mode or "chat", "base_url": config.base_url}
+    user_message = AIChatMessage(session_id=row.id, role="user", content=payload.content.strip(), provider_snapshot_json=json.dumps(snapshot, ensure_ascii=False))
     db.add(user_message); db.flush()
     for attachment in attachment_rows: attachment.message_id = user_message.id; db.add(attachment)
     db.commit()
@@ -2339,13 +2587,17 @@ async def send_chat_message(session_id: int, payload: AIChatMessageInput, user: 
         parts: list[str] = []
         try:
             yield f"data: {json.dumps({'type': 'context', **context_info}, ensure_ascii=False)}\n\n"
-            async for part in stream_chat_provider(config, messages, selected_model):
+            async for part in stream_chat_provider(config, messages, selected_model, row.applied_protocol):
                 parts.append(part); yield f"data: {json.dumps({'type': 'delta', 'content': part}, ensure_ascii=False)}\n\n"
             answer = "".join(parts)
             with SessionLocal() as stream_db:
-                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=answer, provider_snapshot_json=json.dumps({"model": selected_model}, ensure_ascii=False))); stream_db.commit()
+                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=answer, provider_snapshot_json=json.dumps(snapshot, ensure_ascii=False))); stream_db.commit()
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
         except Exception as exc:
+            failure_snapshot = {**snapshot, "status": "failed", "error": str(exc)[:500]}
+            with SessionLocal() as stream_db:
+                stream_db.add(AIChatMessage(session_id=row.id, role="assistant", content=f"请求失败：{exc}", provider_snapshot_json=json.dumps(failure_snapshot, ensure_ascii=False)))
+                stream_db.commit()
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -2376,24 +2628,22 @@ def list_ai_protocol_catalog(user: CurrentUser) -> dict[str, Any]:
     API keys and user-specific configuration never belong in this response.
     """
     catalog = _load_ai_protocol_catalog()
-    default_models = {
-        "openai": "gpt-4o-mini", "anthropic": "claude-3-5-sonnet-latest",
-        "gemini": "gemini-2.0-flash", "grok": "grok-3-mini",
-        "deepseek": "deepseek-chat", "zhipu": "glm-4-flash",
-        "qwen": "qwen-plus", "nvidia": "meta/llama-3.1-70b-instruct",
-        "moonshot": "moonshot-v1-8k",
-    }
-    display_names = {"zhipu": "智谱 AI", "qwen": "通义千问", "moonshot": "Moonshot AI（国内）"}
     providers: list[dict[str, Any]] = []
     for key, raw in catalog["providers"].items():
         if not isinstance(raw, dict):
             continue
         protocols = raw.get("protocols") if isinstance(raw.get("protocols"), dict) else {}
+        models = raw.get("models") if isinstance(raw.get("models"), dict) else {}
         providers.append({
             "key": str(key),
-            "display_name": display_names.get(str(key), str(raw.get("display_name") or key)),
+            "display_name": str(raw.get("display_name") or key),
             "base_url": str(raw.get("base_url") or ""),
-            "default_model": str(raw.get("default_model") or default_models.get(str(key), "")),
+            "default_model": str(raw.get("default_model") or ""),
+            "models": {
+                category: [str(model) for model in values if isinstance(model, str)]
+                for category, values in models.items()
+                if isinstance(values, list)
+            },
             "protocols": {
                 category: [item for item in entries if isinstance(item, dict) and item.get("id")]
                 for category, entries in protocols.items()
@@ -2401,6 +2651,58 @@ def list_ai_protocol_catalog(user: CurrentUser) -> dict[str, Any]:
             },
         })
     return {"schema_version": catalog["schema_version"], "providers": providers}
+
+
+@app.get("/api/ai/protocol-catalog")
+def read_ai_protocol_catalog(user: Annotated[User, Depends(require_admin)]) -> dict[str, Any]:
+    catalog, source, updated_at = load_catalog()
+    return {"catalog": catalog, "builtin_catalog": load_builtin_catalog(), "source": source, "updated_at": updated_at, "history": list_history()}
+
+
+@app.put("/api/ai/protocol-catalog")
+def update_ai_protocol_catalog(
+    payload: dict[str, Any],
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        catalog = save_catalog(payload.get("catalog", payload))
+    except (CatalogValidationError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    write_audit(db, "ai.protocol_catalog.update", user, "ai_protocol_catalog", None, {"source": "admin"})
+    db.commit()
+    return {"catalog": catalog, "builtin_catalog": load_builtin_catalog(), "source": "custom", "updated_at": load_catalog()[2], "history": list_history()}
+
+
+@app.delete("/api/ai/protocol-catalog", status_code=204)
+def reset_ai_protocol_catalog(
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    reset_catalog()
+    write_audit(db, "ai.protocol_catalog.reset", user, "ai_protocol_catalog", None)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.get("/api/ai/protocol-catalog/history")
+def read_ai_protocol_catalog_history(user: Annotated[User, Depends(require_admin)]) -> list[dict[str, str]]:
+    return list_history()
+
+
+@app.post("/api/ai/protocol-catalog/history/{filename}")
+def restore_ai_protocol_catalog_history(
+    filename: str,
+    user: Annotated[User, Depends(require_csrf_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        catalog = restore_history(filename)
+    except CatalogValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    write_audit(db, "ai.protocol_catalog.restore", user, "ai_protocol_catalog", None, {"filename": filename})
+    db.commit()
+    return {"catalog": catalog, "source": "custom", "updated_at": load_catalog()[2], "history": list_history()}
 
 
 @app.get("/api/ai/providers/{provider_id}/models")
@@ -2696,13 +2998,22 @@ async def test_and_save_ai_provider(
     if not api_key:
         raise HTTPException(status_code=422, detail="首次配置必须填写 API Key")
     try:
-        result = await test_provider_values(
-            base_url=payload.base_url,
-            model=payload.model,
-            protocol=payload.protocol,
-            timeout_seconds=payload.timeout_seconds,
-            api_key=api_key,
-        )
+        if payload.protocol in SUPPORTED_IMAGE_PROTOCOLS:
+            result = await test_image_preview(
+                base_url=payload.base_url,
+                model=payload.model,
+                protocol=payload.protocol,
+                timeout_seconds=payload.timeout_seconds,
+                api_key=api_key,
+            )
+        else:
+            result = await test_provider_values(
+                base_url=payload.base_url,
+                model=payload.model,
+                protocol=payload.protocol,
+                timeout_seconds=payload.timeout_seconds,
+                api_key=api_key,
+            )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     saved = save_ai_provider(payload, user, db)
@@ -2742,7 +3053,9 @@ async def test_selected_ai_provider(
         raise HTTPException(status_code=404, detail="接口配置不存在或无权使用")
     if not config.is_enabled:
         raise HTTPException(status_code=409, detail="该 AI 接口已被禁用，请选择其他配置")
-    selected_protocol = _configured_protocol(config, payload.model)
+    selected_protocol = payload.protocol or _configured_protocol(config, payload.model)
+    if selected_protocol not in SUPPORTED_CHAT_PROTOCOLS:
+        raise HTTPException(status_code=422, detail="当前请求协议尚未接入")
     preview = provider_request_preview(config.base_url, payload.model, selected_protocol, decrypt_secret(config.encrypted_api_key))
     try:
         result = await test_provider_values(
@@ -2754,6 +3067,8 @@ async def test_selected_ai_provider(
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if isinstance(result, dict):
+        return {"result": str(result.get("text") or ""), "media": result.get("media"), "request": preview}
     return {"result": result, "request": preview}
 
 
@@ -2820,7 +3135,7 @@ async def test_ai_provider_draft(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail={"message": str(exc), "request": preview, "status": "error"}) from exc
     return {"result": result, "request": preview}
 
 

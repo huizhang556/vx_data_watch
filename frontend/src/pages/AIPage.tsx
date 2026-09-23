@@ -6,7 +6,7 @@ import ReactECharts from 'echarts-for-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { api, query } from '../api'
+import { api, ApiError, query } from '../api'
 import { useAccount } from '../account'
 import { disableUnavailableDate, rangeHasAllDates, useAvailableDates } from '../dateRange'
 import { useAuth } from '../auth'
@@ -18,8 +18,9 @@ interface QueryHistory { id: number; start_date: string; end_date: string; creat
 interface AnalysisResult extends QueryHistory { report_text: string; snapshot: RangeAnalytics }
 interface ProviderForm { account_id?: number | null; provider_id?: number; name: string; base_url: string; model: string; protocol: string; interface_type: 'official' | 'compatible'; timeout_seconds: number; api_key?: string }
 interface TestRequestPreview { method: string; url: string; protocol: string; model: string; headers: Record<string, string>; body: unknown; api_key_query?: string | null }
-interface ProtocolMeta { id: string; label: string; method: string; path: string; request_format: string; streaming?: boolean; async_task?: boolean }
-interface ProtocolProvider { key: string; display_name: string; base_url: string; default_model: string; protocols: Record<string, ProtocolMeta[]> }
+interface TestMedia { kind: 'image' | 'video-task'; data_url?: string; url?: string; task_id?: string; status?: string }
+interface ProtocolMeta { id: string; label: string; method: string; path: string; request_format: string; streaming?: boolean; async_task?: boolean; implemented?: boolean; disabled?: boolean }
+interface ProtocolProvider { key: string; display_name: string; base_url: string; default_model: string; models?: Record<string, string[]>; protocols: Record<string, ProtocolMeta[]> }
 const reportMetrics = [
   { key: 'plays' as const, label: '播放', color: '#1677ff' },
   { key: 'likes' as const, label: '点赞', color: '#d4380d' },
@@ -33,21 +34,6 @@ const periodOptions = [
   { label: '单日', value: 1 }, { label: '近 3 天', value: 3 }, { label: '近 7 天', value: 7 },
   { label: '近 15 天', value: 15 }, { label: '近 30 天', value: 30 },
 ]
-const officialPresets = [
-  { label: 'OpenAI', name: 'OpenAI', base_url: 'https://api.openai.com', model: 'gpt-4o-mini' },
-  { label: 'Anthropic', name: 'Anthropic', base_url: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-latest' },
-  { label: 'Gemini', name: 'Gemini', base_url: 'https://generativelanguage.googleapis.com', model: 'gemini-2.0-flash' },
-  { label: 'Grok', name: 'Grok', base_url: 'https://api.x.ai', model: 'grok-3-mini' },
-  { label: 'DeepSeek', name: 'DeepSeek', base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  { label: '智谱', name: '智谱 AI', base_url: 'https://open.bigmodel.cn/api/paas', model: 'glm-4-flash' },
-  { label: '通义千问', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode', model: 'qwen-plus' },
-  { label: 'NVIDIA NIM', name: 'NVIDIA NIM', base_url: 'https://integrate.api.nvidia.com/v1', model: 'meta/llama-3.1-70b-instruct' },
-  { label: 'Moonshot AI（国内）', name: 'Moonshot AI（国内）', base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-]
-
-// The protocol catalog endpoint is authoritative; retain the legacy constant for older data imports.
-void officialPresets
-
 export default function AIPage({ configOnly = false }: { configOnly?: boolean }) {
   const { account: selectedAccount } = useAccount()
   // AI configuration is administrator-global and does not require a video account.
@@ -89,6 +75,8 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const [configError, setConfigError] = useState('')
   const [testRequest, setTestRequest] = useState<TestRequestPreview | null>(null)
   const [testResponse, setTestResponse] = useState('')
+  const [testMedia, setTestMedia] = useState<TestMedia | null>(null)
+  const [testResponseStatus, setTestResponseStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [testPanelExpanded, setTestPanelExpanded] = useState(false)
   const [days, setDays] = useState(7)
   const [endDate, setEndDate] = useState<Dayjs>(dayjs().subtract(1, 'day'))
@@ -115,12 +103,25 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   const refreshProviderChoices = async () => {
     await loadProviders(providerAccountId)
   }
-  const protocolOptions = () => {
-    if (configMode === 'compatible') return [{ label: 'Chat Completions（兼容协议：POST /v1/chat/completions）', value: 'chat_completions' }]
-    const baseUrl = String(form.getFieldValue('base_url') || '').replace(/\/$/, '')
+  const selectedCatalogProvider = () => {
+    const baseUrl = String(form.getFieldValue('base_url') || '').replace(/\/$/, '').toLowerCase()
     const name = String(form.getFieldValue('name') || '').toLowerCase()
-    const selected = protocolCatalog.find((item) => item.base_url.replace(/\/$/, '') === baseUrl || name.includes(item.key) || name.includes(item.display_name.toLowerCase()))
-    return (selected?.protocols.chat || []).map((item) => ({ label: `${item.label}（${item.method} ${item.path}）`, value: item.id }))
+    return protocolCatalog.find((item) => item.base_url.replace(/\/$/, '').toLowerCase() === baseUrl || name.includes(item.key) || name.includes(item.display_name.toLowerCase()))
+  }
+  const selectedModelCategory = () => {
+    const model = String(form.getFieldValue('model') || '')
+    if ((modelCategories.image || []).includes(model)) return 'image'
+    if ((modelCategories.video || []).includes(model)) return 'video'
+    return 'chat'
+  }
+  const protocolOptions = () => {
+    if (configMode === 'compatible') return [{ label: 'Chat Completions (POST /v1/chat/completions)', value: 'chat_completions' }]
+    const entries = selectedCatalogProvider()?.protocols[selectedModelCategory()] || []
+    return entries.map((item) => ({
+      label: `${item.label} (${item.method} ${item.path})${item.implemented === false ? ' - 暂未接入' : item.disabled ? ' - 已禁用' : ''}`,
+      value: item.id,
+      disabled: item.implemented === false || item.disabled === true,
+    }))
   }
   const loadHistories = () => !configOnly && account && api<QueryHistory[]>(`/api/ai/reports?${query({ account_id: account.id })}`).then(setHistories)
   const loadQuickConfigs = () => api<QuickConfig[]>('/api/ai/quick-configs').then(setQuickConfigs)
@@ -172,11 +173,12 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
     setDraftTestLoading(true); setConfigError('')
     try {
       const values = await draftValues(true)
-      const response = await api<{ result: string; request: TestRequestPreview }>('/api/ai/provider/test-draft', { method: 'POST', body: JSON.stringify(values) })
+      const response = await api<{ result: string; request: TestRequestPreview; media?: TestMedia }>('/api/ai/provider/test-draft', { method: 'POST', body: JSON.stringify(values) })
       setTestRequest(response.request)
+      setTestMedia(response.media || null)
       setTestResponse(response.result || '（上游返回空内容）')
-      setTested(true); message.success(response.result.slice(0, 100) || '连接成功')
-    } catch (cause) { setTested(false); setTestResponse(cause instanceof Error ? cause.message : '测试失败'); setConfigError(cause instanceof Error ? cause.message : '测试失败') }
+      setTestResponseStatus('success'); setTested(true); message.success(response.result.slice(0, 100) || '连接成功')
+    } catch (cause) { setTested(false); if (cause instanceof ApiError && cause.payload && typeof cause.payload === 'object' && 'detail' in cause.payload) { const detail = (cause.payload as { detail?: unknown }).detail; if (detail && typeof detail === 'object' && 'request' in detail) setTestRequest((detail as { request: TestRequestPreview }).request); if (detail && typeof detail === 'object' && 'message' in detail) setTestResponse(String((detail as { message: unknown }).message)); else setTestResponse(cause.message) } else setTestResponse(cause instanceof Error ? cause.message : '测试失败'); setTestResponseStatus('error'); setConfigError(cause instanceof Error ? cause.message : '测试失败') }
     finally { setDraftTestLoading(false) }
   }
 
@@ -356,7 +358,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
   if (!account) return <Empty description="请先创建视频号账号" />
   return (
     <div className={`page ${configOnly ? 'ai-config-only' : ''}`}>
-      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title>{!configOnly && <Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text>}</div>{user.role === 'admin' && (configOnly ? <Button type="primary" icon={<Plus size={18} />} onClick={() => { startNewProvider(); setConfigOpen(true) }}>新增配置</Button> : location.pathname === '/ai-chat' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setConfigError(''); setTested(false); setConfigAction(provider ? 'edit' : 'new'); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>)}</div>
+      <div className="page-heading"><div><Typography.Title level={2}>{configOnly ? 'AI 配置' : 'AI 建议'}</Typography.Title>{!configOnly && <Typography.Text type="secondary">{provider ? `${provider.name} · ${provider.model}` : '尚未配置 AI 接口'}</Typography.Text>}</div>{user.role === 'admin' && (configOnly ? <Space><Button icon={<Settings2 size={18} />} onClick={() => navigate('/ai-chat/protocols')}>协议目录管理</Button><Button type="primary" icon={<Plus size={18} />} onClick={() => { startNewProvider(); setConfigOpen(true) }}>新增配置</Button></Space> : location.pathname === '/ai-chat' && <Button icon={<Settings2 size={18} />} onClick={() => { setError(''); setConfigError(''); setTested(false); setConfigAction(provider ? 'edit' : 'new'); setConfigOpen(true); void loadProviders(account.id) }}>接口配置</Button>)}</div>
       {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
       {configOnly && <section className="ai-provider-registry">
         <div className="section-heading"><Typography.Title level={3}>已配置接口</Typography.Title><Typography.Text type="secondary">可随时编辑或删除已保存的模型接口</Typography.Text></div>
@@ -415,7 +417,7 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           { key: 'official', label: '官方接口', children: <Typography.Text type="secondary">选择官方厂商预置并填写对应 API Key。</Typography.Text> },
           { key: 'compatible', label: 'OPENAI兼容', children: <Typography.Text type="secondary">用于第三方中转服务，填写 Base URL、API Key 和模型。</Typography.Text> },
         ]} />
-        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={protocolCatalog.map((item) => ({ value: item.key, label: item.display_name }))} onChange={(key) => { const preset = protocolCatalog.find((item) => item.key === key); const firstProtocol = preset?.protocols.chat?.[0]; if (preset) { form.setFieldsValue({ name: preset.display_name, base_url: preset.base_url, model: preset.default_model, protocol: firstProtocol?.id || 'chat_completions' }); setModels(preset.default_model ? [preset.default_model] : []); setTested(false) } }} />}
+        {configMode === 'official' && <Select style={{ width: 240, marginBottom: 12 }} placeholder="可选：选择官方预置" options={protocolCatalog.map((item) => ({ value: item.key, label: item.display_name }))} onChange={(key) => { const preset = protocolCatalog.find((item) => item.key === key); const firstProtocol = preset?.protocols.chat?.find((item) => item.implemented !== false); const presetModels = Object.values(preset?.models || {}).flat(); if (preset) { form.setFieldsValue({ name: preset.display_name, base_url: preset.base_url, model: preset.default_model || presetModels[0], protocol: firstProtocol?.id || 'chat_completions' }); setModels(presetModels); setModelCategories(preset.models || { chat: presetModels }); setTested(false) } }} />}
         <Form form={form} layout="vertical" initialValues={{ account_id: account.id, name: '默认 AI', protocol: 'chat_completions', timeout_seconds: 60 }} requiredMark={false} onValuesChange={() => setTested(false)}>
           <Form.Item name="name" label="配置名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="base_url" label="Base URL" rules={[{ required: true }, { type: 'url' }]}><Input placeholder="https://api.openai.com（系统自动兼容 /v1）" /></Form.Item>
@@ -451,8 +453,10 @@ export default function AIPage({ configOnly = false }: { configOnly?: boolean })
           <div className={`ai-test-preview ${testPanelExpanded ? 'expanded' : ''}`}>
             <div className="ai-test-preview-heading"><strong>测试请求与响应</strong><Button type="text" size="small" icon={testPanelExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />} onClick={() => setTestPanelExpanded((value) => !value)}>{testPanelExpanded ? '收缩' : '展开'}</Button></div>
             <div className="ai-test-preview-columns">
+              {testMedia?.kind === 'image' && (testMedia.data_url || testMedia.url) && <section className="ai-test-media-result"><Typography.Text type="secondary">image preview</Typography.Text><img className="ai-test-media-preview" src={testMedia.data_url || testMedia.url} alt="image test result" /></section>}
+              {testMedia?.kind === 'video-task' && <section className="ai-test-media-result"><Typography.Text type="secondary">video task</Typography.Text><Typography.Text> ID: {testMedia.task_id || 'missing'} ({testMedia.status || 'submitted'})</Typography.Text></section>}
               <section><Typography.Text type="secondary">请求内容</Typography.Text><pre>{testRequest ? JSON.stringify(testRequest, null, 2) : '点击“测试”后显示实际测试模型、协议、地址和请求内容'}</pre></section>
-              <section><Typography.Text type="secondary">响应内容</Typography.Text><pre>{testResponse || '点击“测试”后显示上游响应；失败时显示上游错误信息'}</pre></section>
+              <section><Typography.Text type="secondary">响应内容</Typography.Text><pre className={`ai-test-response-${testResponseStatus}`}>{testResponse || '点击“测试”后显示上游响应；失败时显示上游错误信息'}</pre></section>
             </div>
           </div>
           <Form.Item name="timeout_seconds" label="超时（秒）"><InputNumber min={5} max={300} /></Form.Item>

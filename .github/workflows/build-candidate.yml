@@ -87,6 +87,7 @@ jobs:
           tags: ${{ env.DOCKERHUB_IMAGE }}:candidate-${{ github.sha }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
+            VCS_REF=${{ github.sha }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=build
@@ -99,9 +100,21 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '0'
-      - name: Inspect local validation image
-        if: ${{ !inputs.push_candidate }}
-        run: docker image inspect ${{ env.DOCKERHUB_IMAGE }}:candidate-${{ github.sha }} --format '{{json .Config.Labels}}'
+      - name: Verify candidate metadata
+        shell: bash
+        env:
+          CANDIDATE: ${{ env.DOCKERHUB_IMAGE }}:candidate-${{ github.sha }}
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "${{ inputs.push_candidate }}" == "true" ]]; then
+            docker pull "$CANDIDATE"
+          fi
+          version="$(docker image inspect "$CANDIDATE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          revision="$(docker image inspect "$CANDIDATE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "$version" == "$EXPECTED_VERSION" ]] || { echo "Candidate version mismatch: $version != $EXPECTED_VERSION"; exit 1; }
+          [[ "$revision" == "${{ github.sha }}" ]] || { echo "Candidate revision mismatch: $revision"; exit 1; }
+          echo "Candidate metadata verified: version=$version revision=$revision"
       - name: Print candidate reference
         if: inputs.push_candidate
-        run: echo "Candidate: ${{ env.DOCKERHUB_IMAGE }}:candidate-${{ github.sha }}"
+        run: |
+          echo "Candidate: ${{ env.DOCKERHUB_IMAGE }}:candidate-${{ github.sha }}"

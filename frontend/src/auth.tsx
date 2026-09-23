@@ -23,7 +23,7 @@ function Captcha({ enabled, siteKey, onChange }: { enabled: boolean; siteKey?: s
   return enabled ? <div ref={setElement} className="captcha-widget" /> : null
 }
 
-type HomeSite = { site_name: string; site_subtitle: string; logo_url: string }
+type HomeSite = { site_name: string; site_subtitle: string; browser_title?: string; logo_url: string }
 export function LegacyHomePage({ site, user, onLogout }: { site: HomeSite; user?: User; onLogout?: () => void }) {
   const navigate = useNavigate()
   return <main className="home-page">
@@ -117,16 +117,39 @@ type Mode = 'login' | 'register' | 'reset'
 const modeForPath = (pathname: string): Mode => pathname === '/register' ? 'register' : pathname === '/reset-password' ? 'reset' : 'login'
 const usernameRule = { pattern: /^[A-Za-z0-9_.-]+$/, message: '用户名只能包含英文、数字、下划线、点和短横线' }
 const passwordRule = { pattern: /^(?=.*[A-Za-z])(?=.*\d).+$/, message: '密码至少 10 位，并同时包含字母和数字' }
+function authErrorMessage(cause: unknown, fallback: string): string {
+  const detail = cause instanceof Error ? cause.message.trim() : ''
+  if (!detail) return fallback
+  if (/用户名或密码错误|登录失败次数过多|验证码错误或已过期|该邮箱已注册|用户名或邮箱已存在|注册功能当前已关闭|如果邮箱已注册|请求过于频繁|请完成安全验证/.test(detail)) return detail
+  if (/Failed to fetch|NetworkError|网络|无法连接|请求失败 \((502|503|504)\)/i.test(detail)) return '服务暂时无法访问，请检查网络连接后重试。'
+  if (/请求失败 \(429\)/.test(detail)) return '操作过于频繁，请稍后再试。'
+  if (/^\s*(?:\[|\{|Internal Server Error|请求失败 \((?:4|5)\d{2}\))/.test(detail) || detail.length > 180) return fallback
+  return detail
+}
 export function AuthGate({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true); const [initialized, setInitialized] = useState(false); const [user, setUser] = useState<User | null>(null); const [error, setError] = useState('')
-  const [config, setConfig] = useState({ registration_enabled: false, captcha_enabled: false, captcha_site_key: '', site_name: 'HG-工具小屋', site_subtitle: '数据驱动内容运营', logo_url: '' }); const [mode, setMode] = useState<Mode>('login'); const [captcha, setCaptcha] = useState<string>(); const [email, setEmail] = useState(''); const [busy, setBusy] = useState(false)
+  const [config, setConfig] = useState({ registration_enabled: false, captcha_enabled: false, captcha_site_key: '', site_name: 'HG-工具小屋', site_subtitle: '数据驱动内容运营', browser_title: 'HG-工具小屋', logo_url: '' }); const [mode, setMode] = useState<Mode>('login'); const [captcha, setCaptcha] = useState<string>(); const [email, setEmail] = useState(''); const [busy, setBusy] = useState(false)
   const [form] = Form.useForm()
   const captchaReady = !config.captcha_enabled || Boolean(captcha)
   useEffect(() => { setMode(modeForPath(location.pathname)) }, [location.pathname])
+  useEffect(() => {
+    document.title = config.browser_title?.trim() || config.site_name?.trim() || 'HG-工具小屋'
+  }, [config.browser_title, config.site_name])
+  useEffect(() => {
+    const refreshSiteTitle = () => {
+      void api<typeof config>('/api/auth/config').then(setConfig).catch(() => undefined)
+    }
+    window.addEventListener('vx:site-config-updated', refreshSiteTitle)
+    return () => window.removeEventListener('vx:site-config-updated', refreshSiteTitle)
+  }, [])
   useEffect(() => { if (user && ['/login', '/register', '/reset-password'].includes(location.pathname)) navigate('/dashboard', { replace: true }) }, [user, location.pathname, navigate])
-  useEffect(() => { if (!user && !['/', '/login', '/register', '/reset-password'].includes(location.pathname)) navigate('/', { replace: true }) }, [user, location.pathname, navigate])
+  useEffect(() => {
+    // Keep the requested protected URL while the session check is in flight.
+    if (loading || user || ['/', '/login', '/register', '/reset-password'].includes(location.pathname)) return
+    navigate('/', { replace: true })
+  }, [loading, user, location.pathname, navigate])
   useEffect(() => {
     const button = document.querySelector<HTMLButtonElement>('.auth-panel form button[type="submit"]')
     if (!button) return
@@ -141,9 +164,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => { const onUnauthorized = () => { setCsrfToken(); setUser(null); localStorage.removeItem('vx_account_id') }; window.addEventListener('vx:unauthorized', onUnauthorized); return () => window.removeEventListener('vx:unauthorized', onUnauthorized) }, [])
   const switchMode = (next: Mode) => { setMode(next); setError(''); setCaptcha(undefined); form.resetFields(); setEmail(''); navigate(next === 'register' ? '/register' : next === 'reset' ? '/reset-password' : '/login') }
   const finishLogin = (next: User) => { setCsrfToken(next.csrf_token); setUser(next); setInitialized(true); message.success('登录成功') }
-  const submit = async (values: { username?: string; password: string; email?: string; code?: string }) => { setBusy(true); setError(''); try { if (mode === 'login') finishLogin(await api<User>(initialized ? '/api/auth/login' : '/api/setup', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else if (mode === 'register') finishLogin(await api<User>('/api/auth/register', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else finishLogin(await api<User>('/api/auth/password-reset', { method: 'POST', body: JSON.stringify({ email: values.email, code: values.code, new_password: values.password, captcha_token: captcha }) })) } catch (cause) { setError(cause instanceof Error ? cause.message : '操作失败') } finally { setBusy(false) } }
+  const submit = async (values: { username?: string; password: string; email?: string; code?: string }) => { setBusy(true); setError(''); const fallback = mode === 'login' ? '登录失败，请检查用户名和密码后重试。' : mode === 'register' ? '注册失败，请检查注册信息后重试。' : '密码重置失败，请检查邮箱和验证码后重试。'; try { if (mode === 'login') finishLogin(await api<User>(initialized ? '/api/auth/login' : '/api/setup', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else if (mode === 'register') finishLogin(await api<User>('/api/auth/register', { method: 'POST', body: JSON.stringify({ ...values, captcha_token: captcha }) })); else finishLogin(await api<User>('/api/auth/password-reset', { method: 'POST', body: JSON.stringify({ email: values.email, code: values.code, new_password: values.password, captcha_token: captcha }) })) } catch (cause) { setError(authErrorMessage(cause, fallback)) } finally { setBusy(false) } }
   const syncField = (name: string, value: string) => { form.setFieldValue(name, value); if (name === 'email') setEmail(value) }
-  const sendCode = async (value?: string) => { const targetEmail = value || form.getFieldValue('email') || email; setBusy(true); try { await api(mode === 'register' ? '/api/auth/register/request-code' : '/api/auth/password-reset/request-code', { method: 'POST', body: JSON.stringify({ email: targetEmail, captcha_token: captcha }) }); message.success('验证码已发送，请检查邮箱') } catch (cause) { message.error(cause instanceof Error ? cause.message : '发送失败') } finally { setBusy(false) } }
+  const sendCode = async (value?: string) => { const targetEmail = value || form.getFieldValue('email') || email; setBusy(true); try { await api(mode === 'register' ? '/api/auth/register/request-code' : '/api/auth/password-reset/request-code', { method: 'POST', body: JSON.stringify({ email: targetEmail, captcha_token: captcha }) }); message.success('验证码已发送，请检查邮箱') } catch (cause) { message.error(authErrorMessage(cause, '验证码发送失败，请稍后重试。')) } finally { setBusy(false) } }
   const logout = async () => { try { await api('/api/auth/logout', { method: 'POST' }) } catch { /* clear local state even if server is unavailable */ } finally { setCsrfToken(); setUser(null); setMode('login'); setCaptcha(undefined); form.resetFields(); localStorage.removeItem('vx_account_id'); window.history.replaceState({}, '', '/') } }
   const updateUser = (next: User) => { setUser(next); if (next.csrf_token) setCsrfToken(next.csrf_token) }
   const value = useMemo(() => user ? { user, logout, updateUser } : null, [user])

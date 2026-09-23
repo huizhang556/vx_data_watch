@@ -1,4 +1,9 @@
 let csrfToken = ''
+export class ApiError extends Error {
+  status: number
+  payload: unknown
+  constructor(message: string, status: number, payload: unknown) { super(message); this.name = 'ApiError'; this.status = status; this.payload = payload }
+}
 
 export function setCsrfToken(value?: string) {
   csrfToken = value || ''
@@ -35,7 +40,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
         if (response.status !== 413) detail = `${detail}：${raw.slice(0, 240)}`
       }
     }
-    throw new Error(detail)
+    let payload: unknown
+    try { payload = JSON.parse(raw) } catch { payload = undefined }
+    throw new ApiError(detail, response.status, payload)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
